@@ -59,8 +59,6 @@ from llm.seca.adaptation.dynamic_mode import DynamicModeRegistry
 from llm.seca.curriculum.scheduler import CurriculumScheduler
 from llm.seca.curriculum.types import Weakness
 from llm.seca.storage.db import init_db
-from llm.seca.storage.event_store import EventStore
-from llm.seca.skill.pipeline import SkillPipeline
 from llm.seca.world_model.safe_stub import SafeWorldModel
 from llm.seca.explainer.safe_explainer import SafeExplainer
 from llm.seca.safety.freeze import enforce
@@ -103,9 +101,10 @@ if IS_PROD and API_KEY is None:
         "Set a non-empty value before starting the server."
     )
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global engine_pool, move_cache, scheduler, event_storage, skill_pipeline
+    global engine_pool, move_cache, scheduler
     global world_model, async_predict_enabled, async_predict_plies, async_predict_movetime_ms
     try:
         init_db()
@@ -196,11 +195,11 @@ app.state.limiter = limiter
 # loud at startup, mirroring the SECA_API_KEY / SECRET_KEY pattern, so a
 # misconfigured deployment never silently blocks every browser request.
 DEV_CORS_DEFAULTS = [
-    "http://localhost:8000",   # bare-metal API on dev host
-    "http://127.0.0.1:8000",   # ditto, IPv4 form
-    "http://10.0.2.2:8000",    # Android emulator → host loopback
-    "http://localhost:3000",   # common Vite/Next/CRA dev server
-    "http://localhost:5173",   # Vite default
+    "http://localhost:8000",  # bare-metal API on dev host
+    "http://127.0.0.1:8000",  # ditto, IPv4 form
+    "http://10.0.2.2:8000",  # Android emulator → host loopback
+    "http://localhost:3000",  # common Vite/Next/CRA dev server
+    "http://localhost:5173",  # Vite default
 ]
 
 _cors_origins = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
@@ -264,10 +263,7 @@ app.add_middleware(_LimitBodySize)
 # frame, or sub-resource can execute even if the body is rendered, and the
 # Permissions-Policy block keeps every sensitive browser feature disabled.
 _CSP_HEADER = (
-    "default-src 'none'; "
-    "frame-ancestors 'none'; "
-    "base-uri 'none'; "
-    "form-action 'none'"
+    "default-src 'none'; " "frame-ancestors 'none'; " "base-uri 'none'; " "form-action 'none'"
 )
 _PERMISSIONS_POLICY_HEADER = (
     "accelerometer=(), camera=(), geolocation=(), gyroscope=(), "
@@ -345,8 +341,6 @@ app.include_router(
 tracker = ExplanationOutcomeTracker()
 player_skill_memory: dict[str, SkillState] = {}
 scheduler: CurriculumScheduler | None = None
-event_storage: EventStore | None = None
-skill_pipeline: SkillPipeline | None = None
 world_model: SafeWorldModel | None = None
 safe_explainer = SafeExplainer()
 _dynamic_registry = DynamicModeRegistry()
@@ -504,8 +498,6 @@ def _predictive_cache_followups(
             line_key = mv.uci()
         except Exception:
             return
-
-
 
 
 # ------------------------------------------------------------------
@@ -717,6 +709,7 @@ class AdaptationModeRequest(BaseModel):
     @classmethod
     def validate_base_elo(cls, v: int | None) -> int | None:
         from llm.seca.adaptation.dynamic_mode import ELO_MIN, ELO_MAX
+
         if v is not None and not (ELO_MIN <= v <= ELO_MAX):
             raise ValueError(f"base_elo must be in [{ELO_MIN}, {ELO_MAX}]")
         return v
@@ -764,6 +757,7 @@ class ChatRequest(BaseModel):
                 if isinstance(val, str):
                     sanitize_user_query(val)
         return v
+
     move_count: int | None = None
 
     @field_validator("fen")
@@ -810,9 +804,7 @@ class ChatRequest(BaseModel):
         # prompt-injection bait disguised as a tone) is rejected
         # before it reaches the LLM prompt.
         if v not in {"formal", "conversational", "terse"}:
-            raise ValueError(
-                "coach_voice must be one of 'formal', 'conversational', 'terse'"
-            )
+            raise ValueError("coach_voice must be one of 'formal', 'conversational', 'terse'")
         return v
 
 
@@ -1167,6 +1159,7 @@ class GameCheckpointRequest(BaseModel):
         Bounded at 16 KB — enough for a 2000-move game which is
         well beyond any realistic length.
     """
+
     fen: str
     uci_history: str = ""
 
@@ -1179,7 +1172,7 @@ class GameCheckpointRequest(BaseModel):
         if len(v) > 256:
             raise ValueError("fen too long (max 256 chars)")
         for ch in v:
-            if ord(ch) < 0x20 or ord(ch) == 0x7f:
+            if ord(ch) < 0x20 or ord(ch) == 0x7F:
                 raise ValueError("fen contains control characters")
         return v
 
@@ -1189,7 +1182,7 @@ class GameCheckpointRequest(BaseModel):
         if len(v) > 16_384:
             raise ValueError("uci_history too long (max 16384 chars)")
         for ch in v:
-            if ord(ch) < 0x20 or ord(ch) == 0x7f:
+            if ord(ch) < 0x20 or ord(ch) == 0x7F:
                 raise ValueError("uci_history contains control characters")
         return v
 
@@ -1219,7 +1212,7 @@ def checkpoint_game_state(
     if len(game_id) > 64:
         raise HTTPException(status_code=400, detail="game_id too long")
     for ch in game_id:
-        if ord(ch) < 0x20 or ord(ch) == 0x7f:
+        if ord(ch) < 0x20 or ord(ch) == 0x7F:
             raise HTTPException(status_code=400, detail="game_id contains control characters")
 
     # Verify the game belongs to this player BEFORE checkpointing —
@@ -1231,6 +1224,7 @@ def checkpoint_game_state(
         # Look up by id directly to distinguish "wrong owner" (403)
         # from "doesn't exist / already finished" (404).
         from llm.seca.storage.db import get_conn
+
         conn = get_conn()
         try:
             row = conn.execute(
@@ -1359,7 +1353,7 @@ def _validate_eco(eco: str) -> str:
     if len(eco) > 8:
         raise HTTPException(status_code=400, detail="eco too long (max 8 chars)")
     for ch in eco:
-        if ord(ch) < 0x20 or ord(ch) == 0x7f:
+        if ord(ch) < 0x20 or ord(ch) == 0x7F:
             raise HTTPException(status_code=400, detail="eco contains control characters")
     if not _ECO_RE.match(eco):
         raise HTTPException(
@@ -1376,7 +1370,7 @@ def _validate_text_field(value: str, field: str, max_len: int) -> str:
     if len(value) > max_len:
         raise HTTPException(status_code=400, detail=f"{field} too long (max {max_len} chars)")
     for ch in value:
-        if ord(ch) < 0x20 or ord(ch) == 0x7f:
+        if ord(ch) < 0x20 or ord(ch) == 0x7F:
             raise HTTPException(status_code=400, detail=f"{field} contains control characters")
     return value
 
@@ -1389,6 +1383,7 @@ class RepertoireEntryRequest(BaseModel):
     to change the active line (it enforces the one-active invariant
     across the player's whole list).
     """
+
     eco: str
     name: str
     line: str
