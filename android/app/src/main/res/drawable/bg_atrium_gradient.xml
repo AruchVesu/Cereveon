@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Atrium screen background.  Approximates the design's
+    radial-gradient(ellipse at 50% 100%, #16141f 0%, #0a0a10 70%):
+    a soft inner glow rising from the bottom-centre.
+
+    Android's GradientDrawable radial mode is centre-anchored; we use
+    gradientRadius = 600dp and a layer-list to bias the centre downward.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Base flat colour so off-gradient regions resolve cleanly -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/atrium_bg_base" />
+        </shape>
+    </item>
+    <!-- Bottom-centred radial glow.  Pulled down via gravity offset. -->
+    <item android:gravity="bottom|center_horizontal">
+        <shape android:shape="oval">
+            <gradient
+                android:type="radial"
+                android:gradientRadius="600dp"
+                android:startColor="@color/atrium_bg_gradient_top"
+                android:endColor="@color/atrium_bg_base" />
+            <size android:width="800dp" android:height="800dp" />
+        </shape>
+    </item>
+</layer-list>

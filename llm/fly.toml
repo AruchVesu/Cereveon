@@ -1,0 +1,10 @@
+app = "chesscoach"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

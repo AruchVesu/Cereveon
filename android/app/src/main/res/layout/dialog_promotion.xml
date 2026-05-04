@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Pawn promotion dialog.
+
+    Compact dialog shown when a pawn reaches the back rank.  Four
+    Atrium secondary buttons in a 2×2 grid, each labelled with the
+    chess-piece glyph + italic Cormorant name.
+
+    Preserved IDs: btnQueen, btnRook, btnBishop, btnKnight — wired
+    in MainActivity.showPromotionDialog.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:padding="@dimen/atrium_space_24"
+    android:background="@color/atrium_bg_surface"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content">
+
+    <!-- Kicker. -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="@style/Atrium.Kicker"
+        android:gravity="center"
+        android:text="Promote pawn" />
+
+    <!-- Italic title. -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/atrium_space_4"
+        android:layout_marginBottom="@dimen/atrium_space_16"
+        android:textAppearance="@style/Atrium.Display"
+        android:textSize="22sp"
+        android:gravity="center"
+        android:text="Choose a piece" />
+
+    <GridLayout
+        android:columnCount="2"
+        android:rowCount="2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:alignmentMode="alignMargins"
+        android:useDefaultMargins="true">
+
+        <Button
+            android:id="@+id/btnQueen"
+            style="@style/Atrium.Button.Secondary"
+            android:layout_width="100dp"
+            android:layout_height="64dp"
+            android:textColor="@color/atrium_ink"
+            android:textSize="14sp"
+            android:text="♛  Queen" />
+
+        <Button
+            android:id="@+id/btnRook"
+            style="@style/Atrium.Button.Secondary"
+            android:layout_width="100dp"
+            android:layout_height="64dp"
+            android:textColor="@color/atrium_ink"
+            android:textSize="14sp"
+            android:text="♜  Rook" />
+
+        <Button
+            android:id="@+id/btnBishop"
+            style="@style/Atrium.Button.Secondary"
+            android:layout_width="100dp"
+            android:layout_height="64dp"
+            android:textColor="@color/atrium_ink"
+            android:textSize="14sp"
+            android:text="♝  Bishop" />
+
+        <Button
+            android:id="@+id/btnKnight"
+            style="@style/Atrium.Button.Secondary"
+            android:layout_width="100dp"
+            android:layout_height="64dp"
+            android:textColor="@color/atrium_ink"
+            android:textSize="14sp"
+            android:text="♞  Knight" />
+
+    </GridLayout>
+
+</LinearLayout>

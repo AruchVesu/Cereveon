@@ -1,0 +1,32 @@
+{
+  "name": "ChessCoach",
+  "image": "mcr.microsoft.com/devcontainers/python:3.13",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" }
+  },
+  "postCreateCommand": "pip install -r llm/requirements.txt -r llm/requirements-ci.txt && sudo apt-get install -y --no-install-recommends stockfish",
+  "remoteEnv": {
+    "STOCKFISH_PATH": "/usr/games/stockfish",
+    "SECA_API_KEY": "dev-key",
+    "SECA_ENV": "dev",
+    "COACH_OLLAMA_URL": "http://host.docker.internal:11434",
+    "COACH_OLLAMA_MODEL": "qwen2.5:7b-instruct-q2_K"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.mypy-type-checker",
+        "ms-python.pylint",
+        "ms-python.black-formatter"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.black-formatter"
+        }
+      }
+    }
+  }
+}

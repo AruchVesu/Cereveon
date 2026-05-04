@@ -1,0 +1,20 @@
+name: "ChessCoach CodeQL configuration"
+
+# Runs the security-extended suite for Python — identical to the CodeQL default
+# before this config file was introduced.  security-and-quality is intentionally
+# NOT used because it adds hundreds of code-quality alerts that are out of scope
+# for the security scan.
+#
+# py/weak-cryptographic-hash in llm/seca/auth/hashing.py (_normalize_password_v1)
+# ─────────────────────────────────────────────────────────────────────────────────
+# CodeQL traces `password → hashlib.sha256(password.encode())` and flags it because
+# SHA-256 is not suitable as a standalone password-hashing primitive.  In this code the
+# sha256 output is immediately fed into PBKDF2-SHA256(digest, random_16_byte_salt, 600_000
+# iterations), which IS the password-storage primitive.  The suppression is applied with an
+# inline `# lgtm[py/weak-cryptographic-hash]` annotation on the specific line; the query
+# remains fully active for all other code paths.
+#
+# Accepted by: [maintainer review — dismiss in GitHub Security tab if inline annotation
+#               is not honoured by the CodeQL action version in use]
+queries:
+  - uses: security-extended

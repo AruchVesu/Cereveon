@@ -1,0 +1,150 @@
+# Production stack for Hetzner VPS.
+# Pull images built and signed by CI from GHCR — do not build on the server.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Required on the server:
+#   - .env.prod (see .env.example, set SECA_ENV=prod + all required vars)
+#   - DOMAIN env var exported in shell (e.g. export DOMAIN=api.yourdomain.com)
+#   - GHCR_IMAGE env var, or edit the api.image line below
+#
+# Before first start, pull the Ollama model:
+#   docker compose -f docker-compose.prod.yml up -d ollama
+#   docker compose -f docker-compose.prod.yml exec ollama ollama pull qwen2.5:7b-instruct-q2_K
+#
+# After the first pull, capture the digest and pin COACH_OLLAMA_MODEL in
+# .env.prod to `qwen2.5:7b-instruct-q2_K@sha256:<digest>` so a re-pushed
+# tag upstream cannot silently change the served model under the LLM
+# regression contract.  See .env.prod.example for the recipe.
+
+services:
+
+  # TLS termination + reverse proxy. Provisions Let's Encrypt certs automatically.
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3 (QUIC)
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN env var must be set (e.g. api.yourdomain.com)}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # Python FastAPI backend. Image is built and pushed to GHCR by CI.
+  api:
+    image: ${GHCR_IMAGE:-ghcr.io/owner/cereveon-llm-api:latest}
+    user: "10001:10001"
+    expose:
+      - "8000"
+    env_file: .env.prod
+    environment:
+      # Ollama runs as a sibling container — reachable by service name.
+      COACH_OLLAMA_URL: http://ollama:11434
+      # Redis cache — comment out to fall back to in-memory.
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - api_data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+        "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 25s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # Postgres — use instead of SQLite for multi-worker deployments.
+  # Set DATABASE_URL=postgresql://chesscoach:<password>@db:5432/chesscoach in .env.prod
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    env_file: .env.prod   # reads POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  # LLM inference — internal only, not exposed to the host.
+  ollama:
+    image: ollama/ollama
+    expose:
+      - "11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:11434/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    # For GPU-enabled Hetzner instances, uncomment:
+    # runtime: nvidia
+    # environment:
+    #   NVIDIA_VISIBLE_DEVICES: all
+
+  # Redis — distributed move cache shared across all uvicorn workers.
+  # No persistence: cache is warm-only; a restart causes cache misses, not data loss.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  api_data:
+  caddy_data:
+  caddy_config:
+  pg_data:
+  ollama_data:

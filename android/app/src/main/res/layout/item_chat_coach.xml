@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Atrium coach message row.
+
+    Layout (left → right):
+      ┃  COACH                              <- mono cyan kicker
+      ┃  Coach prose, italic Cormorant…    <- body
+      ┃  …continuing across multiple lines.
+      ┃
+      ↑ 1px gradient gutter, cyan top fading down
+
+    The gutter is a 1dp View with coach_message_gutter.xml drawable.
+    Body uses Atrium.Body.Italic at 16sp per the handoff spec.
+    Feedback row (👍 / 👎) is preserved at the bottom of every coach
+    message so the existing onFeedback wiring keeps working without
+    Kotlin-side changes.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:paddingTop="@dimen/atrium_space_12"
+    android:paddingBottom="@dimen/atrium_space_8"
+    android:paddingStart="@dimen/atrium_space_4"
+    android:paddingEnd="@dimen/atrium_space_24">
+
+    <!-- Glowing gutter, 1dp wide. -->
+    <View
+        android:layout_width="1dp"
+        android:layout_height="match_parent"
+        android:layout_marginEnd="@dimen/atrium_space_12"
+        android:background="@drawable/coach_message_gutter" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker.Cyan"
+            android:text="Coach" />
+
+        <TextView
+            android:id="@+id/coachBody"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_4"
+            android:textAppearance="@style/Atrium.Body.Italic"
+            android:textSize="16sp" />
+
+        <!-- Feedback row — preserved IDs (btnFeedbackUp / btnFeedbackDown)
+             so the adapter can still wire the onFeedback callback without
+             a programmatic Button construction. -->
+        <LinearLayout
+            android:id="@+id/feedbackRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="end"
+            android:layout_marginTop="@dimen/atrium_space_4">
+
+            <ImageButton
+                android:id="@+id/btnFeedbackUp"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Helpful"
+                android:src="@android:drawable/btn_star_big_off" />
+
+            <ImageButton
+                android:id="@+id/btnFeedbackDown"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="@dimen/atrium_space_4"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Not helpful"
+                android:src="@android:drawable/btn_star_big_off" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</LinearLayout>

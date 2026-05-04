@@ -1,0 +1,109 @@
+# Trivy vulnerability ignore file
+# Format: one CVE-ID or GHSA-ID per line, optionally followed by an expiry date
+# Example:
+#   CVE-2023-12345
+#   GHSA-xxxx-yyyy-zzzz until:2026-06-01
+#
+# All entries below are for CVEs that are UNFIXED in Debian 13 Trixie
+# (python:3.13-slim base image) with no fix available via apt-get upgrade.
+# They are accepted risks, reviewed 2026-04-13. Expiry 2027-07-01 forces
+# re-evaluation; remove each entry once Debian ships a patched package.
+
+# ncurses 6.5+20250216-2: stack-based buffer overflow in infocmp
+# analyze_string. HIGH. Affects libncursesw6, libtinfo6, ncurses-base,
+# ncurses-bin.
+CVE-2025-69720 until:2027-07-01
+
+# systemd 257.9-1~deb13u1: arbitrary code execution or DoS via spurious
+# IPC messages. HIGH. Affects libsystemd0, libudev1.
+CVE-2026-29111 until:2027-07-01
+
+# glibc 2.41-12: DoS via iconv() with specific character sets. MEDIUM.
+# Affects libc-bin, libc6.
+CVE-2026-4046 until:2027-07-01
+
+# glibc 2.41-12: incorrect DNS response parsing. MEDIUM.
+# Affects libc-bin, libc6.
+CVE-2026-4437 until:2027-07-01
+
+# glibc 2.41-12: invalid DNS hostname via gethostbyaddr. MEDIUM.
+# Affects libc-bin, libc6.
+CVE-2026-4438 until:2027-07-01
+
+# systemd 257.9-1~deb13u1: privilege escalation via improper access
+# control. MEDIUM. Affects libsystemd0, libudev1.
+CVE-2026-4105 until:2027-07-01
+
+# util-linux 2.41-5: TOCTOU in mount when setting up loop devices. MEDIUM.
+# Affects bsdutils, libblkid1, liblastlog2-2, libmount1, libsmartcols1,
+# libuuid1, login, mount, util-linux.
+CVE-2026-27456 until:2027-07-01
+
+# zlib1g 1:1.3.dfsg+really1.3.1-1+b1: DoS via infinite loop in CRC32
+# combine functions. MEDIUM. Affects zlib1g.
+CVE-2026-27171 until:2027-07-01
+
+# liblzma5 (xz-utils) 5.6.4-1: DoS via buffer overflow in index decoding.
+# MEDIUM. Affects liblzma5.
+CVE-2026-34743 until:2027-07-01
+
+# libcap2 1:2.73-4: privilege escalation via TOCTOU race in cap_setuid.
+# MEDIUM. Affects libcap2.
+CVE-2026-4878 until:2027-07-01
+
+# tar 1.35+dfsg-3: hidden file injection via crafted archives. MEDIUM.
+# Affects tar.
+CVE-2026-5704 until:2027-07-01
+
+# systemd 257.9-1~deb13u1: nspawn escape-to-host action via crafted optional
+# config file. HIGH. Affects libsystemd0, libudev1 in python:3.13-slim.
+# The application does not use systemd-nspawn; accepted risk.
+CVE-2026-40226 until:2027-07-01
+
+# systemd 257.9-1~deb13u1: udev privilege escalation via malicious hardware
+# devices and unsanitized kernel output. MEDIUM. Affects libudev1.
+# Attack vector requires physical access to attach a crafted hardware device
+# to the host. The application is a containerised web backend deployed on
+# cloud VMs (Hetzner/Fly.io); it does not use udev, does not open device
+# nodes, and has no hardware enumeration code. Physical device access to
+# cloud infrastructure is outside the threat model. No fix in Debian 13.
+CVE-2026-40225 until:2027-07-01
+
+# glibc 2.41-12: information disclosure or denial of service via ungetwc()
+# with specific wide-character encodings. Affects libc-bin, libc6.
+# Reachability analysis (2026-04-27):
+#   - ungetwc() is a C-level wide-character stream API (push back a
+#     wide character onto a FILE*).  Python 3 does NOT use ungetwc():
+#     CPython's text I/O goes through its own codec layer
+#     (Lib/_pyio.py + the io module), wrapping the underlying byte
+#     stream — wide-character C functions are bypassed entirely.
+#   - The only other glibc consumer in the image is Stockfish, which
+#     speaks UCI text protocol over stdin/stdout: ASCII bytes only,
+#     no wide-character I/O.  See engine_pool.py for how we feed it.
+#   - The exploit precondition (attacker-controlled wide-character
+#     stream reaching ungetwc) does not occur in this image's
+#     execution paths.
+# Accepted risk pending a Debian glibc patch; remove this entry when
+# `apt-get upgrade -y` ships a fixed libc6.
+CVE-2026-5928 until:2027-07-01
+
+# glibc 2.41-12: heap buffer overflow in scanf() with `%mc` format
+# specifier and large width.  Affects libc-bin, libc6.  Confirmed via
+# `trivy image` against the published API image on 2026-04-27 — same
+# Trivy DB as CI, both libc-bin and libc6 entries returned no
+# FixedVersion (unfixed in Debian 13 Trixie).
+# Reachability analysis (2026-04-27):
+#   - The vulnerable code path is the C-level scanf family with the
+#     `%mc` (allocate-buffer-for-multibyte-char) modifier.  Neither
+#     CPython nor any of our Python deps call scanf with %mc on
+#     attacker-controlled input — Python parsing happens at the
+#     interpreter level (PyArg_Parse*, struct module, etc.) and never
+#     invokes scanf on byte streams from HTTP requests.
+#   - Stockfish parses UCI commands with its own ad-hoc tokeniser
+#     (Search/UCI.cpp), not scanf.
+#   - The width-modifier overflow requires the application to pass an
+#     attacker-controlled width specifier to scanf — no such code path
+#     exists in this codebase.
+# Accepted risk pending a Debian glibc patch; remove this entry when
+# `apt-get upgrade -y` ships a fixed libc6.
+CVE-2026-5450 until:2027-07-01

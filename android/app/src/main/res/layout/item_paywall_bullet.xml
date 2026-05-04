@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Single ✦-bulleted feature row used in activity_paywall's
+    paywallFeatures container.  Italic Cormorant ink text with a
+    cyan ✦ ornament prefix.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingTop="@dimen/atrium_space_8"
+    android:paddingBottom="@dimen/atrium_space_8">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:fontFamily="@font/cormorant_garamond"
+        android:textStyle="italic"
+        android:textSize="16sp"
+        android:textColor="@color/atrium_accent_cyan"
+        android:text="✦" />
+
+    <TextView
+        android:id="@+id/paywallBulletText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="@dimen/atrium_space_12"
+        android:fontFamily="@font/cormorant_garamond"
+        android:textSize="16sp"
+        android:textColor="@color/atrium_ink"
+        android:text="—"
+        tools:text="Unlimited adaptive games" />
+
+</LinearLayout>

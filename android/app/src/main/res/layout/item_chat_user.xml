@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Atrium user message row.
+
+    Layout (right-aligned, no bubble):
+                                                    YOU    <- mono dim kicker
+                            What about the bishop on g5?    <- body, Inter italic muted
+
+    Per handoff: typography alone separates voices.  No bubble, no
+    background fill.  Mono YOU kicker dim (atrium_dim), body in Inter
+    italic 14sp at atrium_muted.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:gravity="end"
+    android:paddingTop="@dimen/atrium_space_12"
+    android:paddingBottom="@dimen/atrium_space_8"
+    android:paddingStart="@dimen/atrium_space_24"
+    android:paddingEnd="@dimen/atrium_space_4">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textAppearance="@style/Atrium.Kicker"
+        android:text="You" />
+
+    <TextView
+        android:id="@+id/userBody"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/atrium_space_4"
+        android:textAppearance="@style/Atrium.Inline"
+        android:textStyle="italic"
+        android:textSize="14sp"
+        android:textColor="@color/atrium_muted"
+        android:gravity="end" />
+
+</LinearLayout>

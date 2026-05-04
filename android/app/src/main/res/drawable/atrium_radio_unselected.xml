@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Atrium custom radio dot — unselected state.
+
+    Hollow circle with a 1px atrium_hairline_strong border, 12dp
+    diameter.  No fill.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="@android:color/transparent" />
+    <stroke
+        android:width="@dimen/atrium_hairline_thickness"
+        android:color="@color/atrium_hairline_strong" />
+    <size android:width="12dp" android:height="12dp" />
+</shape>

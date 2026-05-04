@@ -1,0 +1,6 @@
+id: move_quality_mistake
+type: move_quality
+conditions:
+  last_move_quality: mistake
+content:
+  description: "The last move is classified as a mistake."

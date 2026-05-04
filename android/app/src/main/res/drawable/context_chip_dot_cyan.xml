@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cyan glowing dot used by the chat context chip (DISCUSSING · MOVE …). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="@color/atrium_accent_cyan" />
+    <size android:width="6dp" android:height="6dp" />
+</shape>

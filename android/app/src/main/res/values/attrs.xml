@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+        Custom attributes for the Atrium widget set.  Declared so the
+        XML inflater can populate kicker / title / band / side from
+        layout files at design time.
+    -->
+
+    <declare-styleable name="AtriumChapterHeaderView">
+        <attr name="atriumKicker" format="string" />
+        <attr name="atriumTitle"  format="string" />
+    </declare-styleable>
+
+    <declare-styleable name="AtriumCardView">
+        <!--
+            Show top-left + bottom-right corner ticks (12dp accent
+            cyan) for the "official document" card treatment.
+        -->
+        <attr name="atriumCardTicks" format="boolean" />
+    </declare-styleable>
+
+    <declare-styleable name="EvalBandView">
+        <!--
+            Order MUST match EvalBandView.Band enum:
+            0=LOSING, 1=WORSE, 2=EQUAL, 3=BETTER, 4=WINNING.
+        -->
+        <attr name="atriumBand" format="enum">
+            <enum name="losing"  value="0" />
+            <enum name="worse"   value="1" />
+            <enum name="equal"   value="2" />
+            <enum name="better"  value="3" />
+            <enum name="winning" value="4" />
+        </attr>
+        <attr name="atriumSide" format="enum">
+            <enum name="white" value="0" />
+            <enum name="black" value="1" />
+        </attr>
+    </declare-styleable>
+
+</resources>

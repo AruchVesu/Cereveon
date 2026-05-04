@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Circular avatar background — radial cyan glow at top-left over a
+    deep ink fill, with a thin cyan border.  Used on the Home header
+    next to the wordmark.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <gradient
+        android:type="radial"
+        android:gradientRadius="20dp"
+        android:centerX="0.35"
+        android:centerY="0.30"
+        android:startColor="#334FD9E5"
+        android:endColor="#0F1828" />
+    <stroke
+        android:width="1dp"
+        android:color="#444FD9E5" />
+</shape>

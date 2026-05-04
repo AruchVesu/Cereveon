@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Active opening-card background — faint cyan fill + accent-cyan border,
+    matching the Resume card and other "this is the live one" surfaces.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#084FD9E5" />
+    <stroke
+        android:width="1dp"
+        android:color="#554FD9E5" />
+</shape>

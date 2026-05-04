@@ -1,0 +1,3 @@
+timeout: 15m
+ignorefile: .trivyignore
+ignore-policy: trivy-ignore-policy.rego

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    JetBrains Mono — UI labels (kicker, UPPERCASE, letter-spaced),
+    numerics (clocks, eval).  Roles per Atrium handoff:
+    Kicker 500 (8–11px, letter-spacing 2.0–2.4),
+    Numerics 500 (11–22px, letter-spacing 0.5).
+-->
+<font-family xmlns:app="http://schemas.android.com/apk/res-auto"
+    app:fontProviderAuthority="com.google.android.gms.fonts"
+    app:fontProviderPackage="com.google.android.gms"
+    app:fontProviderQuery="name=JetBrains+Mono&amp;weight=400|500&amp;besteffort=true"
+    app:fontProviderCerts="@array/com_google_android_gms_fonts_certs" />

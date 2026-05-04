@@ -1,0 +1,4 @@
+[Golden prompt content generated once via render_mode_2_prompt
+and pasted verbatim here]
+
+(Do not auto-generate. This snapshot must be frozen.)

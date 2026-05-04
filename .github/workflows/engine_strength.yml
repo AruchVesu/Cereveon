@@ -1,0 +1,60 @@
+name: Engine Strength (Perft + Tactical)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    paths:
+      - "android/app/src/main/cpp/SachmatuLenta.h"
+      - "android/app/src/main/cpp/SachmatuLenta.cpp"
+      - "engine/perft_test.cpp"
+      - "engine/strength_test.cpp"
+      - ".github/workflows/engine_strength.yml"
+  pull_request:
+    branches: [ "main", "master" ]
+    paths:
+      - "android/app/src/main/cpp/SachmatuLenta.h"
+      - "android/app/src/main/cpp/SachmatuLenta.cpp"
+      - "engine/perft_test.cpp"
+      - "engine/strength_test.cpp"
+      - ".github/workflows/engine_strength.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine-strength-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  perft:
+    name: Perft correctness + tactical search
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Compile perft test binary
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra \
+              -I android/app/src/main/cpp \
+              engine/perft_test.cpp \
+              android/app/src/main/cpp/SachmatuLenta.cpp \
+              -o engine/perft_bin
+
+      - name: Run perft + tactical tests
+        run: ./engine/perft_bin
+
+      - name: Compile adaptive-strength test binary
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra \
+              -I android/app/src/main/cpp \
+              engine/strength_test.cpp \
+              android/app/src/main/cpp/SachmatuLenta.cpp \
+              -o engine/strength_bin
+
+      - name: Run adaptive-strength tests
+        run: ./engine/strength_bin

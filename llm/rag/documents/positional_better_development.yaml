@@ -1,0 +1,6 @@
+id: positional_better_development
+type: positional
+conditions:
+  position_flags: better_development
+content:
+  description: "Better-developed pieces coordinate more effectively."

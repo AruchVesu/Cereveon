@@ -1,0 +1,181 @@
+name: Production Deploy
+
+# Manual re-deploy — for hotfixes, rollbacks to a specific digest, or
+# re-deploying a previously-built image without triggering a full CI run.
+#
+# Automatic deploys are handled by fly-deploy.yml, which gates on all quality
+# and security checks before deploying.  Use this workflow only when you need
+# to deploy a specific, already-published image digest outside of that flow.
+#
+# How to find the api_digest:
+#   GitHub → Actions → CI/CD → <run> → docker-images job →
+#   "Build llm API image" step → digest output  (sha256:...)
+#   OR: GHCR → cereveon-llm-api → <tag> → Digest field
+#
+# The concurrency group is identical to fly-deploy.yml's deploy job, so this
+# workflow and the automatic pipeline can never run simultaneously.
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_digest:
+        description: "API image digest (sha256:…)"
+        required: true
+        type: string
+      image_owner:
+        description: "Lowercase GHCR owner (leave blank → repo owner)"
+        required: false
+        type: string
+
+concurrency:
+  group: hetzner-production
+  cancel-in-progress: false
+
+env:
+  API_IMAGE_NAME: cereveon-llm-api
+
+jobs:
+  validate:
+    name: Validate inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Validate digest format
+        shell: bash
+        env:
+          INPUT_DIGEST: ${{ inputs.api_digest }}
+        run: |
+          if [[ ! "$INPUT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::api_digest must be a sha256 digest (sha256:<64 hex chars>). Got: $INPUT_DIGEST"
+            exit 1
+          fi
+          echo "Digest format valid: $INPUT_DIGEST"
+
+  deploy:
+    name: Deploy to Hetzner
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [validate]
+    permissions:
+      contents: read
+    environment:
+      name: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Normalise owner to lowercase and combine with the pinned digest.
+      # DEPLOY_IMAGE is the full, immutable image reference passed to the server.
+      - name: Resolve deploy image reference
+        id: image
+        shell: bash
+        env:
+          INPUT_OWNER: ${{ inputs.image_owner }}
+          INPUT_DIGEST: ${{ inputs.api_digest }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          OWNER=$(echo "${INPUT_OWNER:-$REPO_OWNER}" | tr '[:upper:]' '[:lower:]')
+          REF="ghcr.io/$OWNER/${{ env.API_IMAGE_NAME }}@$INPUT_DIGEST"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "Resolved deploy image: $REF"
+
+      - name: Check Hetzner secrets availability
+        id: hetzner-check
+        shell: bash
+        env:
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+        run: |
+          if [ -z "${HETZNER_HOST}" ] || [ -z "${HETZNER_SSH_KEY}" ]; then
+            echo "::warning::HETZNER_HOST or HETZNER_SSH_KEY not configured. Skipping deploy."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Zero-downtime rolling deploy — identical strategy to fly-deploy.yml.
+      #
+      # Why --scale api=2 works:
+      #   docker-compose.prod.yml uses `expose` (not `ports`) for the api service,
+      #   so multiple containers coexist without host-port conflicts.
+      #   Caddy proxies to the "api" service name; Docker's internal DNS
+      #   round-robins across all running containers automatically.
+      #
+      # Sequence:
+      #  1. Record PREV_CONTAINER + PREV_IMAGE (rollback reference).
+      #  2. docker pull "$DEPLOY_IMAGE" — fetch pinned digest; never resolves :latest.
+      #  3. docker compose up --scale api=2 --no-recreate:
+      #       --no-recreate  → existing container keeps serving during rollout.
+      #       --scale api=2  → adds one more container running the NEW image.
+      #  4. Identify NEW_CONTAINER (the one that wasn't there before).
+      #  5. Poll Docker's .State.Health.Status on NEW_CONTAINER for up to 90 s.
+      #  6a. healthy  → docker stop --time 30 PREV_CONTAINER (SIGTERM drain), rm.
+      #                 Traffic already on new container. Zero downtime.
+      #  6b. unhealthy → docker stop/rm NEW_CONTAINER.
+      #                  PREV_CONTAINER never touched. Automatic rollback.
+      - name: Deploy to Hetzner via SSH
+        if: steps.hetzner-check.outputs.available == 'true'
+        uses: appleboy/ssh-action@v1.2.5
+        env:
+          DEPLOY_IMAGE: ${{ steps.image.outputs.ref }}
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: deploy
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          envs: DEPLOY_IMAGE
+          script: |
+            set -euo pipefail
+            cd /opt/chesscoach
+
+            # ── 1. Record running container for rollback reference ──────────
+            PREV_CONTAINER=$(docker compose -f docker-compose.prod.yml ps -q api 2>/dev/null | head -1 || true)
+            PREV_IMAGE=$([ -n "$PREV_CONTAINER" ] && \
+              docker inspect --format='{{.Config.Image}}' "$PREV_CONTAINER" 2>/dev/null || true)
+            echo "Previous: ${PREV_IMAGE:-none}"
+            echo "Deploying: $DEPLOY_IMAGE"
+
+            # ── 2. Pull pinned, CI-signed image by digest ───────────────────
+            docker pull "$DEPLOY_IMAGE"
+
+            # ── 3. Scale to 2: new container alongside old ──────────────────
+            GHCR_IMAGE="$DEPLOY_IMAGE" \
+              docker compose -f docker-compose.prod.yml up -d --scale api=2 --no-recreate api
+
+            # ── 4. Identify the new container ───────────────────────────────
+            NEW_CONTAINER=$(docker compose -f docker-compose.prod.yml ps -q api \
+              | grep -vxF "${PREV_CONTAINER:-}" | head -1 || true)
+            if [ -z "$NEW_CONTAINER" ]; then
+              echo "::error::Could not identify new container after scale-up."
+              exit 1
+            fi
+            echo "New container: $NEW_CONTAINER"
+
+            # ── 5. Wait up to 90 s for Docker healthcheck on new container ──
+            for i in $(seq 1 18); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$NEW_CONTAINER" 2>/dev/null || echo "unknown")
+              [ "$STATUS" = "healthy" ] && break
+              echo "  Health.Status: $STATUS ($i/18)"
+              sleep 5
+            done
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$NEW_CONTAINER" 2>/dev/null || echo "failed")
+
+            # ── 6a. Healthy: gracefully drain old, traffic shifts to new ────
+            if [ "$STATUS" = "healthy" ]; then
+              if [ -n "${PREV_CONTAINER:-}" ]; then
+                docker stop --time 30 "$PREV_CONTAINER"
+                docker rm "$PREV_CONTAINER"
+              fi
+              echo "Deployment complete."
+              exit 0
+            fi
+
+            # ── 6b. Unhealthy: remove new, old container keeps serving ──────
+            echo "::error::New container unhealthy ($STATUS). Rolling back..."
+            docker stop "$NEW_CONTAINER" 2>/dev/null || true
+            docker rm  "$NEW_CONTAINER" 2>/dev/null || true
+            echo "Rolled back — ${PREV_IMAGE:-original container} still running."
+            exit 1

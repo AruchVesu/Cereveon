@@ -1,0 +1,147 @@
+name: Security
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v4
+
+  codeql-python:
+    name: CodeQL (python)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          config-file: .github/codeql-config.yml
+
+      - name: Analyze with CodeQL (SARIF only — upload after filter)
+        uses: github/codeql-action/analyze@v4
+        with:
+          upload: never
+          output: codeql-sarif
+
+      - name: Filter accepted false positives from SARIF
+        run: python .github/scripts/filter_codeql_sarif.py codeql-sarif
+
+      - name: Upload filtered SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: codeql-sarif
+          category: codeql-python
+
+  codeql-javascript:
+    name: CodeQL (javascript)
+    if: >-
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: javascript
+
+      - name: Analyze with CodeQL
+        uses: github/codeql-action/analyze@v4
+
+  trivy-misconfig:
+    name: Trivy misconfiguration scan
+    if: >-
+      github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run Trivy misconfiguration scan
+        id: trivy-misconfig
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-misconfig-results.sarif
+          severity: HIGH,CRITICAL
+          scanners: misconfig
+          exit-code: "1"
+
+      - name: Upload Trivy misconfiguration results
+        if: hashFiles('trivy-misconfig-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-misconfig-results.sarif
+
+      - name: Fail on Trivy misconfig findings
+        if: steps.trivy-misconfig.outcome == 'failure'
+        run: |
+          echo "Trivy found HIGH/CRITICAL misconfigurations. See the step log and SARIF results."
+          exit 1
+
+  trivy-runtime-vulns:
+    name: Trivy runtime vulnerability scan
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare Trivy runtime manifest scan input
+        shell: bash
+        run: |
+          rm -rf tmp_logs/trivy-runtime
+          mkdir -p tmp_logs/trivy-runtime
+          cp llm/requirements.txt tmp_logs/trivy-runtime/requirements.txt
+
+      - name: Run Trivy runtime vulnerability scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: tmp_logs/trivy-runtime
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          scanners: vuln
+          exit-code: "1"

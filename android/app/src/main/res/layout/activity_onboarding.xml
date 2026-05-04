@@ -1,0 +1,309 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Onboarding · Skill calibration (handoff #2).
+
+    Shown once after registration so the adaptation layer can dispatch
+    a first opponent at the right level.  Existing users (who logged
+    in rather than registered) skip this screen entirely.
+
+    Top → bottom:
+      1.  Centered kicker — "CEREVEON · STEP 2 OF 3".
+      2.  Italic Cormorant title — "How do you play?".
+      3.  Muted italic subtitle — "Drag the dot to your honest estimate."
+      4.  ✦ ornament rule.
+      5.  Hero rating value — italic 44sp Cormorant.
+      6.  Material Slider — cyan thumb on hairline track.
+      7.  Tick labels row — "800 · 1400 · 2000 · 2600+".
+      8.  Confidence radio rows — Sure of it / Guessing / Rusty.
+      9.  First-opponent preview row — amber dot + "~XXXX · adaptive".
+      10. Footer — Back (text) + Continue (primary).
+
+    Persistence: SharedPreferences "chesscoach_prefs" (same store
+    MainActivity / SettingsBottomSheet use).  See OnboardingActivity
+    for the keys.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_atrium_gradient"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:paddingStart="@dimen/atrium_space_24"
+        android:paddingEnd="@dimen/atrium_space_24"
+        android:paddingTop="@dimen/atrium_space_44"
+        android:paddingBottom="@dimen/atrium_space_24">
+
+        <!-- Centered kicker. -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_32"
+            android:textAppearance="@style/Atrium.Kicker.Cyan"
+            android:text="Cereveon · Step 2 of 3" />
+
+        <!-- Italic display title. -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_8"
+            android:textAppearance="@style/Atrium.Display"
+            android:text="How do you play?" />
+
+        <!-- Muted italic subtitle. -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_4"
+            android:textAppearance="@style/Atrium.Body.Italic"
+            android:textColor="@color/atrium_muted"
+            android:textSize="14sp"
+            android:gravity="center_horizontal"
+            android:text="Drag the dot to your honest estimate." />
+
+        <!-- ✦ ornament. -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_12"
+            android:layout_marginBottom="@dimen/atrium_space_24"
+            android:fontFamily="@font/cormorant_garamond"
+            android:textColor="@color/atrium_muted"
+            android:textSize="14sp"
+            android:text="✦" />
+
+        <!-- Hero rating value. -->
+        <TextView
+            android:id="@+id/txtRatingValue"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Display.Large"
+            android:text="1500"
+            tools:text="1720" />
+
+        <!-- Rating slider. -->
+        <com.google.android.material.slider.Slider
+            android:id="@+id/sliderRating"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_8"
+            android:valueFrom="800"
+            android:valueTo="2600"
+            android:value="1500"
+            android:stepSize="10"
+            app:thumbColor="@color/atrium_accent_cyan"
+            app:trackColorActive="@color/atrium_accent_cyan"
+            app:trackColorInactive="@color/atrium_hairline"
+            app:tickColor="@android:color/transparent" />
+
+        <!-- Tick labels row. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="@dimen/atrium_space_4">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:gravity="start"
+                android:text="800" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:gravity="center"
+                android:text="1400" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:gravity="center"
+                android:text="2000" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:gravity="end"
+                android:text="2600+" />
+
+        </LinearLayout>
+
+        <!-- Hairline rule. -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_hairline_thickness"
+            android:layout_marginTop="@dimen/atrium_space_24"
+            android:layout_marginBottom="@dimen/atrium_space_16"
+            android:background="@color/atrium_hairline" />
+
+        <!-- Confidence section kicker. -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker"
+            android:text="How sure are you?" />
+
+        <!-- Confidence radio rows. -->
+        <LinearLayout
+            android:id="@+id/confSure"
+            style="@style/Atrium.SettingsRow"
+            android:layout_marginStart="0dp"
+            android:layout_marginEnd="0dp"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp"
+            android:tag="sure">
+
+            <View
+                android:id="@+id/confSureDot"
+                style="@style/Atrium.SettingsRow.Dot"
+                android:background="@drawable/atrium_radio_unselected" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:text="Sure of it" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Sub"
+                android:text="I rate often" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/confGuessing"
+            style="@style/Atrium.SettingsRow"
+            android:layout_marginStart="0dp"
+            android:layout_marginEnd="0dp"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp"
+            android:tag="guessing">
+
+            <View
+                android:id="@+id/confGuessingDot"
+                style="@style/Atrium.SettingsRow.Dot"
+                android:background="@drawable/atrium_radio_selected" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:text="Guessing" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Sub"
+                android:text="A rough sense" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/confRusty"
+            style="@style/Atrium.SettingsRow"
+            android:layout_marginStart="0dp"
+            android:layout_marginEnd="0dp"
+            android:paddingStart="0dp"
+            android:paddingEnd="0dp"
+            android:tag="rusty">
+
+            <View
+                android:id="@+id/confRustyDot"
+                style="@style/Atrium.SettingsRow.Dot"
+                android:background="@drawable/atrium_radio_unselected" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:text="Rusty" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Sub"
+                android:text="Out of practice" />
+
+        </LinearLayout>
+
+        <!-- Hairline rule. -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_hairline_thickness"
+            android:layout_marginTop="@dimen/atrium_space_16"
+            android:layout_marginBottom="@dimen/atrium_space_16"
+            android:background="@color/atrium_hairline" />
+
+        <!-- First-opponent preview row. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <View
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:layout_marginEnd="@dimen/atrium_space_8"
+                android:background="@drawable/rail_dot_amber" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Body.Italic"
+                android:textSize="15sp"
+                android:text="First opponent" />
+
+            <Space
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1" />
+
+            <TextView
+                android:id="@+id/txtFirstOpponent"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Numeric.Amber"
+                android:text="—"
+                tools:text="~1480 · adaptive" />
+
+        </LinearLayout>
+
+        <!-- Footer — Back + Continue. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="@dimen/atrium_space_32"
+            android:gravity="center_vertical">
+
+            <Button
+                android:id="@+id/btnOnboardingBack"
+                style="@style/Atrium.Button.Secondary"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/atrium_tap_target"
+                android:textSize="14sp"
+                android:text="Back" />
+
+            <Space
+                android:layout_width="@dimen/atrium_space_12"
+                android:layout_height="0dp" />
+
+            <Button
+                android:id="@+id/btnOnboardingContinue"
+                style="@style/Atrium.Button.Primary"
+                android:layout_width="0dp"
+                android:layout_height="@dimen/atrium_tap_target"
+                android:layout_weight="1"
+                android:text="Continue" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</ScrollView>

@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StockfishAnalysis",
+  "type": "object",
+  "required": ["fen", "side_to_move", "evaluation", "best_move"],
+  "properties": {
+    "fen": {
+      "type": "string"
+    },
+
+    "side_to_move": {
+      "type": "string",
+      "enum": ["white", "black"]
+    },
+
+    "evaluation": {
+      "type": "object",
+      "required": ["type", "value", "winning_side", "confidence"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["cp", "mate"]
+        },
+        "value": {
+          "type": "integer",
+          "description": "Centipawns from White perspective"
+        },
+        "mate_in": {
+          "type": ["integer", "null"]
+        },
+        "winning_side": {
+          "type": "string",
+          "enum": ["white", "black", "none"]
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["high", "medium", "low"]
+        }
+      }
+    },
+
+    "best_move": {
+      "type": "object",
+      "required": ["uci", "san", "evaluation_after", "eval_delta", "category"],
+      "properties": {
+        "uci": { "type": "string" },
+        "san": { "type": "string" },
+        "evaluation_after": { "type": "integer" },
+        "eval_delta": { "type": "integer" },
+        "category": {
+          "type": "string",
+          "enum": ["best", "only", "defensive", "tactical"]
+        }
+      }
+    },
+
+    "alternatives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "uci": { "type": "string" },
+          "san": { "type": "string" },
+          "evaluation_after": { "type": "integer" },
+          "eval_delta": { "type": "integer" }
+        }
+      }
+    },
+
+    "position_flags": {
+      "type": "object",
+      "properties": {
+        "king_safety": { "type": "boolean" },
+        "open_file": { "type": "boolean" },
+        "passed_pawn": { "type": "boolean" },
+        "space_advantage": { "type": "boolean" }
+      }
+    },
+
+    "tactical_flags": {
+      "type": "object",
+      "properties": {
+        "fork": { "type": "boolean" },
+        "pin": { "type": "boolean" },
+        "skewer": { "type": "boolean" },
+        "back_rank": { "type": "boolean" }
+      }
+    },
+
+    "errors": {
+      "type": "object",
+      "properties": {
+        "last_move_quality": {
+          "type": "string",
+          "enum": ["best", "inaccuracy", "mistake", "blunder"]
+        }
+      }
+    }
+  }
+}

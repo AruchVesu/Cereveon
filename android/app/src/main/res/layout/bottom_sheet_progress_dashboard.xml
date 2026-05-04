@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Profile / stats (screen #9 in the handoff).
+
+    Top → bottom:
+      1.  Drag handle.
+      2.  Chapter header — "PROFILE" / "Your trends".
+      3.  Hero rating — italic display 44sp.  Activity sets
+          txtRating to a bare integer (e.g. "1720"); the kicker
+          beneath labels it.
+      4.  Confidence row — small inline cell with mono numeric and
+          ACCURACY-style kicker.
+      5.  RATING TREND section — kicker + RatingSparklineView (or
+          txtNoRatingHistory empty state).
+      6.  WEAKNESS PROFILE section — kicker + WeaknessBarChartView.
+          Atrium uses italic chips for "patterns" (handoff #9), but
+          the existing bar chart is more informative — kept and
+          re-skinned via the foundation theme cascade rather than
+          reduced to chips.
+      7.  HOW THE COACH SEES YOU section — kicker +
+          worldModelContainer (activity inflates content into it).
+      8.  TRAINING FOCUS section — kicker + recommendationsList,
+          with txtNoRecommendations empty state.
+      9.  txtDashboardError shown when the dashboard fetch fails.
+
+    Preserved IDs (every findViewById in
+    ProgressDashboardBottomSheet.kt resolves unchanged):
+      progressSparkline, txtNoRatingHistory, txtRating, txtConfidence,
+      weaknessChart, worldModelContainer, recommendationsList,
+      txtNoRecommendations, txtDashboardError.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_atrium_gradient"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="@dimen/atrium_space_44">
+
+        <!-- Drag handle. -->
+        <View
+            android:layout_width="40dp"
+            android:layout_height="3dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/atrium_space_8"
+            android:layout_marginBottom="@dimen/atrium_space_8"
+            android:background="@color/atrium_hairline_strong" />
+
+        <!-- Chapter header. -->
+        <ai.chesscoach.app.AtriumChapterHeaderView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:atriumKicker="Profile"
+            app:atriumTitle="Your trends" />
+
+        <!-- Hero rating + kicker. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingTop="@dimen/atrium_space_8">
+
+            <TextView
+                android:id="@+id/txtRating"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Display.Large"
+                android:text="—"
+                tools:text="1720" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_4"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:text="Current rating" />
+
+        </LinearLayout>
+
+        <!-- Inline confidence row. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingTop="@dimen/atrium_space_12">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:text="Confidence · " />
+
+            <TextView
+                android:id="@+id/txtConfidence"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Numeric.Cyan"
+                android:text="—"
+                tools:text="72%" />
+
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_hairline_thickness"
+            android:layout_marginStart="@dimen/atrium_space_24"
+            android:layout_marginEnd="@dimen/atrium_space_24"
+            android:layout_marginTop="@dimen/atrium_space_16"
+            android:layout_marginBottom="@dimen/atrium_space_16"
+            android:background="@color/atrium_hairline" />
+
+        <!-- RATING TREND. -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker"
+            android:text="Rating trend"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingBottom="@dimen/atrium_space_4" />
+
+        <ai.chesscoach.app.RatingSparklineView
+            android:id="@+id/progressSparkline"
+            android:layout_width="match_parent"
+            android:layout_height="72dp"
+            android:layout_marginStart="@dimen/atrium_space_24"
+            android:layout_marginEnd="@dimen/atrium_space_24"
+            android:layout_marginBottom="@dimen/atrium_space_8"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
+        <TextView
+            android:id="@+id/txtNoRatingHistory"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Inline"
+            android:textStyle="italic"
+            android:textColor="@color/atrium_dim"
+            android:text="Play more games to see your rating trend."
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingBottom="@dimen/atrium_space_8"
+            android:visibility="gone" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_hairline_thickness"
+            android:layout_marginStart="@dimen/atrium_space_24"
+            android:layout_marginEnd="@dimen/atrium_space_24"
+            android:layout_marginTop="@dimen/atrium_space_12"
+            android:layout_marginBottom="@dimen/atrium_space_16"
+            android:background="@color/atrium_hairline" />
+
+        <!-- WEAKNESS PROFILE. -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker"
+            android:text="Weakness profile"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingBottom="@dimen/atrium_space_8" />
+
+        <ai.chesscoach.app.WeaknessBarChartView
+            android:id="@+id/weaknessChart"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/atrium_space_20"
+            android:layout_marginEnd="@dimen/atrium_space_20"
+            android:minHeight="56dp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_hairline_thickness"
+            android:layout_marginStart="@dimen/atrium_space_24"
+            android:layout_marginEnd="@dimen/atrium_space_24"
+            android:layout_marginTop="@dimen/atrium_space_16"
+            android:layout_marginBottom="@dimen/atrium_space_16"
+            android:background="@color/atrium_hairline" />
+
+        <!-- HOW THE COACH SEES YOU. -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker"
+            android:text="How the coach sees you"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingBottom="@dimen/atrium_space_8" />
+
+        <LinearLayout
+            android:id="@+id/worldModelContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_hairline_thickness"
+            android:layout_marginStart="@dimen/atrium_space_24"
+            android:layout_marginEnd="@dimen/atrium_space_24"
+            android:layout_marginTop="@dimen/atrium_space_16"
+            android:layout_marginBottom="@dimen/atrium_space_16"
+            android:background="@color/atrium_hairline" />
+
+        <!-- TRAINING FOCUS. -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker"
+            android:text="Training focus"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingBottom="@dimen/atrium_space_8" />
+
+        <LinearLayout
+            android:id="@+id/recommendationsList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24" />
+
+        <TextView
+            android:id="@+id/txtNoRecommendations"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Inline"
+            android:textStyle="italic"
+            android:textColor="@color/atrium_dim"
+            android:text="Play more games to unlock personalised recommendations."
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingBottom="@dimen/atrium_space_16"
+            android:visibility="gone" />
+
+        <!-- Error state. -->
+        <TextView
+            android:id="@+id/txtDashboardError"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Inline"
+            android:textStyle="italic"
+            android:textColor="@color/atrium_dim"
+            android:text="Could not load dashboard. Check your connection."
+            android:gravity="center"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingTop="@dimen/atrium_space_32"
+            android:paddingBottom="@dimen/atrium_space_32"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+</ScrollView>

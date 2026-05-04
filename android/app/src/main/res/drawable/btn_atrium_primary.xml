@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Atrium primary button.  Per handoff: 44dp height, 1px cyan border at
+    33% alpha, transparent fill, square-ish 2dp radius.  Pressed state
+    bumps the border to full cyan and adds an 8% accent fill.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <stroke
+                android:width="@dimen/atrium_hairline_thickness"
+                android:color="@color/atrium_accent_cyan" />
+            <solid android:color="@color/atrium_accent_cyan_1a" />
+            <corners android:radius="@dimen/atrium_corner_radius" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <stroke
+                android:width="@dimen/atrium_hairline_thickness"
+                android:color="@color/atrium_accent_cyan_55" />
+            <solid android:color="@android:color/transparent" />
+            <corners android:radius="@dimen/atrium_corner_radius" />
+        </shape>
+    </item>
+</selector>

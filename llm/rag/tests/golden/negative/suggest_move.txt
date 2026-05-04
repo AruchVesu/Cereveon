@@ -1,0 +1,2 @@
+Black should play Qh4+ followed by Qxe4 to win material.
+This move exploits the hanging piece.

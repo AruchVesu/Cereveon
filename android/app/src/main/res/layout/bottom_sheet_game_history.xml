@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Game history.
+
+    Closely related to the "Recent games list" mentioned under Atrium
+    handoff screen #9 (Profile / stats): "compact rows, mono date +
+    result + rating delta".  This sheet is the standalone version
+    of that list, opened from the drawer.
+
+    Top → bottom:
+      1.  Drag handle.
+      2.  AtriumChapterHeaderView — "GAMES" / "Recent".
+      3.  Optional rating sparkline (visible only when ≥2 games
+          carry a rating_after).
+      4.  Scrollable history list — rows built programmatically by
+          GameHistoryBottomSheet.buildGameRow / buildDivider.
+      5.  Empty / error state (txtHistoryEmpty).
+
+    Preserved IDs (every GameHistoryBottomSheet.kt findViewById
+    resolves unchanged): ratingSparkline, historyList, txtHistoryEmpty.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_atrium_gradient"
+    android:paddingBottom="@dimen/atrium_space_24">
+
+    <!-- Drag handle. -->
+    <View
+        android:layout_width="40dp"
+        android:layout_height="3dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="@dimen/atrium_space_8"
+        android:layout_marginBottom="@dimen/atrium_space_8"
+        android:background="@color/atrium_hairline_strong" />
+
+    <!-- Chapter header. -->
+    <ai.chesscoach.app.AtriumChapterHeaderView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:atriumKicker="Games"
+        app:atriumTitle="Recent" />
+
+    <!-- Rating sparkline trend (≥2 games required). -->
+    <ai.chesscoach.app.RatingSparklineView
+        android:id="@+id/ratingSparkline"
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:layout_marginStart="@dimen/atrium_space_24"
+        android:layout_marginEnd="@dimen/atrium_space_24"
+        android:layout_marginTop="@dimen/atrium_space_8"
+        android:layout_marginBottom="@dimen/atrium_space_4"
+        android:visibility="gone"
+        tools:visibility="visible" />
+
+    <!-- Scrollable history list. -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="400dp">
+
+        <LinearLayout
+            android:id="@+id/historyList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingTop="@dimen/atrium_space_8" />
+
+    </ScrollView>
+
+    <!-- Empty / error state. -->
+    <TextView
+        android:id="@+id/txtHistoryEmpty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="@style/Atrium.Body.Italic"
+        android:textColor="@color/atrium_dim"
+        android:text="No games recorded yet."
+        android:gravity="center"
+        android:paddingTop="@dimen/atrium_space_32"
+        android:paddingBottom="@dimen/atrium_space_32"
+        android:visibility="gone" />
+
+</LinearLayout>

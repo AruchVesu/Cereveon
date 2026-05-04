@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Opening card row.
+
+    Used in activity_openings's scroll list, one per repertoire entry.
+    Visual states (active vs. dormant) are controlled at runtime by
+    OpeningsActivity swapping the background drawable + colour tints
+    on the ECO label and progress bar fill.
+
+    Top → bottom:
+      1.  Header — ECO mono label + italic name + optional active badge
+      2.  UCI line — mono, muted
+      3.  Mastery row — thin track + cyan/muted fill bar + percentage
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="@dimen/atrium_space_12"
+    android:layout_marginBottom="@dimen/atrium_space_8"
+    android:background="@drawable/atrium_opening_card_dormant"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- Header row — ECO + name + active badge. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:baselineAligned="false">
+
+        <TextView
+            android:id="@+id/openingEco"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/jetbrains_mono"
+            android:textSize="11sp"
+            android:letterSpacing="0.136"
+            android:textColor="@color/atrium_dim"
+            android:text="—"
+            tools:text="C84" />
+
+        <TextView
+            android:id="@+id/openingName"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="@dimen/atrium_space_8"
+            android:fontFamily="@font/cormorant_garamond"
+            android:textStyle="italic"
+            android:textColor="@color/atrium_ink"
+            android:textSize="17sp"
+            android:text="—"
+            tools:text="Ruy Lopez · Closed" />
+
+        <TextView
+            android:id="@+id/openingActiveBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker.Cyan"
+            android:visibility="gone"
+            android:text="active"
+            tools:visibility="visible" />
+
+    </LinearLayout>
+
+    <!-- UCI line. -->
+    <TextView
+        android:id="@+id/openingLine"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/atrium_space_4"
+        android:fontFamily="@font/jetbrains_mono"
+        android:textSize="11sp"
+        android:letterSpacing="0.045"
+        android:textColor="@color/atrium_muted"
+        android:text="—"
+        tools:text="1.e4 e5 2.♘f3 ♘c6 3.♗b5 a6" />
+
+    <!-- Mastery row — track + percentage. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/atrium_space_8"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <FrameLayout
+            android:layout_width="0dp"
+            android:layout_height="2dp"
+            android:layout_weight="1"
+            android:background="@color/atrium_hairline">
+
+            <View
+                android:id="@+id/openingMasteryFill"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:background="@color/atrium_muted" />
+
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/openingMasteryPct"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/atrium_space_8"
+            android:fontFamily="@font/jetbrains_mono"
+            android:textSize="9sp"
+            android:letterSpacing="0.111"
+            android:textColor="@color/atrium_dim"
+            android:text="—"
+            tools:text="78%" />
+
+    </LinearLayout>
+
+</LinearLayout>

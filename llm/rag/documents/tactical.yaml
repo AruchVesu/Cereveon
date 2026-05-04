@@ -1,0 +1,6 @@
+id: tactic_hanging_piece
+type: tactical
+conditions:
+  tactical_flags: hanging_piece
+content:
+  description: "A piece is left undefended and tactically vulnerable."

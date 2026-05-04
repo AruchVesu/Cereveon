@@ -1,0 +1,346 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Settings (handoff screen #10).
+
+    Sections divided by hairline rules:
+      1.  Coach voice — radio (formal / conversational / terse).
+      2.  Board style — radio (flat / engraved / wireframe).  Choice
+          persists today; ChessBoardView consumes it once variant
+          support lands (TODO marked in SettingsBottomSheet).
+      3.  Sound — switch.  Persists; no audio system to consume yet.
+      4.  Notifications — switch.  Persists; no notifier to consume yet.
+      5.  Account — chevron row that opens the existing change-password
+          flow already wired in MainActivity drawer.
+
+    Each row is 44dp tall with italic Cormorant title left, value or
+    custom radio dot right.
+
+    All view IDs are stable so SettingsBottomSheet.kt's findViewById
+    resolves them.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_atrium_gradient"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingBottom="@dimen/atrium_space_44">
+
+        <!-- Drag handle. -->
+        <View
+            android:layout_width="40dp"
+            android:layout_height="3dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/atrium_space_8"
+            android:layout_marginBottom="@dimen/atrium_space_8"
+            android:background="@color/atrium_hairline_strong" />
+
+        <!-- Chapter header. -->
+        <ai.chesscoach.app.AtriumChapterHeaderView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:atriumKicker="Settings"
+            app:atriumTitle="Preferences" />
+
+        <!-- ── Coach voice ─────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker"
+            android:text="Coach voice"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingTop="@dimen/atrium_space_16"
+            android:paddingBottom="@dimen/atrium_space_8" />
+
+        <LinearLayout
+            android:id="@+id/voiceFormal"
+            style="@style/Atrium.SettingsRow"
+            android:tag="formal">
+
+            <View
+                android:id="@+id/voiceFormalDot"
+                style="@style/Atrium.SettingsRow.Dot"
+                android:background="@drawable/atrium_radio_unselected" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:text="Formal" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Sub"
+                android:text="Precise, restrained" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/voiceConversational"
+            style="@style/Atrium.SettingsRow"
+            android:tag="conversational">
+
+            <View
+                android:id="@+id/voiceConversationalDot"
+                style="@style/Atrium.SettingsRow.Dot"
+                android:background="@drawable/atrium_radio_selected" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:text="Conversational" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Sub"
+                android:text="Patient, scholarly" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/voiceTerse"
+            style="@style/Atrium.SettingsRow"
+            android:tag="terse">
+
+            <View
+                android:id="@+id/voiceTerseDot"
+                style="@style/Atrium.SettingsRow.Dot"
+                android:background="@drawable/atrium_radio_unselected" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:text="Terse" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Sub"
+                android:text="Brief, no flourish" />
+
+        </LinearLayout>
+
+        <View
+            style="@style/Atrium.SettingsDivider" />
+
+        <!-- ── Board style ─────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker"
+            android:text="Board style"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingTop="@dimen/atrium_space_16"
+            android:paddingBottom="@dimen/atrium_space_8" />
+
+        <LinearLayout
+            android:id="@+id/boardFlat"
+            style="@style/Atrium.SettingsRow"
+            android:tag="flat">
+
+            <View
+                android:id="@+id/boardFlatDot"
+                style="@style/Atrium.SettingsRow.Dot"
+                android:background="@drawable/atrium_radio_selected" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:text="Flat" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Sub"
+                android:text="Atrium default" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/boardEngraved"
+            style="@style/Atrium.SettingsRow"
+            android:tag="engraved">
+
+            <View
+                android:id="@+id/boardEngravedDot"
+                style="@style/Atrium.SettingsRow.Dot"
+                android:background="@drawable/atrium_radio_unselected" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:text="Engraved" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Sub"
+                android:text="Soft inset shadow" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/boardWireframe"
+            style="@style/Atrium.SettingsRow"
+            android:tag="wireframe">
+
+            <View
+                android:id="@+id/boardWireframeDot"
+                style="@style/Atrium.SettingsRow.Dot"
+                android:background="@drawable/atrium_radio_unselected" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:text="Wireframe" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Sub"
+                android:text="Cyan grid only" />
+
+        </LinearLayout>
+
+        <View
+            style="@style/Atrium.SettingsDivider" />
+
+        <!-- ── Sound ────────────────────────────────────────────────── -->
+        <LinearLayout
+            android:id="@+id/rowSound"
+            style="@style/Atrium.SettingsRow.Trailing">
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:text="Sound" />
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switchSound"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:thumbTint="@color/atrium_accent_cyan"
+                android:trackTint="@color/atrium_hairline_strong" />
+
+        </LinearLayout>
+
+        <View
+            style="@style/Atrium.SettingsDivider" />
+
+        <!-- ── Notifications ────────────────────────────────────────── -->
+        <LinearLayout
+            android:id="@+id/rowNotifications"
+            style="@style/Atrium.SettingsRow.Trailing">
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:text="Notifications" />
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switchNotifications"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:thumbTint="@color/atrium_accent_cyan"
+                android:trackTint="@color/atrium_hairline_strong" />
+
+        </LinearLayout>
+
+        <View
+            style="@style/Atrium.SettingsDivider" />
+
+        <!-- ── Profile ──────────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker"
+            android:text="Profile"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingTop="@dimen/atrium_space_16"
+            android:paddingBottom="@dimen/atrium_space_8" />
+
+        <LinearLayout
+            android:id="@+id/rowEditRating"
+            style="@style/Atrium.SettingsRow.Trailing">
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:text="Skill rating" />
+
+            <TextView
+                android:id="@+id/rowEditRatingValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/cormorant_garamond"
+                android:textStyle="italic"
+                android:textSize="17sp"
+                android:textColor="@color/atrium_accent_cyan"
+                android:layout_marginEnd="@dimen/atrium_space_12"
+                android:text="—"
+                tools:text="1720" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Chevron"
+                android:text="›" />
+
+        </LinearLayout>
+
+        <View
+            style="@style/Atrium.SettingsDivider" />
+
+        <!-- ── Premium ──────────────────────────────────────────────── -->
+        <LinearLayout
+            android:id="@+id/rowUpgrade"
+            style="@style/Atrium.SettingsRow.Trailing">
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:textColor="@color/atrium_accent_cyan"
+                android:text="Upgrade · Premium" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Chevron"
+                android:textColor="@color/atrium_accent_cyan"
+                android:text="›" />
+
+        </LinearLayout>
+
+        <View
+            style="@style/Atrium.SettingsDivider" />
+
+        <!-- ── Account ──────────────────────────────────────────────── -->
+        <LinearLayout
+            android:id="@+id/rowChangePassword"
+            style="@style/Atrium.SettingsRow.Trailing">
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:text="Change password" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Chevron"
+                android:text="›" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/rowSignOut"
+            style="@style/Atrium.SettingsRow.Trailing">
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:textColor="@color/atrium_accent_amber"
+                android:text="Sign out" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Chevron"
+                android:textColor="@color/atrium_accent_amber"
+                android:text="›" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</ScrollView>

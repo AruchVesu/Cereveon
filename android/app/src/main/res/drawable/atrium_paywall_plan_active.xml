@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Active plan tile — accent-cyan border + faint cyan fill.  Stronger
+     border than the opening card (88 alpha vs 55) per the design's
+     "this is the recommended one" emphasis. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#104FD9E5" />
+    <stroke
+        android:width="1dp"
+        android:color="#884FD9E5" />
+</shape>

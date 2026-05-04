@@ -1,0 +1,7 @@
+id: eval_cp_decisive_advantage
+type: evaluation_translation
+conditions:
+  evaluation.type: cp
+  evaluation.band: decisive_advantage
+content:
+  description: "Decisive material or positional advantage."

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Rating-edit dialog.
+
+    Compact custom view inflated into an AlertDialog by
+    SettingsBottomSheet.  Mirrors the OnboardingActivity slider
+    primitives (Material Slider 800–2600, hero italic value)
+    for visual consistency between the calibration and
+    edit-later flows.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="@dimen/atrium_space_24"
+    android:paddingEnd="@dimen/atrium_space_24"
+    android:paddingTop="@dimen/atrium_space_16"
+    android:paddingBottom="@dimen/atrium_space_8">
+
+    <TextView
+        android:id="@+id/dialogRatingValue"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:textAppearance="@style/Atrium.Display.Large"
+        android:text="—"
+        tools:text="1720" />
+
+    <com.google.android.material.slider.Slider
+        android:id="@+id/dialogRatingSlider"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/atrium_space_8"
+        android:valueFrom="800"
+        android:valueTo="2600"
+        android:value="1500"
+        android:stepSize="10"
+        app:thumbColor="@color/atrium_accent_cyan"
+        app:trackColorActive="@color/atrium_accent_cyan"
+        app:trackColorInactive="@color/atrium_hairline"
+        app:tickColor="@android:color/transparent" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="@dimen/atrium_space_8"
+        android:fontFamily="@font/inter"
+        android:textStyle="italic"
+        android:textSize="12sp"
+        android:textColor="@color/atrium_muted"
+        android:text="Drag to adjust your skill estimate." />
+
+</LinearLayout>

@@ -1,0 +1,64 @@
+# ========= GLOBAL =========
+.DS_Store
+Thumbs.db
+*.log
+.env
+.env.prod
+__pycache__/
+*.pyc
+venv/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.coverage
+tmp_logs/
+dump.rdb
+k6-summary*.json
+hs_err_pid*.log
+
+# ========= ANDROID =========
+android/.gradle/
+android/**/build/
+android/**/.idea/
+# Repo-root IDE sidecar — Studio occasionally writes one at the
+# parent of the opened project depending on how it's opened.
+.idea/
+android/**/local.properties
+android/**/*.iml
+android/**/*.apk
+android/**/*.aab
+android/**/*.jks
+android/**/*.keystore
+android/**/.cxx/
+android/**/.externalNativeBuild/
+# Android emulator's ANDROID_USER_HOME — created when the test runner
+# points ANDROID_USER_HOME at a workspace-local directory.
+tmp_android_home/
+
+# ========= C++ =========
+engine/build/
+engine/**/CMakeFiles/
+engine/**/CMakeCache.txt
+engine/**/*.o
+engine/**/*.obj
+engine/**/*.exe
+
+# ========= PYTHON / LLM =========
+llm/.pytest_cache/
+llm/telemetry/
+llm/**/__pycache__/
+llm/**/*.pyc
+*.db
+data/*.db
+llm/data/*.db
+llm/*.db
+llm/redis-win/
+engines/stockfish.exe
+
+# ========= SIGNING =========
+*.jks
+*.keystore
+
+# ========= LOCAL TOOLS =========
+tools/run_autonomous.sh
+
+.fake

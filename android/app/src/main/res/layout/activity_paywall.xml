@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Paywall (handoff screen #11 — last screen).
+
+    Reached from SettingsBottomSheet → "Upgrade · Premium" chevron row.
+    Static surface for the scaffold pass — no Stripe / Google Play
+    Billing wiring; the Begin button toasts "coming soon" with the
+    selected plan key so the click event is at least observable.
+
+    Top → bottom:
+      1.  Quiet hero — centered cyan kicker + 36sp italic display
+          + muted subtitle + ✦ ornament rule
+      2.  ✦-bulleted feature list (4 items)
+      3.  2-column plan grid (Monthly + Yearly with "best value" badge)
+      4.  Fine print — "Cancel anytime · 7 days free · restored…"
+      5.  Footer — primary "Begin · 7 days free" + "Maybe later" link
+-->
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_atrium_gradient">
+
+    <!-- Footer (declared before scroll so the constraint can target it). -->
+    <LinearLayout
+        android:id="@+id/paywallFooter"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:paddingStart="@dimen/atrium_space_16"
+        android:paddingEnd="@dimen/atrium_space_16"
+        android:paddingBottom="@dimen/atrium_space_16"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <Button
+            android:id="@+id/btnPaywallBegin"
+            style="@style/Atrium.Button.Primary"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_tap_target"
+            android:text="Begin · 7 days free" />
+
+        <TextView
+            android:id="@+id/btnPaywallMaybeLater"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_8"
+            android:padding="@dimen/atrium_space_8"
+            android:fontFamily="@font/cormorant_garamond"
+            android:textStyle="italic"
+            android:textSize="13sp"
+            android:textColor="@color/atrium_muted"
+            android:background="?attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:text="Maybe later" />
+
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:fillViewport="true"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toTopOf="@+id/paywallFooter">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingTop="@dimen/atrium_space_32"
+            android:paddingBottom="@dimen/atrium_space_16">
+
+            <!-- ── Hero ──────────────────────────────────────────── -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center_horizontal"
+                android:paddingStart="@dimen/atrium_space_24"
+                android:paddingEnd="@dimen/atrium_space_24">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textAppearance="@style/Atrium.Kicker.Cyan"
+                    android:text="Cereveon · Atrium" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/atrium_space_8"
+                    android:fontFamily="@font/cormorant_garamond"
+                    android:textStyle="italic"
+                    android:textColor="@color/atrium_ink"
+                    android:textSize="36sp"
+                    android:lineSpacingMultiplier="1.05"
+                    android:gravity="center_horizontal"
+                    android:text="A coach who remembers." />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/atrium_space_8"
+                    android:fontFamily="@font/cormorant_garamond"
+                    android:textStyle="italic"
+                    android:textColor="@color/atrium_muted"
+                    android:textSize="16sp"
+                    android:lineSpacingMultiplier="1.4"
+                    android:gravity="center_horizontal"
+                    android:maxWidth="320dp"
+                    android:text="Continue your study with the full library, the chat coach, and adaptive opponents that grow with you." />
+
+                <!-- ✦ ornament rule -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/atrium_space_16"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/atrium_hairline_thickness"
+                        android:layout_weight="1"
+                        android:background="@color/atrium_hairline_strong" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="@dimen/atrium_space_8"
+                        android:layout_marginEnd="@dimen/atrium_space_8"
+                        android:fontFamily="@font/cormorant_garamond"
+                        android:textColor="@color/atrium_muted"
+                        android:textSize="14sp"
+                        android:text="✦" />
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/atrium_hairline_thickness"
+                        android:layout_weight="1"
+                        android:background="@color/atrium_hairline_strong" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- ── Feature bullet list ──────────────────────────── -->
+            <LinearLayout
+                android:id="@+id/paywallFeatures"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="@dimen/atrium_space_12"
+                android:paddingStart="@dimen/atrium_space_32"
+                android:paddingEnd="@dimen/atrium_space_32" />
+
+            <!-- ── Plan grid ────────────────────────────────────── -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="@dimen/atrium_space_16"
+                android:paddingStart="@dimen/atrium_space_24"
+                android:paddingEnd="@dimen/atrium_space_24"
+                android:baselineAligned="false">
+
+                <!-- Monthly plan (dormant by default). -->
+                <FrameLayout
+                    android:id="@+id/paywallPlanMonthly"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:tag="monthly"
+                    android:background="@drawable/atrium_paywall_plan_dormant"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="@dimen/atrium_space_12">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textAppearance="@style/Atrium.Kicker"
+                            android:text="Monthly" />
+
+                        <TextView
+                            android:id="@+id/paywallPlanMonthlyPrice"
+                            style="@style/Atrium.PaywallPlan.Price"
+                            android:text="$9"
+                            tools:text="$9" />
+
+                        <TextView
+                            style="@style/Atrium.PaywallPlan.Sub"
+                            android:text="per month" />
+
+                    </LinearLayout>
+
+                </FrameLayout>
+
+                <Space
+                    android:layout_width="@dimen/atrium_space_8"
+                    android:layout_height="0dp" />
+
+                <!-- Yearly plan (active by default — best value). -->
+                <FrameLayout
+                    android:id="@+id/paywallPlanYearly"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:tag="yearly"
+                    android:background="@drawable/atrium_paywall_plan_active"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="@dimen/atrium_space_12">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textAppearance="@style/Atrium.Kicker"
+                            android:text="Yearly" />
+
+                        <TextView
+                            android:id="@+id/paywallPlanYearlyPrice"
+                            style="@style/Atrium.PaywallPlan.Price"
+                            android:textColor="@color/atrium_accent_cyan"
+                            android:text="$72"
+                            tools:text="$72" />
+
+                        <TextView
+                            style="@style/Atrium.PaywallPlan.Sub"
+                            android:text="$6 / month" />
+
+                    </LinearLayout>
+
+                    <!-- "best value" badge — top-right corner. -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="-6dp"
+                        android:layout_marginEnd="@dimen/atrium_space_8"
+                        android:layout_gravity="end"
+                        android:paddingStart="@dimen/atrium_space_4"
+                        android:paddingEnd="@dimen/atrium_space_4"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:background="@drawable/atrium_paywall_badge"
+                        android:textAppearance="@style/Atrium.Kicker.Cyan"
+                        android:text="best value" />
+
+                </FrameLayout>
+
+            </LinearLayout>
+
+            <!-- ── Fine print ───────────────────────────────────── -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_16"
+                android:paddingStart="@dimen/atrium_space_24"
+                android:paddingEnd="@dimen/atrium_space_24"
+                android:fontFamily="@font/inter"
+                android:textStyle="italic"
+                android:textSize="11sp"
+                android:textColor="@color/atrium_dim"
+                android:gravity="center_horizontal"
+                android:lineSpacingMultiplier="1.4"
+                android:text="Cancel anytime · 7 days free · restored across devices." />
+
+        </LinearLayout>
+
+    </ScrollView>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

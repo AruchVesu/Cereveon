@@ -1,0 +1,6 @@
+id: forced_mate
+type: evaluation_translation
+conditions:
+  evaluation.type: mate
+content:
+  description: "The position contains a forced, unavoidable conclusion."

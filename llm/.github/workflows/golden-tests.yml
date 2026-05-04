@@ -1,0 +1,33 @@
+name: Golden Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  golden-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml
+
+      - name: Run golden retriever tests
+        run: |
+          python -m rag.tests.golden.test_retriever
+
+      - name: Run golden prompt snapshot tests
+        run: |
+          python -m rag.tests.golden.test_prompt_snapshot

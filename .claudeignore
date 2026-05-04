@@ -1,0 +1,102 @@
+# =============================================================================
+# .claudeignore — exclude paths Claude should not read or index
+# Syntax follows .gitignore rules.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Python runtime
+# ---------------------------------------------------------------------------
+llm/venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ---------------------------------------------------------------------------
+# Runtime state — databases and telemetry
+# These are operational artifacts, not source; they change every run.
+# ---------------------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+llm/telemetry/
+
+# ---------------------------------------------------------------------------
+# Binary and ML artifacts — unreadable by Claude
+# ---------------------------------------------------------------------------
+*.bin
+*.npz
+*.pt
+*.pth
+*.onnx
+*.pkl
+data/models/
+llm/data/models/
+llm/data/hmpt/
+
+# ---------------------------------------------------------------------------
+# Compiled / native binaries
+# ---------------------------------------------------------------------------
+*.exe
+*.dll
+*.so
+*.dylib
+*.jar
+*.aar
+*.apk
+*.aab
+*.class
+
+# ---------------------------------------------------------------------------
+# Log files (JVM crash logs, pylint output, misc)
+# ---------------------------------------------------------------------------
+*.log
+tmp_logs/
+
+# ---------------------------------------------------------------------------
+# Android build artifacts and IDE state
+# ---------------------------------------------------------------------------
+android/build/
+android/.gradle/
+android/.idea/
+android/.kotlin/
+android/tmp_android_home/
+android/app/build/
+tmp_android_home/
+
+# ---------------------------------------------------------------------------
+# Gradle caches
+# ---------------------------------------------------------------------------
+.gradle/
+tmp_gradle/
+
+# ---------------------------------------------------------------------------
+# Bundled Windows binaries (Stockfish, Redis)
+# ---------------------------------------------------------------------------
+llm/redis-win/
+llm/bin/
+
+# ---------------------------------------------------------------------------
+# Legacy archived repositories
+# chesscoach/ is a standalone archived repo (has its own .git, fly.toml).
+# chesscoach-purge.git/ is a filter-repo scratch artifact.
+# Neither reflects the active codebase.
+# ---------------------------------------------------------------------------
+chesscoach/
+chesscoach-purge.git/
+
+# ---------------------------------------------------------------------------
+# Opening books (binary Polyglot format)
+# ---------------------------------------------------------------------------
+books/
+llm/books/
+
+# ---------------------------------------------------------------------------
+# Secrets — never read by Claude
+# ---------------------------------------------------------------------------
+.env.prod
+.env.local
+.env.*.local

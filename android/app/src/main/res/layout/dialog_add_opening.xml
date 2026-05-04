@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Add-opening dialog.
+
+    Inflated by OpeningsActivity when the user taps "+".  Three text
+    fields (ECO / name / line) wrapped in TextInputLayout for the
+    Atrium-flavoured underline + label treatment.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="@dimen/atrium_space_24"
+    android:paddingEnd="@dimen/atrium_space_24"
+    android:paddingTop="@dimen/atrium_space_8"
+    android:paddingBottom="@dimen/atrium_space_8">
+
+    <com.google.android.material.textfield.TextInputLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="ECO (e.g. C84)">
+
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/dialogAddOpeningEco"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="textCapCharacters"
+            android:maxLength="8" />
+
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <com.google.android.material.textfield.TextInputLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/atrium_space_8"
+        android:hint="Name (e.g. Caro-Kann · Advance)">
+
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/dialogAddOpeningName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="textCapWords"
+            android:maxLength="200" />
+
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <com.google.android.material.textfield.TextInputLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/atrium_space_8"
+        android:hint="Line (e.g. 1.e4 c6 2.d4 d5 3.e5)">
+
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/dialogAddOpeningLine"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="text"
+            android:maxLength="500" />
+
+    </com.google.android.material.textfield.TextInputLayout>
+
+</LinearLayout>

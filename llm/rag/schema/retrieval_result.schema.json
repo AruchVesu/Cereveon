@@ -1,0 +1,13 @@
+{
+"engine_signal": { "$ref": "engine_signal.schema.json" },
+"rag_context": [
+{
+"type": "object",
+"properties": {
+"type": { "type": "string" },
+"content": { "type": "object" }
+},
+"required": ["type", "content"]
+}
+]
+}

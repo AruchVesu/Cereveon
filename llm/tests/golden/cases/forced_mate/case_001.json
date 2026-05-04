@@ -1,0 +1,15 @@
+{
+  "fen": "r1bq1rk1/pppp1ppp/2n5/4p3/3PPQ2/2N2N2/PPP2PPP/R1B1KB1R b KQ - 5 6",
+  "stockfish_json": {
+    "evaluation": {
+      "type": "mate",
+      "value": 3,
+      "side": "white"
+    },
+    "errors": {
+      "last_move_quality": "blunder"
+    },
+    "tactical_flags": ["forced_mate"]
+  },
+  "user_query": "Is the position already lost for Black?"
+}

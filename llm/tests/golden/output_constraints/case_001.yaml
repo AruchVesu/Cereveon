@@ -1,0 +1,8 @@
+must_contain:
+  - "mistake"
+  - "undefended"
+
+must_not_contain:
+  - "engine"
+  - "calculate"
+  - "another move"

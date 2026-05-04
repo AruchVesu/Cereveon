@@ -1,0 +1,9 @@
+type: tactical
+
+conditions:
+  tactical_flags: hanging_piece
+
+content:
+  description: >
+    A piece is under-defended and can be won with accurate play.
+ 

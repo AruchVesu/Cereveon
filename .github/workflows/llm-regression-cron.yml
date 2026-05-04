@@ -1,0 +1,108 @@
+# Weekly LLM regression — scheduled counterpart to fly-deploy.yml's tag-only
+# `llm-regression` job.
+#
+# docs/TESTING.md "LLM Regression Test Frequency" requires regression tests to
+# run before every release.  The tag-pushed CI job in fly-deploy.yml satisfies
+# the strict release rule; this scheduled run catches model drift between
+# releases by exercising real-LLM contracts on the same Q5_K_M model the
+# `llm-regression` job uses, then publishing the JSONL telemetry as an
+# artifact for review.
+#
+# Lives in its own workflow (not appended to fly-deploy.yml's `on:`) so the
+# weekly trigger doesn't redundantly run image builds, Trivy scans, or the
+# Hetzner/Fly deploy jobs.  workflow_dispatch is also wired so an oncall can
+# rerun the suite ad-hoc without waiting for the cron.
+name: LLM regression (weekly)
+
+on:
+  schedule:
+    # Monday 04:17 UTC — staggered off the top of the hour to avoid GHA
+    # queue spikes; distinct from the nightly android-instrumented cron
+    # (03:00 UTC) so the two never compete for self-hosted resources.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: llm-regression-weekly
+  cancel-in-progress: false
+
+jobs:
+  llm-regression:
+    name: Real-LLM regression (Ollama Q5_K_M)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            llm/requirements.txt
+            llm/requirements-ci.txt
+            pyproject.toml
+
+      - name: Install CI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r llm/requirements-ci.txt
+
+      - name: Cache Ollama model weights
+        uses: actions/cache@v5
+        with:
+          path: ~/.ollama/models
+          key: ollama-qwen2.5-7b-instruct-q5_K_M-${{ runner.os }}
+
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Start Ollama server and wait for ready
+        run: |
+          ollama serve &
+          for i in $(seq 1 30); do
+            sleep 2
+            if curl -sf http://127.0.0.1:11434/api/tags > /dev/null 2>&1; then
+              echo "Ollama ready after $((i * 2))s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "::error::Ollama did not start within 60s"
+              exit 1
+            fi
+          done
+
+      - name: Pull model (skipped when cache hit)
+        run: ollama pull qwen2.5:7b-instruct-q5_K_M
+
+      - name: Run LLM regression tests (Category D)
+        env:
+          RUN_OLLAMA_TESTS: "1"
+        run: python -m pytest -q llm/rag/tests/llm/test_llm_regression.py
+
+      - name: Run Ollama smoke test (Category C)
+        env:
+          RUN_OLLAMA_TESTS: "1"
+        run: python -m pytest -q llm/rag/tests/llm/test_ollama_smoke.py
+
+      # Always publish the JSONL telemetry — even on failure — so a regression
+      # is debuggable from the Actions UI alone.  The tests append per-call
+      # quality scores to telemetry/quality_scores.jsonl (cwd-relative; pytest
+      # runs from the repo root so the file lands at <repo>/telemetry/).
+      # 90-day retention keeps roughly a quarter of weekly runs available
+      # for drift analysis.
+      - name: Upload quality_scores.jsonl telemetry
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-regression-telemetry-${{ github.run_id }}
+          path: telemetry/quality_scores.jsonl
+          if-no-files-found: warn
+          retention-days: 90

@@ -1,0 +1,2 @@
+White is in checkmate and Black can force mate immediately.
+The position is lost and the game ends here.

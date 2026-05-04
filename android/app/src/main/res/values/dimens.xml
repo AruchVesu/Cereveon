@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Cereveon · Atrium spacing scale.
+        Source: design_handoff_cereveon_atrium/README.md "Spacing scale: 4 / 8 / 12 / 16 / 20 / 24 / 32 / 44 dp."
+    -->
+    <dimen name="atrium_space_4">4dp</dimen>
+    <dimen name="atrium_space_8">8dp</dimen>
+    <dimen name="atrium_space_12">12dp</dimen>
+    <dimen name="atrium_space_16">16dp</dimen>
+    <dimen name="atrium_space_20">20dp</dimen>
+    <dimen name="atrium_space_24">24dp</dimen>
+    <dimen name="atrium_space_32">32dp</dimen>
+    <dimen name="atrium_space_44">44dp</dimen>
+
+    <!-- Standard tap target — Atrium buttons are 44dp tall, square-ish 2dp radius. -->
+    <dimen name="atrium_tap_target">44dp</dimen>
+    <dimen name="atrium_corner_radius">2dp</dimen>
+    <dimen name="atrium_hairline_thickness">1dp</dimen>
+
+    <!-- Card paddings: 14–16dp on cards, 20–24dp on text content. -->
+    <dimen name="atrium_card_padding">16dp</dimen>
+    <dimen name="atrium_text_padding_horizontal">24dp</dimen>
+</resources>

@@ -1,0 +1,467 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Home / Library (handoff screen #5).
+
+    Post-auth landing replacing direct routing into MainActivity.  Users
+    arrive here from LoginActivity (or OnboardingActivity for first-run)
+    and pick what they want to do next.
+
+    Top → bottom:
+      1.  Header — wordmark + circular avatar (initials).
+      2.  Date kicker — "<weekday> · Day <N>" (N = days since registration
+          or some other monotonic counter; we currently fake it with the
+          local date so the surface ships before backend support lands).
+      3.  Italic Cormorant display — "Continue your study."
+      4.  ✦ ornament rule.
+      5.  Resume card — last in-progress game (HIDDEN until we have a
+          last-game persistence hook in MainActivity).
+      6.  Library section header.
+      7.  4 library rows — Roman numeral · italic title · italic muted
+          sub · ›:
+            I — New game     (→ MainActivity)
+            II — Lessons     (→ MainActivity + EXTRA_OPEN_SHEET=training)
+            III — Openings   (no-op for now: AtriumOpenings not built)
+            IV — Past games  (→ MainActivity + EXTRA_OPEN_SHEET=history)
+      8.  Bottom tab bar — Home (active) / Lessons / Coach / You.  All
+          tabs except Home open MainActivity with the appropriate sheet
+          extra; tab navigation as a true root is a separate effort.
+-->
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_atrium_gradient">
+
+    <!-- Scrollable content above the bottom tab bar. -->
+    <ScrollView
+        android:id="@+id/homeScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:fillViewport="true"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toTopOf="@+id/homeTabBar">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingTop="@dimen/atrium_space_24"
+            android:paddingBottom="@dimen/atrium_space_24">
+
+            <!-- Header — wordmark + avatar. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:baselineAligned="false">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:fontFamily="@font/cormorant_garamond"
+                    android:textStyle="italic"
+                    android:textColor="@color/atrium_ink"
+                    android:textSize="22sp"
+                    android:letterSpacing="0.018"
+                    android:text="Cereveon" />
+
+                <TextView
+                    android:id="@+id/homeAvatar"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:gravity="center"
+                    android:fontFamily="@font/cormorant_garamond"
+                    android:textStyle="italic"
+                    android:textColor="@color/atrium_accent_cyan"
+                    android:textSize="14sp"
+                    android:background="@drawable/atrium_home_avatar"
+                    android:text="—"
+                    tools:text="AG" />
+
+            </LinearLayout>
+
+            <!-- Date kicker. -->
+            <TextView
+                android:id="@+id/homeDateKicker"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_16"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:text="—"
+                tools:text="Tuesday · Day 047" />
+
+            <!--
+                Pending-sync indicator — surfaces an unsynced
+                /game/finish payload that's waiting in prefs.  Amber to
+                read as "attention needed" without escalating to error
+                red.  Hidden by default; shown by HomeActivity when
+                PendingGameFinish.PREF_PENDING_FINISH_PAYLOAD is set,
+                hidden after a successful background retry.
+            -->
+            <LinearLayout
+                android:id="@+id/homeSyncIndicator"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_4"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:visibility="gone"
+                tools:visibility="visible">
+
+                <View
+                    android:layout_width="6dp"
+                    android:layout_height="6dp"
+                    android:layout_marginEnd="@dimen/atrium_space_8"
+                    android:background="@drawable/rail_dot_amber" />
+
+                <TextView
+                    android:id="@+id/homeSyncIndicatorText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/jetbrains_mono"
+                    android:textSize="9sp"
+                    android:letterSpacing="0.222"
+                    android:textAllCaps="true"
+                    android:textColor="@color/atrium_accent_amber"
+                    android:text="1 game pending sync"
+                    tools:text="1 game pending sync" />
+
+            </LinearLayout>
+
+            <!-- Italic display title. -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_4"
+                android:fontFamily="@font/cormorant_garamond"
+                android:textStyle="italic"
+                android:textColor="@color/atrium_ink"
+                android:textSize="30sp"
+                android:lineSpacingMultiplier="1.1"
+                android:text="Continue your study." />
+
+            <!-- ✦ ornament rule. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_12"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/atrium_hairline_thickness"
+                    android:layout_weight="1"
+                    android:background="@color/atrium_hairline_strong" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/atrium_space_8"
+                    android:layout_marginEnd="@dimen/atrium_space_8"
+                    android:fontFamily="@font/cormorant_garamond"
+                    android:textColor="@color/atrium_muted"
+                    android:textSize="14sp"
+                    android:text="✦" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="@dimen/atrium_hairline_thickness"
+                    android:layout_weight="1"
+                    android:background="@color/atrium_hairline_strong" />
+
+            </LinearLayout>
+
+            <!-- Resume card — hidden until last-game state is available. -->
+            <LinearLayout
+                android:id="@+id/homeResumeBlock"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="@dimen/atrium_space_24"
+                android:visibility="gone"
+                tools:visibility="visible">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textAppearance="@style/Atrium.Kicker"
+                    android:text="Resume" />
+
+                <LinearLayout
+                    android:id="@+id/homeResumeCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/atrium_space_8"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:background="@drawable/atrium_home_resume_bg"
+                    android:padding="@dimen/atrium_space_12"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <View
+                        android:layout_width="56dp"
+                        android:layout_height="56dp"
+                        android:background="@drawable/board_mat_atrium" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="@dimen/atrium_space_12"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/homeResumeTitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="@font/cormorant_garamond"
+                            android:textStyle="italic"
+                            android:textColor="@color/atrium_ink"
+                            android:textSize="17sp"
+                            android:text="—"
+                            tools:text="Game 047 · move 14" />
+
+                        <TextView
+                            android:id="@+id/homeResumeSub"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/atrium_space_4"
+                            android:textAppearance="@style/Atrium.Kicker"
+                            android:text="—"
+                            tools:text="vs. ~1680 · your move" />
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/cormorant_garamond"
+                        android:textStyle="italic"
+                        android:textColor="@color/atrium_accent_cyan"
+                        android:textSize="22sp"
+                        android:text="→" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- Library section. -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_24"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:text="Library" />
+
+            <!-- Library row — I — New game. -->
+            <LinearLayout
+                android:id="@+id/homeRowNewGame"
+                style="@style/Atrium.HomeLibraryRow"
+                android:tag="newgame">
+
+                <TextView
+                    style="@style/Atrium.HomeLibraryRow.Numeral"
+                    android:text="I" />
+
+                <LinearLayout
+                    style="@style/Atrium.HomeLibraryRow.TitleBlock">
+
+                    <TextView
+                        style="@style/Atrium.HomeLibraryRow.Title"
+                        android:text="New game" />
+
+                    <TextView
+                        android:id="@+id/homeRowNewGameSub"
+                        style="@style/Atrium.HomeLibraryRow.Sub"
+                        android:text="Adaptive opponent"
+                        tools:text="Adaptive opponent · ~1680" />
+
+                </LinearLayout>
+
+                <TextView style="@style/Atrium.HomeLibraryRow.Chevron" />
+
+            </LinearLayout>
+
+            <View
+                style="@style/Atrium.HomeLibraryRow.Divider" />
+
+            <!-- Library row — II — Lessons. -->
+            <LinearLayout
+                android:id="@+id/homeRowLessons"
+                style="@style/Atrium.HomeLibraryRow"
+                android:tag="lessons">
+
+                <TextView
+                    style="@style/Atrium.HomeLibraryRow.Numeral"
+                    android:text="II" />
+
+                <LinearLayout
+                    style="@style/Atrium.HomeLibraryRow.TitleBlock">
+
+                    <TextView
+                        style="@style/Atrium.HomeLibraryRow.Title"
+                        android:text="Lessons" />
+
+                    <TextView
+                        android:id="@+id/homeRowLessonsSub"
+                        style="@style/Atrium.HomeLibraryRow.Sub"
+                        android:text="Curriculum coach"
+                        tools:text="3 of 12 chapters · pin &amp; pressure" />
+
+                </LinearLayout>
+
+                <TextView style="@style/Atrium.HomeLibraryRow.Chevron" />
+
+            </LinearLayout>
+
+            <View
+                style="@style/Atrium.HomeLibraryRow.Divider" />
+
+            <!-- Library row — III — Openings. -->
+            <LinearLayout
+                android:id="@+id/homeRowOpenings"
+                style="@style/Atrium.HomeLibraryRow"
+                android:tag="openings">
+
+                <TextView
+                    style="@style/Atrium.HomeLibraryRow.Numeral"
+                    android:text="III" />
+
+                <LinearLayout
+                    style="@style/Atrium.HomeLibraryRow.TitleBlock">
+
+                    <TextView
+                        style="@style/Atrium.HomeLibraryRow.Title"
+                        android:text="Openings" />
+
+                    <TextView
+                        style="@style/Atrium.HomeLibraryRow.Sub"
+                        android:text="Coming soon" />
+
+                </LinearLayout>
+
+                <TextView style="@style/Atrium.HomeLibraryRow.Chevron" />
+
+            </LinearLayout>
+
+            <View
+                style="@style/Atrium.HomeLibraryRow.Divider" />
+
+            <!-- Library row — IV — Past games. -->
+            <LinearLayout
+                android:id="@+id/homeRowPastGames"
+                style="@style/Atrium.HomeLibraryRow"
+                android:tag="history">
+
+                <TextView
+                    style="@style/Atrium.HomeLibraryRow.Numeral"
+                    android:text="IV" />
+
+                <LinearLayout
+                    style="@style/Atrium.HomeLibraryRow.TitleBlock">
+
+                    <TextView
+                        style="@style/Atrium.HomeLibraryRow.Title"
+                        android:text="Past games" />
+
+                    <TextView
+                        android:id="@+id/homeRowPastGamesSub"
+                        style="@style/Atrium.HomeLibraryRow.Sub"
+                        android:text="Recent activity"
+                        tools:text="46 played · 27 won" />
+
+                </LinearLayout>
+
+                <TextView style="@style/Atrium.HomeLibraryRow.Chevron" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </ScrollView>
+
+    <!-- Bottom tab bar — Home active. -->
+    <LinearLayout
+        android:id="@+id/homeTabBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingTop="@dimen/atrium_space_12"
+        android:paddingBottom="@dimen/atrium_space_16"
+        android:paddingStart="@dimen/atrium_space_24"
+        android:paddingEnd="@dimen/atrium_space_24"
+        android:background="@color/atrium_bg_base"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="@dimen/atrium_hairline_thickness"
+            android:layout_weight="0"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/homeTabHome"
+            style="@style/Atrium.HomeTab"
+            android:tag="home">
+
+            <TextView
+                style="@style/Atrium.HomeTab.Label.Active"
+                android:text="Home" />
+
+            <View
+                style="@style/Atrium.HomeTab.Dot" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/homeTabLessons"
+            style="@style/Atrium.HomeTab"
+            android:tag="lessons">
+
+            <TextView
+                style="@style/Atrium.HomeTab.Label"
+                android:text="Lessons" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/homeTabCoach"
+            style="@style/Atrium.HomeTab"
+            android:tag="coach">
+
+            <TextView
+                style="@style/Atrium.HomeTab.Label"
+                android:text="Coach" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/homeTabYou"
+            style="@style/Atrium.HomeTab"
+            android:tag="you">
+
+            <TextView
+                style="@style/Atrium.HomeTab.Label"
+                android:text="You" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Hairline above tab bar. -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/atrium_hairline_thickness"
+        android:background="@color/atrium_hairline"
+        app:layout_constraintBottom_toTopOf="@+id/homeTabBar" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

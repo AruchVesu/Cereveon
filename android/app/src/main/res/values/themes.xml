@@ -1,0 +1,439 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium theme.
+
+    Atrium is dark-only by design intent (handoff README "Out of scope:
+    Light mode — Cereveon Atrium is dark-only by design intent.").  We
+    therefore parent against Theme.Material3.Dark.NoActionBar — not
+    DayNight — so the system light-mode toggle never reverts the app
+    to a Material default light palette.
+
+    Material 3 colour attributes are remapped onto Atrium tokens so any
+    Material component (TextView, Button, BottomSheet, etc.) inherits
+    the re-skin without per-widget edits.  Layout files that reference
+    @color/atrium_* directly bypass this mapping; layouts that use
+    ?attr/colorOnBackground style refs benefit from it automatically.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- ─── Atrium theme ─────────────────────────────────────────────── -->
+    <style name="Theme.Cereveon.Atrium" parent="Theme.Material3.Dark.NoActionBar">
+        <!-- Surfaces -->
+        <item name="android:windowBackground">@drawable/bg_atrium_gradient</item>
+        <item name="android:colorBackground">@color/atrium_bg_base</item>
+        <item name="colorSurface">@color/atrium_bg_surface</item>
+        <item name="colorSurfaceVariant">@color/atrium_bg_surface</item>
+        <item name="colorSurfaceContainer">@color/atrium_bg_surface</item>
+        <item name="colorSurfaceContainerHigh">@color/atrium_bg_surface</item>
+
+        <!-- Ink -->
+        <item name="colorOnBackground">@color/atrium_ink</item>
+        <item name="colorOnSurface">@color/atrium_ink</item>
+        <item name="colorOnSurfaceVariant">@color/atrium_muted</item>
+        <item name="android:textColorPrimary">@color/atrium_ink</item>
+        <item name="android:textColorSecondary">@color/atrium_muted</item>
+        <item name="android:textColorTertiary">@color/atrium_dim</item>
+        <item name="android:textColorHint">@color/atrium_dim</item>
+
+        <!-- Accents — neon-only-for-signal -->
+        <item name="colorPrimary">@color/atrium_accent_cyan</item>
+        <item name="colorOnPrimary">@color/atrium_bg_base</item>
+        <item name="colorPrimaryContainer">@color/atrium_bg_surface</item>
+        <item name="colorOnPrimaryContainer">@color/atrium_accent_cyan</item>
+        <item name="colorSecondary">@color/atrium_accent_amber</item>
+        <item name="colorOnSecondary">@color/atrium_bg_base</item>
+        <item name="colorTertiary">@color/atrium_accent_amber</item>
+        <item name="colorAccent">@color/atrium_accent_cyan</item>
+
+        <!-- Outlines / dividers -->
+        <item name="colorOutline">@color/atrium_hairline_strong</item>
+        <item name="colorOutlineVariant">@color/atrium_hairline</item>
+
+        <!-- System bars — let the gradient run edge-to-edge.  The board
+             header gives enough top contrast that a transparent status
+             bar doesn't clash. -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@color/atrium_bg_base</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+
+        <!-- Default text appearance fallback -->
+        <item name="android:textAppearance">@style/Atrium.Body</item>
+    </style>
+
+    <!-- Backwards-compat alias.  The pre-Atrium theme name is preserved
+         so layouts referencing it (or test fixtures) still resolve. -->
+    <style name="Theme.CyberpunkChess" parent="Theme.Cereveon.Atrium" />
+
+    <!-- ─── Atrium TextAppearances ───────────────────────────────────── -->
+    <!--
+        Five typography roles per the handoff:
+          Display title       — Cormorant Garamond italic 500, 28–44sp
+          Body / coach prose  — Cormorant Garamond 400, 16–18sp
+          UI label / kicker   — JetBrains Mono 500, 8–11sp UPPERCASE
+          Numerics            — JetBrains Mono 500, 11–22sp
+          Inline UI text      — Inter 400/500, 11–14sp
+    -->
+
+    <style name="Atrium.Display" parent="TextAppearance.Material3.HeadlineMedium">
+        <item name="android:fontFamily">@font/cormorant_garamond</item>
+        <item name="android:textStyle">italic</item>
+        <item name="android:textFontWeight" tools:targetApi="p">500</item>
+        <item name="android:textSize">28sp</item>
+        <item name="android:lineSpacingMultiplier">1.1</item>
+        <item name="android:letterSpacing">0.011</item>      <!-- ≈0.3 / 28sp -->
+        <item name="android:textColor">@color/atrium_ink</item>
+    </style>
+
+    <style name="Atrium.Display.Large" parent="Atrium.Display">
+        <item name="android:textSize">44sp</item>
+        <item name="android:lineSpacingMultiplier">1.0</item>
+    </style>
+
+    <style name="Atrium.Body" parent="TextAppearance.Material3.BodyLarge">
+        <item name="android:fontFamily">@font/cormorant_garamond</item>
+        <item name="android:textStyle">normal</item>
+        <item name="android:textFontWeight" tools:targetApi="p">400</item>
+        <item name="android:textSize">17sp</item>
+        <item name="android:lineSpacingMultiplier">1.45</item>
+        <item name="android:textColor">@color/atrium_ink</item>
+    </style>
+
+    <style name="Atrium.Body.Italic" parent="Atrium.Body">
+        <item name="android:textStyle">italic</item>
+    </style>
+
+    <style name="Atrium.Kicker" parent="TextAppearance.Material3.LabelSmall">
+        <!--
+            Mono uppercase kicker.  Letter-spacing 2.0–2.4 in the design
+            translates to ~0.222 em at 9sp (Android measures letterSpacing
+            as em multiplier, not absolute px).
+        -->
+        <item name="android:fontFamily">@font/jetbrains_mono</item>
+        <item name="android:textFontWeight" tools:targetApi="p">500</item>
+        <item name="android:textSize">9sp</item>
+        <item name="android:letterSpacing">0.222</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:textColor">@color/atrium_dim</item>
+    </style>
+
+    <style name="Atrium.Kicker.Cyan" parent="Atrium.Kicker">
+        <item name="android:textColor">@color/atrium_accent_cyan</item>
+    </style>
+
+    <style name="Atrium.Numeric" parent="TextAppearance.Material3.LabelMedium">
+        <item name="android:fontFamily">@font/jetbrains_mono</item>
+        <item name="android:textFontWeight" tools:targetApi="p">500</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:letterSpacing">0.045</item>     <!-- ≈0.5 / 11sp -->
+        <item name="android:textColor">@color/atrium_ink</item>
+    </style>
+
+    <style name="Atrium.Numeric.Cyan" parent="Atrium.Numeric">
+        <item name="android:textColor">@color/atrium_accent_cyan</item>
+    </style>
+
+    <style name="Atrium.Numeric.Amber" parent="Atrium.Numeric">
+        <item name="android:textColor">@color/atrium_accent_amber</item>
+    </style>
+
+    <style name="Atrium.Inline" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:fontFamily">@font/inter</item>
+        <item name="android:textFontWeight" tools:targetApi="p">400</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">@color/atrium_muted</item>
+    </style>
+
+    <!-- ─── Atrium widget styles ─────────────────────────────────────── -->
+
+    <!--
+        Primary action button — italic Cormorant label, cyan border,
+        44dp tall, 2dp corners.  Matches the "Ask the coach" / "Begin"
+        primary CTAs in the handoff screens.
+    -->
+    <style name="Atrium.Button.Primary" parent="Widget.Material3.Button">
+        <item name="android:background">@drawable/btn_atrium_primary</item>
+        <item name="backgroundTint">@null</item>
+        <item name="android:fontFamily">@font/cormorant_garamond</item>
+        <item name="android:textStyle">italic</item>
+        <item name="android:textFontWeight" tools:targetApi="p">500</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:letterSpacing">0.03</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textColor">@color/atrium_accent_cyan</item>
+        <item name="android:minHeight">@dimen/atrium_tap_target</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="cornerRadius">@dimen/atrium_corner_radius</item>
+    </style>
+
+    <style name="Atrium.Button.Secondary" parent="Atrium.Button.Primary">
+        <item name="android:background">@drawable/btn_atrium_secondary</item>
+        <item name="android:textColor">@color/atrium_ink</item>
+        <item name="android:textSize">20sp</item>
+    </style>
+
+    <!--
+        Hairline divider used between sections.  Use as
+        <View style="@style/Atrium.Divider"/> with layout_height=1dp.
+
+        parent="" disables Android's dot-naming implicit parent lookup,
+        which would otherwise have AAPT search for a style named
+        "Atrium" — there isn't one (we only define Atrium.Display,
+        Atrium.Body, etc.) and the build fails at resource link time.
+    -->
+    <style name="Atrium.Divider" parent="">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">@dimen/atrium_hairline_thickness</item>
+        <item name="android:background">@color/atrium_hairline</item>
+    </style>
+
+    <!-- ─── Settings sheet rows ─────────────────────────────────────── -->
+
+    <!--
+        Atrium settings row — radio variant (custom dot leading the row).
+        Used for "Coach voice" and "Board style" rows.  Dot is a 12dp
+        View whose background drawable swaps between
+        atrium_radio_selected / atrium_radio_unselected via Kotlin.
+
+        parent="" — same reason as Atrium.Divider above.
+    -->
+    <style name="Atrium.SettingsRow" parent="">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">@dimen/atrium_tap_target</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:paddingStart">@dimen/atrium_space_24</item>
+        <item name="android:paddingEnd">@dimen/atrium_space_24</item>
+        <item name="android:background">?attr/selectableItemBackground</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+
+    <!--
+        Atrium settings row — trailing-control variant.  Used for rows
+        whose right-hand element is a switch / chevron / value, not a
+        leading radio dot.
+    -->
+    <style name="Atrium.SettingsRow.Trailing" parent="Atrium.SettingsRow" />
+
+    <!-- Leading radio dot — 12dp circle, 12dp end margin. -->
+    <style name="Atrium.SettingsRow.Dot">
+        <item name="android:layout_width">12dp</item>
+        <item name="android:layout_height">12dp</item>
+        <item name="android:layout_marginEnd">@dimen/atrium_space_12</item>
+    </style>
+
+    <!-- Italic Cormorant title, 16sp ink. -->
+    <style name="Atrium.SettingsRow.Title">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:fontFamily">@font/cormorant_garamond</item>
+        <item name="android:textStyle">italic</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:textColor">@color/atrium_ink</item>
+    </style>
+
+    <!-- Inter sub label after the title (e.g. "Patient, scholarly"). -->
+    <style name="Atrium.SettingsRow.Sub">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginStart">@dimen/atrium_space_8</item>
+        <item name="android:fontFamily">@font/inter</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@color/atrium_dim</item>
+    </style>
+
+    <!-- ›-shaped trailing chevron, italic Cormorant for visual rhyme. -->
+    <style name="Atrium.SettingsRow.Chevron">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:fontFamily">@font/cormorant_garamond</item>
+        <item name="android:textStyle">italic</item>
+        <item name="android:textSize">22sp</item>
+        <item name="android:textColor">@color/atrium_dim</item>
+    </style>
+
+    <!--
+        Hairline divider between settings sections.  Same primitive as
+        Atrium.Divider with the standard 16dp top + 16dp bottom margin
+        already applied so layouts don't have to repeat it.
+    -->
+    <style name="Atrium.SettingsDivider" parent="Atrium.Divider">
+        <item name="android:layout_marginStart">@dimen/atrium_space_24</item>
+        <item name="android:layout_marginEnd">@dimen/atrium_space_24</item>
+        <item name="android:layout_marginTop">@dimen/atrium_space_8</item>
+    </style>
+
+    <!-- ─── Home / Library rows ─────────────────────────────────────── -->
+
+    <!--
+        Atrium home library row — Roman numeral · italic title · italic
+        muted sub · ›.  Used for the I–IV rows on activity_home.xml.
+
+        parent="" — same dot-naming caveat as Atrium.Divider /
+        Atrium.SettingsRow above.
+    -->
+    <style name="Atrium.HomeLibraryRow" parent="">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:paddingTop">@dimen/atrium_space_12</item>
+        <item name="android:paddingBottom">@dimen/atrium_space_12</item>
+        <item name="android:background">?attr/selectableItemBackground</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+
+    <!-- 28dp italic Cormorant numeral, accent cyan, slightly muted. -->
+    <style name="Atrium.HomeLibraryRow.Numeral">
+        <item name="android:layout_width">28dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:gravity">center</item>
+        <item name="android:fontFamily">@font/cormorant_garamond</item>
+        <item name="android:textStyle">italic</item>
+        <item name="android:textSize">22sp</item>
+        <item name="android:textColor">@color/atrium_accent_cyan</item>
+        <item name="android:alpha">0.8</item>
+    </style>
+
+    <!-- Vertical block holding the title + sub. -->
+    <style name="Atrium.HomeLibraryRow.TitleBlock">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:layout_marginStart">@dimen/atrium_space_12</item>
+        <item name="android:orientation">vertical</item>
+    </style>
+
+    <!-- Italic Cormorant title, 18sp ink. -->
+    <style name="Atrium.HomeLibraryRow.Title">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:fontFamily">@font/cormorant_garamond</item>
+        <item name="android:textStyle">italic</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:textColor">@color/atrium_ink</item>
+        <item name="android:lineSpacingMultiplier">1.1</item>
+    </style>
+
+    <!-- Italic Inter sub, 12sp muted, 2dp top margin. -->
+    <style name="Atrium.HomeLibraryRow.Sub">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">2dp</item>
+        <item name="android:fontFamily">@font/inter</item>
+        <item name="android:textStyle">italic</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@color/atrium_muted</item>
+    </style>
+
+    <!-- ›-shaped trailing chevron — same as settings, slightly dimmer. -->
+    <style name="Atrium.HomeLibraryRow.Chevron">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:fontFamily">@font/cormorant_garamond</item>
+        <item name="android:textStyle">italic</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:textColor">@color/atrium_dim</item>
+        <item name="android:text">›</item>
+    </style>
+
+    <!-- Hairline divider between library rows. -->
+    <style name="Atrium.HomeLibraryRow.Divider" parent="Atrium.Divider" />
+
+    <!-- ─── Home tab bar ─────────────────────────────────────────────── -->
+
+    <!--
+        Atrium home tab — text-only italic label, optional cyan dot for
+        active state.  Tab bar is rendered as a static visual surface;
+        full tab navigation as a true root is a separate effort.
+
+        parent="" — same dot-naming caveat.
+    -->
+    <style name="Atrium.HomeTab" parent="">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:gravity">center</item>
+        <item name="android:background">?attr/selectableItemBackground</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:paddingTop">@dimen/atrium_space_4</item>
+        <item name="android:paddingBottom">@dimen/atrium_space_4</item>
+    </style>
+
+    <!-- Inactive label — italic Cormorant 14sp muted. -->
+    <style name="Atrium.HomeTab.Label">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:fontFamily">@font/cormorant_garamond</item>
+        <item name="android:textStyle">italic</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/atrium_muted</item>
+    </style>
+
+    <!-- Active label — same as inactive but accent cyan. -->
+    <style name="Atrium.HomeTab.Label.Active" parent="Atrium.HomeTab.Label">
+        <item name="android:textColor">@color/atrium_accent_cyan</item>
+    </style>
+
+    <!-- Active-state dot below the label. -->
+    <style name="Atrium.HomeTab.Dot">
+        <item name="android:layout_width">4dp</item>
+        <item name="android:layout_height">4dp</item>
+        <item name="android:layout_marginTop">@dimen/atrium_space_4</item>
+        <item name="android:background">@drawable/atrium_home_tab_dot</item>
+    </style>
+
+    <!-- ─── Openings stat strip ─────────────────────────────────────── -->
+
+    <!-- 22sp italic Cormorant value used inside each metric cell. -->
+    <style name="Atrium.OpeningsStat.Value" parent="">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">@dimen/atrium_space_4</item>
+        <item name="android:fontFamily">@font/cormorant_garamond</item>
+        <item name="android:textStyle">italic</item>
+        <item name="android:textSize">22sp</item>
+        <item name="android:textColor">@color/atrium_ink</item>
+    </style>
+
+    <!-- Italic Inter sub label below each value (e.g. "memorized"). -->
+    <style name="Atrium.OpeningsStat.Sub" parent="">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">2dp</item>
+        <item name="android:fontFamily">@font/inter</item>
+        <item name="android:textStyle">italic</item>
+        <item name="android:textSize">10sp</item>
+        <item name="android:textColor">@color/atrium_muted</item>
+    </style>
+
+    <!-- ─── Paywall plan tiles ──────────────────────────────────────── -->
+
+    <!-- 30sp italic Cormorant price.  Active tile overrides
+         android:textColor in the layout to atrium_accent_cyan. -->
+    <style name="Atrium.PaywallPlan.Price" parent="">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">@dimen/atrium_space_4</item>
+        <item name="android:fontFamily">@font/cormorant_garamond</item>
+        <item name="android:textStyle">italic</item>
+        <item name="android:textSize">30sp</item>
+        <item name="android:textColor">@color/atrium_ink</item>
+    </style>
+
+    <!-- 11sp italic Inter sub label below the price (e.g. "per month"). -->
+    <style name="Atrium.PaywallPlan.Sub" parent="">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">@dimen/atrium_space_4</item>
+        <item name="android:fontFamily">@font/inter</item>
+        <item name="android:textStyle">italic</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:textColor">@color/atrium_muted</item>
+    </style>
+
+</resources>

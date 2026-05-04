@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Atrium composer text-field background — hairline-bordered row
+    holding the italic placeholder.  Square-ish 2dp radius, no fill,
+    border at hairline_strong (12% white) so the field reads against
+    the gradient bg without competing with the coach prose.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <stroke
+        android:width="@dimen/atrium_hairline_thickness"
+        android:color="@color/atrium_hairline_strong" />
+    <solid android:color="@android:color/transparent" />
+    <corners android:radius="@dimen/atrium_corner_radius" />
+</shape>

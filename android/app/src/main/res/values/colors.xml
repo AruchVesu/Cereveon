@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+        Cereveon · Atrium colour tokens.
+
+        Source: design_handoff_cereveon_atrium/README.md (handoff bundle).
+        Atrium is a dark-only design language; no light-mode counterpart.
+
+        Naming mirrors the design tokens.  Existing legacy names (bg,
+        board_light, board_dark, neon, select) are preserved at the
+        bottom and re-pointed at Atrium values so layouts that
+        reference them inherit the re-skin without per-file edits.
+    -->
+
+    <!-- ── Surfaces ─────────────────────────────────────────────────── -->
+    <color name="atrium_bg_base">#0A0A10</color>           <!-- App background base -->
+    <color name="atrium_bg_surface">#0D0E14</color>        <!-- Board mat, raised cards -->
+    <color name="atrium_bg_gradient_top">#16141F</color>   <!-- Radial gradient inner stop -->
+    <!--
+        Note: bg.gradient is a radial-gradient(ellipse at 50% 100%, ...).
+        Replicated as drawable/bg_atrium_gradient.xml using a GradientDrawable
+        in radial mode with these two stops.
+    -->
+
+    <!-- ── Ink ─────────────────────────────────────────────────────── -->
+    <color name="atrium_ink">#F4EFE1</color>               <!-- Primary text (warm paper) -->
+    <color name="atrium_muted">#9AA0B4</color>             <!-- Secondary text -->
+    <color name="atrium_dim">#6B7080</color>               <!-- Tertiary / labels -->
+
+    <!-- ── Hairlines / dividers ────────────────────────────────────── -->
+    <color name="atrium_hairline">#14FFFFFF</color>        <!-- rgba(255,255,255,0.08) -->
+    <color name="atrium_hairline_strong">#1FFFFFFF</color> <!-- rgba(255,255,255,0.12) -->
+
+    <!-- ── Accents — neon-only-for-signal ──────────────────────────── -->
+    <color name="atrium_accent_cyan">#4FD9E5</color>       <!-- Player, signal, focus -->
+    <color name="atrium_accent_amber">#FFC069</color>      <!-- Opponent, warnings, black-piece rim -->
+
+    <!-- Translucent accent variants used by buttons / glows -->
+    <color name="atrium_accent_cyan_55">#554FD9E5</color>  <!-- ~33% alpha -->
+    <color name="atrium_accent_cyan_22">#224FD9E5</color>  <!-- ~13% alpha glow -->
+    <color name="atrium_accent_cyan_2e">#2E4FD9E5</color>  <!-- last-move "to" tint -->
+    <color name="atrium_accent_cyan_1a">#1A4FD9E5</color>  <!-- last-move "from" tint -->
+    <color name="atrium_accent_amber_cc">#CCFFC069</color> <!-- black piece rim -->
+    <color name="atrium_accent_amber_55">#55FFC069</color> <!-- black piece halo -->
+
+    <!-- ── Board palette ───────────────────────────────────────────── -->
+    <color name="atrium_board_light">#302C24</color>       <!-- Light squares (warm wood) -->
+    <color name="atrium_board_dark">#1A1712</color>        <!-- Dark squares -->
+    <color name="atrium_piece_white">#F4EFE1</color>       <!-- White piece glyph -->
+    <color name="atrium_piece_black">#1A1108</color>       <!-- Black piece glyph -->
+
+    <!-- ── Legacy aliases (kept for back-compat with existing layouts) -->
+    <color name="bg">@color/atrium_bg_base</color>
+    <color name="board_light">@color/atrium_board_light</color>
+    <color name="board_dark">@color/atrium_board_dark</color>
+    <color name="neon">@color/atrium_accent_cyan</color>
+    <color name="select">@color/atrium_accent_amber</color>
+
+</resources>

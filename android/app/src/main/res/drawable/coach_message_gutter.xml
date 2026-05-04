@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Atrium coach-message gutter — a 1px vertical glowing line on the
+    left edge of every coach message, cyan at the top fading to
+    transparent at the bottom.  Per handoff: "1px gradient gutter on
+    the left edge (cyan top, fading down) glowing".
+
+    Width is fixed at 1dp by the gutter View in item_chat_coach.xml;
+    the gradient runs end-to-end in the angle-90 direction (top → bottom).
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="270"
+        android:startColor="@color/atrium_accent_cyan"
+        android:endColor="@android:color/transparent"
+        android:type="linear" />
+</shape>

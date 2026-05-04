@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Atrium board mat — the raised surface the ChessBoardView sits on.
+    Per handoff: 8dp inset on a #0d0e14 surface with a hairline border.
+    Soft elevation comes from FrameLayout's `android:elevation`; the
+    drawable just provides the surface fill + border.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/atrium_bg_surface" />
+    <stroke
+        android:width="@dimen/atrium_hairline_thickness"
+        android:color="@color/atrium_hairline" />
+    <corners android:radius="@dimen/atrium_corner_radius" />
+</shape>

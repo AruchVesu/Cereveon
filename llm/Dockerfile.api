@@ -1,0 +1,48 @@
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# BUILDDATE is referenced inside the RUN to actually bust the BuildKit
+# cache when CI passes a fresh value (github.run_id).  Without this
+# echo, the ARG is declared but never read, so the apt-get layer
+# stays cached across runs and Trivy keeps finding stale glibc CVEs
+# even though the workflow asked for a rebuild.  Counter-intuitive
+# but well-documented BuildKit behaviour.
+ARG BUILDDATE=0
+RUN echo "Cache bust: ${BUILDDATE}" \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends stockfish \
+    && useradd --create-home --uid 10001 appuser \
+    && rm -rf /var/lib/apt/lists/*
+
+# copy requirements from llm folder
+COPY llm/requirements.txt /app/requirements.txt
+# Upgrade pip+setuptools+wheel before resolving requirements so the
+# image ships with patched archive-handling (pip CVEs are typically
+# tied to specific minor versions of pip itself, not project deps).
+# Same BUILDDATE cache-bust applies — without it, this layer survives
+# across CI runs and the patched pip never reaches the published image.
+RUN echo "Cache bust: ${BUILDDATE}" \
+    && pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir -r /app/requirements.txt
+
+# copy only llm code
+COPY llm /app/llm
+RUN rm -rf /app/llm/tests /app/llm/rag/tests /app/llm/.github /app/llm/redis-win \
+    && rm -f /app/llm/package.json /app/llm/package-lock.json /app/llm/server.js /app/llm/test.js /app/llm/test_mixed.js /app/llm/test_unique_fens.js \
+    && mkdir -p /app/data \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+ENV PYTHONPATH=/app
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"
+
+CMD ["uvicorn", "llm.server:app", "--host", "0.0.0.0", "--port", "8000"]

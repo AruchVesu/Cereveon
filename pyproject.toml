@@ -1,0 +1,60 @@
+[tool.black]
+line-length = 100
+target-version = ["py313"]
+# Exclude scratch / archive dirs at repo root, plus dormant SECA research
+# subtrees whose contents are deliberately non-parseable Python stubs (per
+# the freeze-guard policy in seca/safety/freeze.py — "RL/ML research code
+# remains in the tree for future study, but MUST NOT be loaded into the
+# live runtime").  CI runs Black via run_quality_gate.py which uses an
+# explicit FORMAT_TARGETS whitelist, so this `extend-exclude` only affects
+# bare `black .` invocations.  Mirrors the dormant-subtree list in
+# docs/SECA.md.
+extend-exclude = '''
+^/(
+    chesscoach
+  | chesscoach-purge\.git
+  | llm/seca/(data|engines|planning|world_model|world|henm|closed_loop|optim|evolution|policy|memory)
+)/
+'''
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+warn_unused_configs = true
+pretty = true
+cache_dir = ".mypy_cache"
+
+# Trust-boundary modules — every public function must be fully type-annotated
+# AND every untyped function body must be deep-checked.  This is stricter than
+# the global mypy config above (which is intentionally permissive across the
+# rest of the typed surface to keep contributor velocity reasonable).  See
+# README "Code-quality gates" for the full rationale and the global vs.
+# per-package strictness split.
+[[tool.mypy.overrides]]
+module = [
+  "llm.rag.validators.*",
+  "llm.rag.safety.*",
+  "llm.rag.contracts.*",
+]
+disallow_untyped_defs = true
+check_untyped_defs = true
+disallow_incomplete_defs = true
+warn_return_any = true
+
+[tool.pylint.main]
+py-version = "3.13"
+persistent = false
+
+[tool.pylint."messages control"]
+disable = [
+  "broad-exception-caught",
+  "line-too-long",
+  "missing-class-docstring",
+  "missing-function-docstring",
+  "missing-module-docstring",
+  "subprocess-run-check",
+  "too-few-public-methods",
+  "too-many-arguments",
+  "too-many-instance-attributes",
+  "too-many-locals",
+]

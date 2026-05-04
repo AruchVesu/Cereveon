@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "evaluation_translation",
+        "move_quality",
+        "tactical",
+        "positional",
+        "phase_guidance"
+      ]
+    },
+    "conditions": {
+      "type": "object"
+    },
+    "content": {
+      "type": "object"
+    }
+  },
+  "required": ["id", "type", "conditions", "content"]
+}

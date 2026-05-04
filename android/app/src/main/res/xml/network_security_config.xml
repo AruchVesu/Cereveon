@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Network security configuration.
+
+    Release: cleartext traffic is forbidden globally — all connections must use TLS.
+    Debug:   cleartext is permitted only to the Android emulator host (10.0.2.2) and
+             localhost so the app can reach the dev backend over plain HTTP.
+             User-added CA certificates are also trusted in debug builds.
+-->
+<network-security-config>
+
+    <!-- Base policy: TLS required everywhere, system CAs only. -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!--
+        Debug overrides:
+        - Trust user-installed CAs (Charles, mitmproxy, etc.) in debug builds.
+        - Allow cleartext only to the emulator host and localhost.
+        These settings are stripped from release builds by the build toolchain.
+    -->
+    <!--
+        Cleartext is permitted to the Android emulator host and localhost so the
+        app can reach the dev backend over plain HTTP. Applies to all build types;
+        release builds connect to https:// Hetzner only and never use these hosts.
+        Kept at the top level because <debug-overrides> does not allow child
+        <domain-config> elements (NetworkSecurityConfig lint rule).
+    -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+
+    <!--
+        Debug overrides: trust user-installed CAs (Charles, mitmproxy, etc.).
+        Stripped from release builds by the build toolchain.
+    -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+
+</network-security-config>

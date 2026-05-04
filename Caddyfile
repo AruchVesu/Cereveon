@@ -1,0 +1,27 @@
+# Caddy reverse proxy for ChessCoach backend.
+# DOMAIN is injected via the DOMAIN environment variable in docker-compose.prod.yml.
+# Caddy automatically provisions and renews Let's Encrypt TLS certificates.
+
+{$DOMAIN} {
+    reverse_proxy api:8000
+
+    encode gzip
+
+    header {
+        # Security headers (augment the ones already set by FastAPI middleware)
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        X-Frame-Options DENY
+        X-Content-Type-Options nosniff
+        Referrer-Policy strict-origin-when-cross-origin
+        # Remove server identity
+        -Server
+    }
+
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 50mb
+            roll_keep 5
+        }
+        format json
+    }
+}

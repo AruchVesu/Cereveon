@@ -1,0 +1,6 @@
+id: positional_quiet
+type: positional
+conditions:
+  position_flags: space_advantage
+content:
+  description: "More space allows greater piece mobility and flexibility."

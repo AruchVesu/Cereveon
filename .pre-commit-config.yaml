@@ -1,0 +1,28 @@
+# Pre-commit hooks for the ChessCoach repo.
+#
+# Both hooks invoke `py -3.13` (the Windows Python launcher) explicitly
+# rather than the bare `python` command.  CI runs on Python 3.13, and
+# Black 26.3.1 with target-version=py313 makes different formatting
+# decisions on Python 3.11 vs 3.13 (the safety-check parse fails on 3.11
+# and Black silently leaves files unchanged, while CI on 3.13 actually
+# applies the new wrapping and rejects the unwrapped form).  Pinning the
+# hook to py -3.13 means local pre-commit results match CI exactly.
+#
+# Linux/macOS contributors: replace `py -3.13` with `python3.13` (or set
+# up `py` shim) — the Python 3.13 alignment is what matters, the
+# launcher form is Windows convention.
+repos:
+  - repo: local
+    hooks:
+      - id: python-quality
+        name: python-quality
+        entry: py -3.13 llm/run_quality_gate.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: python-ci-suite
+        name: python-ci-suite
+        entry: py -3.13 llm/run_ci_suite.py
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

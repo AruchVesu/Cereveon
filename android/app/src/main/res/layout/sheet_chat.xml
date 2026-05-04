@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Coach chat (screen #4 in the handoff).
+
+    Top → bottom:
+      1.  Drag handle (small, dim).
+      2.  Chapter header — DIALOGUE / "With the coach".
+      3.  Mini board on raised mat (preserved from old layout).
+      4.  Engine context chip — cyan dot + mono kicker
+          ("DISCUSSING · MOVE 14 · BG5").  Hidden until first reply.
+      5.  Hairline divider.
+      6.  Message list — typography-only voice separation.  Coach
+          rows have a 1px gradient gutter on the left edge; user rows
+          right-align with no fill.
+      7.  Typing dots — three cyan dots, staggered pulse.  Activity
+          toggles visibility on isStreaming.
+      8.  Composer — hairline-bordered field with italic placeholder
+          and a 32×32 cyan arrow send button.
+
+    Preserved IDs (so ChatBottomSheet.kt findViewById wiring is
+    unchanged): recyclerMessages, inputMessage, btnSend, miniBoard,
+    engineContextHeader, txtEngineContext.
+
+    New IDs: typingDots — activity sets visibility to VISIBLE while
+    streaming, GONE when the first chunk arrives or the request fails.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/bg_atrium_gradient"
+    android:paddingStart="@dimen/atrium_space_16"
+    android:paddingEnd="@dimen/atrium_space_16"
+    android:paddingTop="@dimen/atrium_space_8"
+    android:paddingBottom="@dimen/atrium_space_16">
+
+    <!-- Drag handle. -->
+    <View
+        android:layout_width="40dp"
+        android:layout_height="3dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="@dimen/atrium_space_4"
+        android:layout_marginBottom="@dimen/atrium_space_8"
+        android:background="@color/atrium_hairline_strong" />
+
+    <!-- Chapter header. -->
+    <ai.chesscoach.app.AtriumChapterHeaderView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="@dimen/atrium_space_4"
+        android:paddingBottom="@dimen/atrium_space_4"
+        app:atriumKicker="Dialogue"
+        app:atriumTitle="With the coach"
+        xmlns:app="http://schemas.android.com/apk/res-auto" />
+
+    <!-- Mini board on raised mat. -->
+    <FrameLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="@dimen/atrium_space_8"
+        android:padding="@dimen/atrium_space_4"
+        android:background="@drawable/board_mat_atrium">
+
+        <ai.chesscoach.app.ChessBoardView
+            android:id="@+id/miniBoard"
+            android:layout_width="120dp"
+            android:layout_height="120dp" />
+
+    </FrameLayout>
+
+    <!--
+        Engine context chip — DISCUSSING · MOVE 14 · BG5.  Hidden
+        until the first /chat reply arrives (ChatBottomSheet flips
+        visibility via engineContextHeader.visibility = VISIBLE).
+        Cyan dot + mono kicker; tightly grouped under the mat.
+    -->
+    <LinearLayout
+        android:id="@+id/engineContextHeader"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="@dimen/atrium_space_8"
+        android:visibility="gone"
+        tools:visibility="visible">
+
+        <View
+            android:layout_width="6dp"
+            android:layout_height="6dp"
+            android:layout_marginEnd="@dimen/atrium_space_8"
+            android:background="@drawable/context_chip_dot_cyan" />
+
+        <TextView
+            android:id="@+id/txtEngineContext"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker.Cyan"
+            tools:text="Discussing · Move 14 · Bg5" />
+
+    </LinearLayout>
+
+    <!-- Hairline rule between context chip and message list. -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/atrium_hairline_thickness"
+        android:layout_marginTop="@dimen/atrium_space_12"
+        android:layout_marginBottom="@dimen/atrium_space_4"
+        android:background="@color/atrium_hairline" />
+
+    <!-- Message list. -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recyclerMessages"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingTop="@dimen/atrium_space_4"
+        android:paddingBottom="@dimen/atrium_space_4"
+        android:scrollbars="vertical" />
+
+    <!--
+        Typing dots — three cyan dots, staggered pulse.  Activity sets
+        visibility to VISIBLE while waiting for the first stream chunk
+        and back to GONE once the first chunk arrives or the request
+        fails.  Detached from the RecyclerView so it always sits at the
+        bottom of the message column rather than scrolling out of view.
+    -->
+    <ai.chesscoach.app.AtriumTypingDotsView
+        android:id="@+id/typingDots"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="start"
+        android:layout_marginStart="@dimen/atrium_space_16"
+        android:layout_marginTop="@dimen/atrium_space_4"
+        android:layout_marginBottom="@dimen/atrium_space_4"
+        android:visibility="gone"
+        tools:visibility="visible" />
+
+    <!-- Composer row — hairline field + 32×32 cyan arrow send. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="@dimen/atrium_space_8">
+
+        <EditText
+            android:id="@+id/inputMessage"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="@drawable/composer_field_bg"
+            android:paddingStart="@dimen/atrium_space_12"
+            android:paddingEnd="@dimen/atrium_space_12"
+            android:paddingTop="@dimen/atrium_space_8"
+            android:paddingBottom="@dimen/atrium_space_8"
+            android:fontFamily="@font/cormorant_garamond"
+            android:textStyle="italic"
+            android:textColor="@color/atrium_ink"
+            android:textColorHint="@color/atrium_dim"
+            android:textSize="15sp"
+            android:hint="Ask the coach…"
+            android:inputType="textMultiLine|textCapSentences"
+            android:maxLines="3"
+            android:minHeight="@dimen/atrium_tap_target" />
+
+        <Button
+            android:id="@+id/btnSend"
+            android:layout_width="@dimen/atrium_space_32"
+            android:layout_height="@dimen/atrium_space_32"
+            android:layout_marginStart="@dimen/atrium_space_8"
+            android:padding="0dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:background="@drawable/composer_send_bg"
+            android:text="→"
+            android:textAllCaps="false"
+            android:textColor="@color/atrium_accent_cyan"
+            android:textSize="18sp"
+            android:fontFamily="@font/cormorant_garamond" />
+
+    </LinearLayout>
+
+</LinearLayout>

@@ -1,0 +1,4 @@
+[Golden prompt content generated once via render_mode_2_prompt
+and pasted verbatim here]
+
+(Engine signal block will be empty or `{}` — this is intentional.)

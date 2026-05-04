@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cormorant Garamond — body, prose, display title.
+    Roles per Atrium handoff: Display title (italic 500, 28–44px),
+    Body / coach prose (regular 400, 16–18px), drop-cap (italic 500 44px).
+    Italic / weight selection happens at the TextAppearance level
+    via android:textStyle and android:textFontWeight.
+-->
+<font-family xmlns:app="http://schemas.android.com/apk/res-auto"
+    app:fontProviderAuthority="com.google.android.gms.fonts"
+    app:fontProviderPackage="com.google.android.gms"
+    app:fontProviderQuery="name=Cormorant+Garamond&amp;weight=400|500&amp;italic=0|1&amp;besteffort=true"
+    app:fontProviderCerts="@array/com_google_android_gms_fonts_certs" />

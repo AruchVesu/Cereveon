@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Openings · Repertoire (handoff screen #7).
+
+    Reached from HomeActivity row III ("Openings").  Static surface
+    for the scaffold pass — no repertoire backend exists yet, so the
+    opening cards are populated from a hardcoded list in
+    OpeningsActivity.  When a real /repertoire endpoint lands, the
+    cards become API-driven and the Drill button posts to it.
+
+    Top → bottom:
+      1.  Atrium chapter header (kicker + italic title + ✦ ornament)
+      2.  3-cell metric strip — Lines / Depth / Score with hairline
+          grid separators between cells
+      3.  Scrollable opening cards (4 in the scaffold) — each with
+          ECO + italic name + active badge + UCI line + mastery bar
+      4.  Footer — primary "Drill active line" + secondary "+"
+-->
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_atrium_gradient">
+
+    <!-- Chapter header. -->
+    <ai.chesscoach.app.AtriumChapterHeaderView
+        android:id="@+id/openingsHeader"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/atrium_space_24"
+        android:paddingStart="@dimen/atrium_space_24"
+        android:paddingEnd="@dimen/atrium_space_24"
+        app:atriumKicker="Repertoire · as White"
+        app:atriumTitle="Your Opening Book"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- 3-cell metric strip.  The 1dp gap between cells is achieved by
+         giving the parent an atrium_hairline background and laying out
+         three cells with 1dp horizontal margins between them. -->
+    <LinearLayout
+        android:id="@+id/openingsStats"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/atrium_space_20"
+        android:layout_marginEnd="@dimen/atrium_space_20"
+        android:layout_marginTop="@dimen/atrium_space_12"
+        android:orientation="horizontal"
+        android:background="@color/atrium_hairline"
+        android:padding="1dp"
+        app:layout_constraintTop_toBottomOf="@+id/openingsHeader">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:background="@color/atrium_bg_base"
+            android:padding="@dimen/atrium_space_12">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:text="Lines" />
+
+            <TextView
+                android:id="@+id/openingsStatLines"
+                style="@style/Atrium.OpeningsStat.Value"
+                android:text="—"
+                tools:text="4" />
+
+            <TextView
+                style="@style/Atrium.OpeningsStat.Sub"
+                android:text="memorized" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:background="@color/atrium_bg_base"
+            android:padding="@dimen/atrium_space_12">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:text="Depth" />
+
+            <TextView
+                android:id="@+id/openingsStatDepth"
+                style="@style/Atrium.OpeningsStat.Value"
+                android:text="—"
+                tools:text="12" />
+
+            <TextView
+                style="@style/Atrium.OpeningsStat.Sub"
+                android:text="avg. moves" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:background="@color/atrium_bg_base"
+            android:padding="@dimen/atrium_space_12">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:text="Score" />
+
+            <TextView
+                android:id="@+id/openingsStatScore"
+                style="@style/Atrium.OpeningsStat.Value"
+                android:text="—"
+                tools:text="68%" />
+
+            <TextView
+                style="@style/Atrium.OpeningsStat.Sub"
+                android:text="win rate" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Footer (declared before scroll so the constraint can target it). -->
+    <LinearLayout
+        android:id="@+id/openingsFooter"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/atrium_space_16"
+        android:layout_marginEnd="@dimen/atrium_space_16"
+        android:layout_marginBottom="@dimen/atrium_space_16"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <Button
+            android:id="@+id/btnOpeningsDrill"
+            style="@style/Atrium.Button.Primary"
+            android:layout_width="0dp"
+            android:layout_height="@dimen/atrium_tap_target"
+            android:layout_weight="1"
+            android:text="Drill active line" />
+
+        <Space
+            android:layout_width="@dimen/atrium_space_8"
+            android:layout_height="0dp" />
+
+        <Button
+            android:id="@+id/btnOpeningsAdd"
+            style="@style/Atrium.Button.Secondary"
+            android:layout_width="@dimen/atrium_tap_target"
+            android:layout_height="@dimen/atrium_tap_target"
+            android:text="+" />
+
+    </LinearLayout>
+
+    <!-- Scrollable card list — populated by OpeningsActivity. -->
+    <ScrollView
+        android:id="@+id/openingsScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="@dimen/atrium_space_16"
+        android:layout_marginBottom="@dimen/atrium_space_8"
+        android:fillViewport="true"
+        app:layout_constraintTop_toBottomOf="@+id/openingsStats"
+        app:layout_constraintBottom_toTopOf="@+id/openingsFooter">
+
+        <LinearLayout
+            android:id="@+id/openingsCardContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/atrium_space_20"
+            android:paddingEnd="@dimen/atrium_space_20"
+            android:paddingBottom="@dimen/atrium_space_16" />
+
+    </ScrollView>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Training session detail.
+
+    Closest Atrium analogue is screen #7 (Lessons / curriculum), but
+    the current sheet is a single training-session detail rather than
+    a curriculum list — re-skinned to the Atrium design language while
+    preserving its existing purpose.  Promoting it into a curriculum
+    list view is a feature change, not a re-skin, and is out of scope
+    for this commit.
+
+    Top → bottom:
+      1.  Drag handle.
+      2.  AtriumChapterHeaderView — "TRAINING" / "Next session".
+      3.  Italic Cormorant topic line (txtTrainingTopic).
+      4.  Italic Cormorant exercise type (txtTrainingExerciseType).
+      5.  Difficulty kicker (txtTrainingDifficultyLabel) +
+          accent_cyan progress bar (progressTrainingDifficulty).
+      6.  Footer — Atrium.Button.Primary "Start training"
+          (btnStartTrainingSession).
+
+    Preserved IDs (every TrainingSessionBottomSheet.kt findViewById
+    resolves unchanged): txtTrainingTopic, txtTrainingExerciseType,
+    txtTrainingDifficultyLabel, progressTrainingDifficulty,
+    btnStartTrainingSession.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_atrium_gradient"
+    android:paddingStart="@dimen/atrium_space_24"
+    android:paddingEnd="@dimen/atrium_space_24"
+    android:paddingTop="@dimen/atrium_space_8"
+    android:paddingBottom="@dimen/atrium_space_24">
+
+    <!-- Drag handle. -->
+    <View
+        android:layout_width="40dp"
+        android:layout_height="3dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="@dimen/atrium_space_8"
+        android:background="@color/atrium_hairline_strong" />
+
+    <!-- Chapter header. -->
+    <ai.chesscoach.app.AtriumChapterHeaderView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:atriumKicker="Training"
+        app:atriumTitle="Next session" />
+
+    <!-- Topic — italic Cormorant body. -->
+    <TextView
+        android:id="@+id/txtTrainingTopic"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="@style/Atrium.Body.Italic"
+        android:textSize="17sp"
+        android:layout_marginTop="@dimen/atrium_space_16"
+        tools:text="Endgame · King and pawn" />
+
+    <!-- Exercise type — italic Cormorant body, slightly muted. -->
+    <TextView
+        android:id="@+id/txtTrainingExerciseType"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="@style/Atrium.Body.Italic"
+        android:textSize="15sp"
+        android:textColor="@color/atrium_muted"
+        android:layout_marginTop="@dimen/atrium_space_4"
+        tools:text="A measured drill of fifteen positions." />
+
+    <!-- Hairline rule between meta and difficulty controls. -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/atrium_hairline_thickness"
+        android:layout_marginTop="@dimen/atrium_space_16"
+        android:layout_marginBottom="@dimen/atrium_space_16"
+        android:background="@color/atrium_hairline" />
+
+    <!-- Difficulty kicker. -->
+    <TextView
+        android:id="@+id/txtTrainingDifficultyLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="@style/Atrium.Kicker"
+        android:layout_marginBottom="@dimen/atrium_space_8"
+        tools:text="Difficulty · 6 of 10" />
+
+    <!-- Difficulty progress — slim Atrium bar. -->
+    <ProgressBar
+        android:id="@+id/progressTrainingDifficulty"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="6dp"
+        android:max="100"
+        android:progress="50"
+        android:progressTint="@color/atrium_accent_cyan"
+        android:progressBackgroundTint="@color/atrium_hairline"
+        android:layout_marginBottom="@dimen/atrium_space_24" />
+
+    <!-- Footer — primary action. -->
+    <Button
+        android:id="@+id/btnStartTrainingSession"
+        style="@style/Atrium.Button.Primary"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/atrium_tap_target"
+        android:text="Start training" />
+
+</LinearLayout>

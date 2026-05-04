@@ -1,0 +1,21 @@
+{
+  "fen": "r2q1rk1/pp2bppp/2n1bn2/2pp4/3P4/2PBPN2/PP1N1PPP/R1BQ1RK1 w - - 0 9",
+  "user_query": "Is there a tactical opportunity despite the quiet position?",
+  "stockfish_json": {
+    "evaluation": {
+      "type": "cp",
+      "value": 65
+    },
+    "eval_delta": 10,
+    "errors": {
+      "last_move_quality": "ok"
+    },
+    "tactical_flags": [
+      "hanging_piece"
+    ],
+    "position_flags": [
+      "space_advantage"
+    ],
+    "phase": "middlegame"
+  }
+}

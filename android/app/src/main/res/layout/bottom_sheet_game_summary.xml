@@ -1,0 +1,367 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Game-end summary (screen #5 in the handoff).
+
+    Top → bottom:
+      1.  Drag handle.
+      2.  Chapter header — kicker "GAME · CONCLUDED" + italic display
+          title.  txtCoachTitle pulls double duty here: activity sets
+          the result copy ("Won · 1–0", "Game Over", etc.) and the
+          handoff design label ("A quiet victory") naturally aligns.
+      3.  Hero result card (AtriumCardView with corner ticks +
+          hairline border).  Inside:
+            - txtActionBadge — repurposed as kicker slot ("RESULT").
+            - heroResult — italic display label with cyan halo
+              (new ID; activity may populate, falls back to "—").
+            - heroSubline — mono cyan metadata
+              ("38 MOVES · 27:41 · OPPONENT RESIGNED"); placeholder
+              hidden until activity populates.
+      4.  3-cell metric strip with hairline grid:
+            - RATING — txtNewRating (cyan numeric) + kicker.
+            - ACCURACY — txtConfidenceLabel + small inline
+              progressConfidence track + kicker.
+            - THEME — txtLearningStatus reused as italic value +
+              kicker.
+      5.  Coach reflection (DropCapTextView, txtCoachDescription) —
+          first letter renders as a cyan-glowing italic drop cap.
+      6.  Optional payload container (layoutPayload).
+      7.  Optional training card (AtriumCardView, ticks off) holding
+          the unchanged training-recommendation row IDs.
+      8.  Footer — btnStartTraining as Atrium.Button.Primary.
+
+    Preserved IDs (every findViewById in GameSummaryBottomSheet.kt
+    keeps resolving): txtNewRating, txtActionBadge, progressConfidence,
+    txtConfidenceLabel, txtCoachTitle, txtCoachDescription,
+    layoutPayload, txtLearningStatus, trainingCard, txtTrainingTopic,
+    txtTrainingFormat, txtTrainingGain, progressDifficulty,
+    txtTrainingEmpty, btnStartTraining.
+
+    New IDs (additive, no required wiring): heroResult, heroSubline.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_atrium_gradient"
+    android:paddingStart="@dimen/atrium_space_24"
+    android:paddingEnd="@dimen/atrium_space_24"
+    android:paddingTop="@dimen/atrium_space_8"
+    android:paddingBottom="@dimen/atrium_space_24">
+
+    <!-- Drag handle. -->
+    <View
+        android:layout_width="40dp"
+        android:layout_height="3dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="@dimen/atrium_space_8"
+        android:background="@color/atrium_hairline_strong" />
+
+    <!-- Chapter kicker + title (txtCoachTitle reused as the title). -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="@style/Atrium.Kicker"
+        android:text="Game · Concluded"
+        android:paddingTop="@dimen/atrium_space_4" />
+
+    <TextView
+        android:id="@+id/txtCoachTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/atrium_space_4"
+        android:textAppearance="@style/Atrium.Display"
+        tools:text="A quiet victory" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/atrium_hairline_thickness"
+        android:layout_marginTop="@dimen/atrium_space_12"
+        android:layout_marginBottom="@dimen/atrium_space_16"
+        android:background="@color/atrium_hairline_strong" />
+
+    <!-- Hero result card with corner ticks. -->
+    <ai.chesscoach.app.AtriumCardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="@dimen/atrium_space_16"
+        app:atriumCardTicks="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/txtActionBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Kicker.Cyan"
+                tools:text="Result" />
+
+            <TextView
+                android:id="@+id/heroResult"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_4"
+                android:textAppearance="@style/Atrium.Display.Large"
+                android:textSize="32sp"
+                android:text="—"
+                android:textColor="@color/atrium_ink"
+                android:shadowColor="@color/atrium_accent_cyan"
+                android:shadowDx="0"
+                android:shadowDy="0"
+                android:shadowRadius="14"
+                tools:text="Won · 1–0" />
+
+            <TextView
+                android:id="@+id/heroSubline"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_8"
+                android:textAppearance="@style/Atrium.Numeric.Cyan"
+                android:textSize="10sp"
+                android:letterSpacing="0.18"
+                android:textAllCaps="true"
+                android:visibility="gone"
+                tools:text="38 Moves · 27:41 · Opponent Resigned"
+                tools:visibility="visible" />
+
+        </LinearLayout>
+
+    </ai.chesscoach.app.AtriumCardView>
+
+    <!-- 3-cell metric strip with hairline grid. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="@dimen/atrium_space_16"
+        android:baselineAligned="false">
+
+        <!-- Cell 1 — RATING. -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:padding="@dimen/atrium_space_12">
+
+            <TextView
+                android:id="@+id/txtNewRating"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Numeric.Cyan"
+                android:textSize="20sp"
+                tools:text="+7" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_4"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:text="Rating" />
+
+        </LinearLayout>
+
+        <View
+            android:layout_width="@dimen/atrium_hairline_thickness"
+            android:layout_height="match_parent"
+            android:background="@color/atrium_hairline" />
+
+        <!-- Cell 2 — ACCURACY (txtConfidenceLabel value + thin track). -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:padding="@dimen/atrium_space_12">
+
+            <TextView
+                android:id="@+id/txtConfidenceLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Numeric"
+                android:textSize="20sp"
+                android:text="—"
+                tools:text="86%" />
+
+            <ProgressBar
+                android:id="@+id/progressConfidence"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="3dp"
+                android:layout_marginTop="@dimen/atrium_space_4"
+                android:progressTint="@color/atrium_accent_cyan"
+                android:progressBackgroundTint="@color/atrium_hairline"
+                android:max="100"
+                android:progress="0" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_4"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:text="Accuracy" />
+
+        </LinearLayout>
+
+        <View
+            android:layout_width="@dimen/atrium_hairline_thickness"
+            android:layout_height="match_parent"
+            android:background="@color/atrium_hairline" />
+
+        <!-- Cell 3 — THEME (txtLearningStatus reused as italic value). -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:padding="@dimen/atrium_space_12">
+
+            <TextView
+                android:id="@+id/txtLearningStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Body.Italic"
+                android:textSize="17sp"
+                android:textColor="@color/atrium_ink"
+                android:text="—"
+                tools:text="Patient" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_4"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:text="Theme" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/atrium_hairline_thickness"
+        android:layout_marginTop="@dimen/atrium_space_12"
+        android:layout_marginBottom="@dimen/atrium_space_16"
+        android:background="@color/atrium_hairline" />
+
+    <!--
+        Coach reflection paragraph.  DropCapTextView renders the first
+        letter as a cyan-glowing italic drop cap floated to the left
+        of the first two body lines.  Activity sets text via the
+        standard setText(...) — same call site as the previous
+        TextView, no wiring change required.
+    -->
+    <ai.chesscoach.app.DropCapTextView
+        android:id="@+id/txtCoachDescription"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="@style/Atrium.Body"
+        android:text=""
+        tools:text="Yet the position settled before I expected it — your patient development through the middlegame turned every attacking lunge into hollow noise." />
+
+    <!-- Optional payload container — preserved for DRILL/PUZZLE renderers. -->
+    <LinearLayout
+        android:id="@+id/layoutPayload"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginTop="@dimen/atrium_space_12"
+        android:visibility="gone" />
+
+    <!--
+        Training recommendation card — quieter sibling of the hero
+        card (no corner ticks).  All inner IDs preserved so the
+        existing training-recommendation render path keeps working.
+    -->
+    <ai.chesscoach.app.AtriumCardView
+        android:id="@+id/trainingCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="@dimen/atrium_space_16"
+        android:layout_marginTop="@dimen/atrium_space_16"
+        android:visibility="gone"
+        app:atriumCardTicks="false">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Kicker.Cyan"
+                android:text="Next training" />
+
+            <TextView
+                android:id="@+id/txtTrainingTopic"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_4"
+                android:textAppearance="@style/Atrium.Body.Italic"
+                android:textSize="17sp"
+                android:text="Topic: —"
+                tools:text="Endgame · King and pawn" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="@dimen/atrium_space_8">
+
+                <TextView
+                    android:id="@+id/txtTrainingFormat"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textAppearance="@style/Atrium.Kicker"
+                    android:text="Format: —" />
+
+                <TextView
+                    android:id="@+id/txtTrainingGain"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textAppearance="@style/Atrium.Kicker.Cyan"
+                    android:text="+0 Elo" />
+
+            </LinearLayout>
+
+            <ProgressBar
+                android:id="@+id/progressDifficulty"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="3dp"
+                android:layout_marginTop="@dimen/atrium_space_8"
+                android:progressTint="@color/atrium_accent_cyan"
+                android:progressBackgroundTint="@color/atrium_hairline"
+                android:max="100"
+                android:progress="0" />
+
+        </LinearLayout>
+
+    </ai.chesscoach.app.AtriumCardView>
+
+    <!-- Empty state for training (shown on 404). -->
+    <TextView
+        android:id="@+id/txtTrainingEmpty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="@style/Atrium.Inline"
+        android:text="No training recommendation available."
+        android:layout_marginTop="@dimen/atrium_space_16"
+        android:visibility="gone" />
+
+    <!-- Footer — primary "Start training". -->
+    <Button
+        android:id="@+id/btnStartTraining"
+        style="@style/Atrium.Button.Primary"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/atrium_tap_target"
+        android:layout_marginTop="@dimen/atrium_space_16"
+        android:text="Start training" />
+
+</LinearLayout>

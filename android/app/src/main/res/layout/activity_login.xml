@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Login.
+
+    Borrows the onboarding aesthetic (handoff screen #2): centered
+    kicker + italic title + ornament rule, hairline-bordered fields,
+    Atrium primary/secondary buttons.
+
+    Top → bottom:
+      1.  Centered header — mono "CEREVEON · ENTER" kicker over an
+          italic Cormorant title.
+      2.  ✦ ornament rule.
+      3.  Email field (TextInputLayout outlined, Atrium colours via
+          theme cascade).
+      4.  Password field (same).
+      5.  Error row (italic amber, hidden by default).
+      6.  Atrium primary "Sign in" + Atrium secondary "Create account".
+      7.  Loading indicator.
+
+    Preserved IDs: etEmail, etPassword, btnLogin, btnRegister, tvError,
+    progressBar — LoginActivity.kt findViewById wiring is unchanged.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_atrium_gradient"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/atrium_space_24"
+        android:paddingEnd="@dimen/atrium_space_24"
+        android:paddingTop="@dimen/atrium_space_44"
+        android:paddingBottom="@dimen/atrium_space_32">
+
+        <!-- Centered kicker. -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_44"
+            android:textAppearance="@style/Atrium.Kicker.Cyan"
+            android:text="Cereveon · Enter" />
+
+        <!-- Italic display title. -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_8"
+            android:textAppearance="@style/Atrium.Display"
+            android:text="Welcome" />
+
+        <!-- ✦ ornament rule (centered, simple inline glyph). -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_8"
+            android:layout_marginBottom="@dimen/atrium_space_32"
+            android:fontFamily="@font/cormorant_garamond"
+            android:textColor="@color/atrium_muted"
+            android:textSize="14sp"
+            android:text="✦" />
+
+        <!-- Email field. -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="@dimen/atrium_space_12"
+            android:hint="Email"
+            app:boxStrokeColor="@color/atrium_accent_cyan"
+            app:hintTextColor="@color/atrium_dim"
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etEmail"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/cormorant_garamond"
+                android:textColor="@color/atrium_ink"
+                android:textSize="15sp"
+                android:inputType="textEmailAddress"
+                android:imeOptions="actionNext" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <!-- Password field. -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="@dimen/atrium_space_24"
+            android:hint="Password"
+            app:boxStrokeColor="@color/atrium_accent_cyan"
+            app:hintTextColor="@color/atrium_dim"
+            app:passwordToggleEnabled="true"
+            app:passwordToggleTint="@color/atrium_muted"
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etPassword"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/cormorant_garamond"
+                android:textColor="@color/atrium_ink"
+                android:textSize="15sp"
+                android:inputType="textPassword"
+                android:imeOptions="actionDone" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <!-- Error row — italic amber, hidden by default. -->
+        <TextView
+            android:id="@+id/tvError"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="@dimen/atrium_space_16"
+            android:padding="@dimen/atrium_space_12"
+            android:background="@color/atrium_bg_surface"
+            android:textAppearance="@style/Atrium.Body.Italic"
+            android:textColor="@color/atrium_accent_amber"
+            android:textSize="14sp"
+            android:visibility="gone"
+            tools:text="Invalid credentials"
+            tools:visibility="visible" />
+
+        <!-- Primary action — Sign in. -->
+        <Button
+            android:id="@+id/btnLogin"
+            style="@style/Atrium.Button.Primary"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_tap_target"
+            android:text="Sign in" />
+
+        <!-- Secondary — Create account. -->
+        <Button
+            android:id="@+id/btnRegister"
+            style="@style/Atrium.Button.Primary"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_tap_target"
+            android:layout_marginTop="@dimen/atrium_space_12"
+            android:textColor="@color/atrium_muted"
+            android:text="Create account" />
+
+        <!-- Loading indicator. -->
+        <ProgressBar
+            android:id="@+id/progressBar"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_16"
+            android:indeterminateTint="@color/atrium_accent_cyan"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+</ScrollView>

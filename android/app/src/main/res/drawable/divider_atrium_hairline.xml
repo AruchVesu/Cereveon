@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Plain Atrium hairline divider — 1px at 8% white. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <size android:height="@dimen/atrium_hairline_thickness" />
+    <solid android:color="@color/atrium_hairline" />
+</shape>

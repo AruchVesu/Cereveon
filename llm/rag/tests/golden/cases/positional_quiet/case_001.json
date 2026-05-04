@@ -1,0 +1,11 @@
+{
+  "fen": "r2q1rk1/pp2bppp/2n1bn2/2pp4/3P4/2PBPN2/PP1N1PPP/R1BQ1RK1 w - - 0 9",
+  "stockfish_json": {
+    "evaluation": { "type": "cp", "value": 35 },
+    "eval_delta": 5,
+    "errors": { "last_move_quality": "ok" },
+    "tactical_flags": [],
+    "position_flags": ["space_advantage"]
+  },
+  "user_query": "Who stands slightly better here?"
+}

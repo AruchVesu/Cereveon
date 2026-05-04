@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# OS / IDE
+.vscode/
+.idea/
+
+# Local / secrets
+.env
+
+# Data / logs
+*.log
+*.exe
+*.bin
+*.zip
+*.jsonl
+# ...except the validator violations corpus, which is checked-in evidence
+# backing the safety contracts (see llm/rag/tests/contracts/test_violations_corpus.py).
+!rag/tests/contracts/fixtures/*.jsonl
+
+# User junk
+.DS_Store
+Thumbs.db

@@ -1,0 +1,53 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: llm/Dockerfile.api
+    user: "10001:10001"
+    command: ["uvicorn", "llm.server:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      SECA_ENV: prod
+      ENGINE_POOL_SIZE: "2"
+      ENGINE_THREADS: "1"
+      ENGINE_HASH_MB: "16"
+      ENGINE_SKILL_LEVEL: "10"
+      ENGINE_NODES: "5000"
+      ENGINE_DEFAULT_NODES: "5000"
+      ENGINE_TRAINING_NODES: "5000"
+      ENGINE_ANALYSIS_NODES: "5000"
+      ENGINE_BLITZ_NODES: "5000"
+      ENGINE_DEFAULT_MOVETIME_MS: "40"
+      ENGINE_TRAINING_MOVETIME_MS: "40"
+      ENGINE_ANALYSIS_MOVETIME_MS: "80"
+      ENGINE_BLITZ_MOVETIME_MS: "25"
+      ENGINE_QUEUE_TIMEOUT_MS: "0"
+      ENGINE_ASYNC_PREDICT_ENABLED: "1"
+      ENGINE_ASYNC_PREDICT_PLIES: "2"
+      ENGINE_ASYNC_PREDICT_MOVETIME_MS: "20"
+      ENGINE_ASYNC_PREDICT_NODES: "5000"
+      ENGINE_ASYNC_PREDICT_TOP_K: "3"
+      ENGINE_HEURISTIC_ENABLED: "1"
+      ENGINE_HEURISTIC_MAX_FULLMOVE: "8"
+      ENGINE_HEURISTIC_ELO_MAX: "1600"
+      ENGINE_DEEP_REFINE_ENABLED: "1"
+      ENGINE_DEEP_REFINE_NODES: "12000"
+      MOVE_CACHE_TTL_SECONDS: "3600"
+      MOVE_CACHE_L1_MAX_ITEMS: "500"
+      ENGINE_PREWARM_MODES: "blitz,training"
+      ENGINE_PREWARM_FENS: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1||rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2||rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2||r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 2 3||r2q1rk1/pp2bppp/2n1bn2/2pp4/3P4/2PBPN2/PP1N1PPP/R1BQ1RK1 w - - 0 9"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    cpus: 2.0
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    restart: unless-stopped
