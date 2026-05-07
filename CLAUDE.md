@@ -118,10 +118,19 @@ See `.env.example` for the full reference. Key variables:
 |----------|---------|-------------|
 | `SECA_API_KEY` | `dev-key` | Auth key; any value works in `dev` mode |
 | `SECA_ENV` | `dev` | `dev` or `prod` |
+| `SECRET_KEY` | — | JWT signing secret (≥ 32 chars; required in `prod`) |
 | `COACH_OLLAMA_URL` | `http://host.docker.internal:11434` | Ollama endpoint |
 | `COACH_OLLAMA_MODEL` | `qwen2.5:7b-instruct-q2_K` | LLM model |
 | `STOCKFISH_PATH` | auto-detected | Override Stockfish binary path |
 | `REDIS_URL` | *(unset)* | Redis for move cache; omit for in-memory only |
+| `TRUSTED_PROXIES` | prod: empty (XFF not trusted, warning logged); dev: loopback | Comma-separated proxy IPs / CIDRs. **Required in prod** for per-client rate limiting; otherwise every request behind the reverse proxy keys on the same bucket. See README and `docs/DEPLOYMENT.md` > Trusted Proxies. |
+
+**HTTP-level contracts** (no env vars; pinned constants):
+
+- `X-API-Version: 1` — every coaching request from the Android client carries
+  this header; the server enforces a matching value (Phase 1 lenient on
+  missing, strict on mismatch). Bumping requires a coordinated server +
+  Android release. See `docs/API_CONTRACTS.md` > API schema versioning.
 
 ### Running tests
 

@@ -32,8 +32,16 @@ FORBIDDEN_PATTERNS = [
 def validate_mode_2_negative(text: str) -> None:
     """
     Raise AssertionError for invalid MODE-2 output.
+
+    Note: the empty-input check below uses an explicit ``raise`` rather
+    than ``assert``.  ``assert`` is stripped under ``python -O`` (and by
+    some packaging tools that pass ``-O`` to bytecode-compile steps),
+    which would silently skip the empty-output gate in production.  The
+    explicit raise preserves the same exception type so existing
+    callers that catch ``AssertionError`` keep working.
     """
-    assert text.strip(), "Empty output is invalid"
+    if not text.strip():
+        raise AssertionError("Empty output is invalid")
 
     for pattern in FORBIDDEN_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):

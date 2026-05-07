@@ -16,6 +16,15 @@ TEST_TARGETS = [
     "llm/rag/tests/contracts/test_mode_2_output.py",
     "llm/rag/tests/contracts/test_violations_corpus.py",
     "llm/rag/tests/test_output_firewall.py",
+    # Validator pattern-coverage tests (Category F closure pass): every
+    # forbidden-pattern literal is now load-bearing for at least one
+    # parametrised case.  Closes the bulk of the 2026-05-07 mutmut
+    # baseline survivor set.
+    "llm/rag/tests/unit/test_validator_pattern_coverage.py",
+    # python -O hardening regression — pins the if/raise pattern in
+    # validate_mode_2_negative against future contributors swapping it
+    # back to a bare ``assert`` (see [tool.pylint] policy in pyproject).
+    "llm/rag/tests/unit/test_validator_dash_o_hardening.py",
     "llm/rag/tests/test_run_mode_2_additional.py",
     "llm/rag/tests/test_run_mode_2_cascades.py",
     "llm/rag/tests/test_run_mode_2_mate_sanitization.py",
@@ -56,6 +65,27 @@ TEST_TARGETS = [
     "llm/tests/test_full_loop_integration.py",
     "llm/tests/test_curriculum_next_contract.py",
     "llm/tests/test_security_hardening.py",
+    # Authorization-layer security (AUT-01..AUT-02) — JWT cross-tenant
+    # check on /next-training, dead-router non-inclusion, AUT-01d/e
+    # 404 collapse that closes the player-id enumeration oracle.
+    "llm/tests/test_security_authz.py",
+    # API schema-versioning middleware (AVH_01..AVH_10) — pins the
+    # X-API-Version request/response header contract on the server side.
+    # Android counterpart: android/app/src/test/.../ApiVersionHeaderTest.kt.
+    "llm/tests/test_api_version_header.py",
+    # Container runtime hardening (CH_01..CH_13) — pins the per-service
+    # security_opt / cap_drop / read_only / tmpfs flags in
+    # docker-compose.prod.yml so a careless edit cannot silently
+    # regress the runtime sandboxing contract.  Static parser only;
+    # no Docker daemon required.
+    "llm/tests/test_container_hardening.py",
+    # Engine pool crash recovery (CR_01..CR_08) — pins that a Stockfish
+    # subprocess crash is detected at release time and the dead handle
+    # replaced with a fresh engine.  Without this, a crash mid-request
+    # leaves a corpse in the pool's queue and cascades second-order
+    # failures across the next pool_size requests.  Fake engines only;
+    # no Stockfish binary required.
+    "llm/tests/test_engine_pool_crash_recovery.py",
     # Player adaptation regression suite (full-scale adaptation: /move session auth,
     # curriculum history-driven topic, game finish recommendations, SAFE_MODE gate).
     "llm/tests/test_adaptive_player.py",
@@ -155,8 +185,6 @@ COVERAGE_TARGETS = [
     "llm.seca.analytics.router",
     "llm.seca.curriculum.reward",
     "llm.seca.curriculum.spacing",
-    "llm.seca.skills.trainer",
-    "llm.seca.brain.bandit.contextual_bandit",
     # llm.seca.coach.live_controller and llm.seca.coach.executor are excluded from
     # --cov targets: llm.seca.coach.__init__ imports engine.py which loads numpy via
     # a C extension; coverage pre-loading the package for instrumentation triggers

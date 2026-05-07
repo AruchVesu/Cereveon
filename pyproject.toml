@@ -1,19 +1,18 @@
 [tool.black]
 line-length = 100
 target-version = ["py313"]
-# Exclude scratch / archive dirs at repo root, plus dormant SECA research
-# subtrees whose contents are deliberately non-parseable Python stubs (per
-# the freeze-guard policy in seca/safety/freeze.py — "RL/ML research code
-# remains in the tree for future study, but MUST NOT be loaded into the
-# live runtime").  CI runs Black via run_quality_gate.py which uses an
-# explicit FORMAT_TARGETS whitelist, so this `extend-exclude` only affects
-# bare `black .` invocations.  Mirrors the dormant-subtree list in
-# docs/SECA.md.
+# Exclude the pre-squash bare-archive directory at repo root.  CI runs
+# Black via run_quality_gate.py with an explicit FORMAT_TARGETS
+# whitelist, so this `extend-exclude` only affects bare `black .`
+# invocations.  Historically this list also enumerated dormant SECA
+# research subtrees (data/, planning/, world/, henm/, closed_loop/,
+# optim/, evolution/, policy/, memory/) but the deletion sweeps in
+# 2026-04…05 removed them entirely; the two paths that survived
+# (`engines/` and `world_model/`) are now live SECA modules and SHOULD
+# be linted, so they were also dropped from the exclude list.
 extend-exclude = '''
 ^/(
-    chesscoach
-  | chesscoach-purge\.git
-  | llm/seca/(data|engines|planning|world_model|world|henm|closed_loop|optim|evolution|policy|memory)
+    chesscoach-purge\.git
 )/
 '''
 
@@ -57,4 +56,35 @@ disable = [
   "too-many-arguments",
   "too-many-instance-attributes",
   "too-many-locals",
+]
+
+# ---------------------------------------------------------------------------
+# Project policy: explicit ``raise`` over bare ``assert`` on production paths
+# ---------------------------------------------------------------------------
+# Validators and safety checks that run in the live coaching path MUST use
+# explicit ``if not <cond>: raise AssertionError(<msg>)`` rather than a bare
+# ``assert <cond>, <msg>``.  Reason: ``assert`` is stripped from the
+# bytecode under ``python -O`` (and by some packaging tools that pass ``-O``
+# to bytecode-compile steps), which would silently disable the gate in
+# production.  The explicit raise preserves the same exception type so
+# existing callers that ``except AssertionError`` keep working.
+#
+# Affected modules (current):
+#   - llm/rag/validators/mode_2_negative.py  ::  validate_mode_2_negative
+#
+# Pinned by:
+#   - llm/rag/tests/unit/test_validator_dash_o_hardening.py
+#       (test ID VAL_DASH_O_01 — runs the validator under ``python -O``
+#       in a subprocess and asserts AssertionError still fires for empty
+#       input; if anyone reverts the explicit raise back to ``assert``,
+#       the gate disappears under -O and the test rc=0 catches it).
+#
+# Pylint does not ship a checker that flags ``assert`` on production
+# paths (bandit B101 does, but bandit is not part of this project's
+# toolchain).  The policy is therefore enforced by code review + the
+# regression test above; this comment block exists so contributors
+# reading pyproject.toml understand the constraint.
+[tool.pytest.ini_options]
+markers = [
+  "dash_o_hardening: validators / gates that must survive ``python -O`` (assert stripping); see [tool.pylint] policy block for rationale.",
 ]
