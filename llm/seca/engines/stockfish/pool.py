@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import queue
 import threading
@@ -10,6 +11,8 @@ from dataclasses import dataclass
 
 import chess
 import chess.engine
+
+logger = logging.getLogger(__name__)
 
 try:
     import redis
@@ -253,6 +256,76 @@ class StockfishEnginePool:
                     pass
             self._started = False
 
+    def _release_engine(self, engine: chess.engine.SimpleEngine | None) -> None:
+        """Return *engine* to the pool, or replace it if it has died.
+
+        ``select_move``'s ``finally`` used to call ``self._engines.put(engine)``
+        unconditionally.  When the Stockfish subprocess crashed during
+        ``engine.play(...)`` (SIGSEGV on a malformed UCI command, OOM,
+        kernel kill), the dead handle went back into the queue and the
+        next acquirer pulled a corpse — second-order failures across
+        the next pool_size requests until the queue cycled out.
+
+        This helper is the central release point.  It performs a cheap
+        liveness probe; if the subprocess is no longer running, the
+        dead handle is dropped, a fresh engine is spawned to take its
+        slot, and the pool size is preserved.  If the spawn itself
+        fails (binary missing, system out of file descriptors), the
+        slot is forfeited with a WARNING — the alternative would be
+        to deadlock the pool waiting for a healthy spawn that may
+        never come, which is worse than running with one fewer engine
+        until the operator restarts.
+        """
+        if engine is None:
+            return
+
+        if self._is_engine_alive(engine):
+            self._engines.put(engine)
+            return
+
+        logger.warning("Stockfish subprocess died during a request; recycling pool slot")
+        # Try to harvest the dead process; ``engine.quit()`` is safe to
+        # call on an already-terminated engine but may raise — swallow.
+        try:
+            engine.quit()
+        except Exception:
+            pass
+
+        try:
+            replacement = self._spawn_engine()
+        except Exception:
+            logger.exception(
+                "Stockfish respawn failed after crash; pool slot forfeited "
+                "until next process restart (queue size now %d/%d)",
+                self._engines.qsize(),
+                self.settings.pool_size,
+            )
+            return
+
+        self._engines.put(replacement)
+
+    def _is_engine_alive(self, engine: chess.engine.SimpleEngine) -> bool:
+        """Cheap liveness probe — does *not* invoke a UCI command.
+
+        ``chess.engine.SimpleEngine`` exposes ``transport`` (the
+        asyncio transport bound to the subprocess pipes).  A closed
+        transport means the subprocess has exited; that is the only
+        signal we need to decide "this handle is a corpse, drop it".
+        We deliberately avoid sending a UCI ``isready`` here because
+        (a) it costs a round-trip on every release and (b) on a
+        partially-broken engine it could itself raise and obscure the
+        original exception the caller is seeing.
+        """
+        transport = getattr(engine, "transport", None)
+        if transport is None:
+            # SimpleEngine constructed in tests without a real
+            # transport — treat as alive (the test owns liveness).
+            return True
+        try:
+            return not transport.is_closing()
+        except Exception:
+            return False
+
     def resolve_movetime_ms(self, mode: str, movetime_ms: int | None) -> int:
         if movetime_ms is not None:
             ms = movetime_ms
@@ -284,8 +357,15 @@ class StockfishEnginePool:
             return
         try:
             engine.configure({"UCI_LimitStrength": True, "UCI_Elo": int(target_elo)})
+        except chess.engine.EngineTerminatedError:
+            # Subprocess died while we were configuring it — let this
+            # propagate so the surrounding ``finally`` in select_move
+            # routes the dead handle through ``_release_engine`` and
+            # respawns instead of swallowing the death signal here.
+            raise
         except chess.engine.EngineError:
-            # Not all Stockfish builds expose ELO limiting.
+            # Not all Stockfish builds expose ELO limiting; silent
+            # downgrade is fine when the engine is otherwise healthy.
             pass
 
     def fast_fallback_move(self, board: chess.Board) -> chess.Move:
@@ -337,6 +417,10 @@ class StockfishEnginePool:
             engine = self._engines.get(timeout=timeout_ms / 1000.0)
         except queue.Empty as exc:
             raise RuntimeError(f"Stockfish queue wait exceeded {timeout_ms}ms") from exc
+        # The release path goes through ``_release_engine`` so a
+        # crashed subprocess (raised as ``EngineTerminatedError`` or
+        # leaving a closed transport behind) is detected and the slot
+        # is repopulated with a fresh engine instead of a corpse.
         try:
             self._apply_runtime_options(engine, target_elo=target_elo)
             limit = chess.engine.Limit(time=self.resolve_movetime_ms(mode, movetime_ms) / 1000.0)
@@ -345,7 +429,7 @@ class StockfishEnginePool:
                 raise RuntimeError("Stockfish returned no move")
             return result.move
         finally:
-            self._engines.put(engine)
+            self._release_engine(engine)
 
     def prewarm_cache(
         self,

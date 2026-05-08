@@ -303,9 +303,22 @@ def generate_live_reply(
             except Exception as exc:  # noqa: BLE001
                 remaining = _LIVE_MAX_RETRIES - attempt
                 if remaining > 0:
+                    # Per-attempt retry — kept at DEBUG since the
+                    # next iteration may succeed.  Only the
+                    # exhausted-retries path needs operator attention.
                     logger.debug("Mode-1 LLM attempt %d failed (%s); retrying", attempt + 1, exc)
                 else:
-                    logger.debug("Mode-1 LLM failed after %d attempts; using deterministic fallback", attempt + 1)
+                    # All attempts exhausted — production-impacting:
+                    # Ollama unreachable, model not pulled, etc.  See
+                    # the matching WARNING in chat_pipeline.py for
+                    # rationale; both pipelines should surface the
+                    # same signal in production logs.
+                    logger.warning(
+                        "Mode-1 LLM failed after %d attempts (%s: %s); using deterministic fallback",
+                        attempt + 1,
+                        type(exc).__name__,
+                        exc,
+                    )
 
     # --- Deterministic fallback ---
     base_explanation = _safe_explainer.explain(engine_signal)

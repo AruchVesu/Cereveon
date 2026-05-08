@@ -12,6 +12,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.textfield.TextInputEditText
 import kotlin.math.roundToInt
@@ -59,6 +61,21 @@ class OpeningsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_openings)
+
+        // Theme runs edge-to-edge; without this listener the bottom
+        // "Drill active line" / "+" footer would render under the
+        // system gesture / nav bar.
+        val footer = findViewById<LinearLayout>(R.id.openingsFooter)
+        val footerBaseMarginBottom =
+            (footer.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.bottomMargin ?: 0
+        ViewCompat.setOnApplyWindowInsetsListener(footer) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            (v.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { lp ->
+                lp.bottomMargin = footerBaseMarginBottom + bars.bottom
+                v.layoutParams = lp
+            }
+            insets
+        }
 
         val container = findViewById<LinearLayout>(R.id.openingsCardContainer)
         // Render the canonical defaults synchronously so the screen

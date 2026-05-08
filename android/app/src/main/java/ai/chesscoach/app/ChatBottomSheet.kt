@@ -324,14 +324,20 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
      * Called when the backend returns HTTP 401, indicating the stored JWT has
      * expired or been invalidated. Shows a non-disruptive dialog so the user
      * can choose to re-authenticate without losing the current game state.
+     *
+     * The stored token is cleared ONLY when the user picks "Log in".
+     * Clearing on dialog-show used to lock chat into a permanent
+     * "no Authorization header → 401 → Session expired" loop after a
+     * single transient 401 (proxy hiccup, brief server restart) — Dismiss
+     * is a soft escape hatch and must not log the user out.
      */
     private fun handleTokenExpiry() {
         val ctx = context ?: return
-        authRepository?.clearToken()
         android.app.AlertDialog.Builder(ctx)
             .setTitle("Session expired")
             .setMessage("Your session has expired. Log in again to continue with coaching.")
             .setPositiveButton("Log in") { _, _ ->
+                authRepository?.clearToken()
                 val intent =
                     Intent(ctx, LoginActivity::class.java)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)

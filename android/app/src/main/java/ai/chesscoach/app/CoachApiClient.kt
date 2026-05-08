@@ -154,6 +154,7 @@ class HttpCoachApiClient(
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.setRequestProperty("X-Api-Key", apiKey)
+                conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
                 // Inject JWT Bearer token when the caller has a logged-in session.
                 tokenProvider?.invoke()?.let { token ->
                     conn.setRequestProperty("Authorization", "Bearer $token")
@@ -198,6 +199,7 @@ class HttpCoachApiClient(
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.setRequestProperty("Accept", "text/event-stream")
                 conn.setRequestProperty("X-Api-Key", apiKey)
+                conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
                 tokenProvider?.invoke()?.let { token ->
                     conn.setRequestProperty("Authorization", "Bearer $token")
                 }
@@ -282,6 +284,7 @@ class HttpCoachApiClient(
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("X-Api-Key", apiKey)
+            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
             token?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
             conn.doOutput = true
             conn.connectTimeout = connectTimeoutMs

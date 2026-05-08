@@ -549,13 +549,26 @@ def generate_chat_reply(
                 _EngineSignalSchema.model_validate(engine_signal)
                 return ChatReply(reply=reply, engine_signal=engine_signal, mode="CHAT_V1")
             except _OutputFirewallError:
+                # Working-as-intended safety event (LLM said something
+                # the firewall caught) — kept at DEBUG so noisy
+                # adversarial users don't fill production logs.
                 logger.debug("Chat LLM blocked by output firewall; using deterministic fallback")
                 break
             except AssertionError:
                 # Mode-2 negative validator failed — retry with stricter hint.
                 retry_hint = _CHAT_RETRY_HINT
             except Exception as exc:  # noqa: BLE001
-                logger.debug("Mode-2 LLM path failed (%s); using deterministic fallback", exc)
+                # Production-impacting: Ollama unreachable, model not
+                # pulled, transport timeout, etc.  All callers continue
+                # with the deterministic fallback so users still get
+                # *some* coach reply, but the operator must be able to
+                # see this in `docker compose logs api` without
+                # redeploying with debug logging — promoted to WARNING.
+                logger.warning(
+                    "Mode-2 LLM path failed (%s: %s); using deterministic fallback",
+                    type(exc).__name__,
+                    exc,
+                )
                 break
 
     # --- Deterministic fallback ---

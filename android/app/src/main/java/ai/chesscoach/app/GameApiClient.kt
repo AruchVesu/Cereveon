@@ -610,6 +610,7 @@ class HttpGameApiClient(
             readTimeout = readTimeoutMs
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
+            setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
         }
 
     private fun openGetConnection(urlStr: String): HttpURLConnection =
@@ -618,6 +619,7 @@ class HttpGameApiClient(
             connectTimeout = connectTimeoutMs
             readTimeout = readTimeoutMs
             setRequestProperty("Content-Type", "application/json")
+            setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
         }
 
     private fun parseTrainingResponse(text: String): TrainingRecommendation {

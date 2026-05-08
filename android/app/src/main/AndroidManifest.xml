@@ -3,6 +3,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
+        android:name=".CereveonApplication"
         android:allowBackup="false"
         android:label="Cereveon"
         android:networkSecurityConfig="@xml/network_security_config"

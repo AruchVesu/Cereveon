@@ -64,6 +64,7 @@ class HttpEngineEvalClient(
                     conn.requestMethod = "POST"
                     conn.setRequestProperty("Content-Type", "application/json")
                     if (apiKey.isNotEmpty()) conn.setRequestProperty("X-Api-Key", apiKey)
+                    conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
                     conn.doOutput = true
                     conn.connectTimeout = connectTimeoutMs
                     conn.readTimeout = readTimeoutMs

@@ -284,8 +284,13 @@
             activity can opt-in by adding setOnClickListener calls —
             "Ask the coach" naturally fans out to the same chat flow
             the drawer's existing btnChat opens.
+
+            atriumActionBar id is read by MainActivity.applyBottomInset
+            so the row pads itself above the system nav bar instead of
+            sitting underneath it on edge-to-edge devices.
         -->
         <LinearLayout
+            android:id="@+id/atriumActionBar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
@@ -357,6 +362,24 @@
             android:textAppearance="@style/Atrium.Kicker"
             android:text="GAME OPTIONS"
             android:paddingBottom="@dimen/atrium_space_16" />
+
+        <!--
+            Exit to Home — added 2026-05-08 to give the user a visible
+            way to leave a game session.  Sits at the top of the drawer's
+            game-options group, above Reset/Undo, with the cyan accent
+            colour to read as the primary "leave this surface" action.
+            Wired in MainActivity.onCreate to call finish(), which pops
+            back to HomeActivity on the standard back-stack.
+        -->
+        <Button
+            android:id="@+id/btnExitToHome"
+            style="@style/Atrium.Button.Secondary"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_tap_target"
+            android:textSize="16sp"
+            android:textColor="@color/atrium_accent_cyan"
+            android:text="@string/game_exit_to_home"
+            android:layout_marginBottom="@dimen/atrium_space_8" />
 
         <Button
             android:id="@+id/btnReset"

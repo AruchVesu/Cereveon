@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import chess
+import httpx
 import time
 import threading
 from contextlib import asynccontextmanager
@@ -857,6 +858,139 @@ def seca_status():
     use case.
     """
     return {"safe_mode": SAFE_MODE}
+
+
+@app.get("/llm/health")
+@limiter.limit("10/minute")
+async def llm_health(request: Request):
+    """End-to-end probe of the configured Ollama backend.
+
+    Open endpoint (no auth): the deterministic-fallback path inside
+    ``chat_pipeline`` and ``live_move_pipeline`` swallows Ollama
+    failures so users still get *some* coach reply.  That keeps
+    coaching available during transient hiccups but also hides
+    persistent outages (e.g. "deploy succeeded but the model was
+    never pulled") behind 200 OK responses to ``/chat``.  This
+    endpoint surfaces that signal directly so uptime monitors and
+    operators can distinguish a healthy edge ("/health 200") from a
+    healthy *coaching pipeline*.
+
+    Two-stage probe:
+
+    1.  ``GET {ollama}/api/tags`` — fast (millis); confirms Ollama is
+        reachable AND the configured model is pulled.  Catches the
+        90 %% common failure mode without burning tokens.
+    2.  ``POST {ollama}/api/generate`` with ``num_predict=1`` —
+        confirms the model can actually serve a token.  Catches the
+        less common "tag exists but loader is broken" case.
+
+    Response shape::
+
+        {
+          "ok": bool,
+          "model": str,                  # MODEL_NAME from env
+          "ollama_url": str,             # base URL only (no /api path)
+          "latency_ms": float,           # total wall time
+          "stage": "tags" | "generate",  # only when ok=false
+          "error": str,                  # only when ok=false
+          "available_models": [str],     # only when stage="tags"
+        }
+
+    Status code is always 200 even on failure — this is a probe, not
+    a request that itself failed.  Operators / monitors should key on
+    ``ok`` rather than HTTP status.
+
+    Rate-limited to 10/minute to keep an attacker from using this
+    endpoint to fingerprint or DoS the Ollama backend, but generous
+    enough that uptime tools can poll it safely.
+
+    Bounded timeouts (5s tags, ``LLM_HEALTH_GENERATE_TIMEOUT_S`` for
+    generate) so a hung Ollama doesn't stall the probe — a probe
+    that itself times out IS a useful signal.
+    """
+    # Lazy import — avoids a circular import at module load time and
+    # keeps the dependency surface of server.py narrow.
+    from llm.explain_pipeline import OLLAMA_URL, MODEL_NAME, _ollama_base
+
+    started = time.perf_counter()
+    tags_url = f"{_ollama_base}/api/tags"
+    bare_model = MODEL_NAME.split("@", 1)[0]
+
+    def _ms() -> float:
+        return round((time.perf_counter() - started) * 1000.0, 2)
+
+    # --- Stage 1: tags ---------------------------------------------------
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            tags_resp = await client.get(tags_url)
+        if tags_resp.status_code != 200:
+            return {
+                "ok": False,
+                "model": MODEL_NAME,
+                "ollama_url": _ollama_base,
+                "latency_ms": _ms(),
+                "stage": "tags",
+                "error": f"HTTP {tags_resp.status_code}",
+            }
+        installed = [m.get("name", "") for m in tags_resp.json().get("models", [])]
+        if not any(m.startswith(bare_model) for m in installed):
+            return {
+                "ok": False,
+                "model": MODEL_NAME,
+                "ollama_url": _ollama_base,
+                "latency_ms": _ms(),
+                "stage": "tags",
+                "error": "configured model not in ollama list — did you forget `ollama pull`?",
+                "available_models": installed,
+            }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "model": MODEL_NAME,
+            "ollama_url": _ollama_base,
+            "latency_ms": _ms(),
+            "stage": "tags",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    # --- Stage 2: 1-token generate --------------------------------------
+    generate_timeout_s = float(os.getenv("LLM_HEALTH_GENERATE_TIMEOUT_S", "10"))
+    try:
+        async with httpx.AsyncClient(timeout=generate_timeout_s) as client:
+            gen_resp = await client.post(
+                OLLAMA_URL,
+                json={
+                    "model": MODEL_NAME,
+                    "prompt": "ok",
+                    "stream": False,
+                    "options": {"num_predict": 1},
+                },
+            )
+        if gen_resp.status_code != 200:
+            return {
+                "ok": False,
+                "model": MODEL_NAME,
+                "ollama_url": _ollama_base,
+                "latency_ms": _ms(),
+                "stage": "generate",
+                "error": f"HTTP {gen_resp.status_code}",
+            }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "model": MODEL_NAME,
+            "ollama_url": _ollama_base,
+            "latency_ms": _ms(),
+            "stage": "generate",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    return {
+        "ok": True,
+        "model": MODEL_NAME,
+        "ollama_url": _ollama_base,
+        "latency_ms": _ms(),
+    }
 
 
 @app.get("/debug/engine")

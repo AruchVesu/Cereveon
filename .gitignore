@@ -41,12 +41,38 @@ engine/**/CMakeCache.txt
 engine/**/*.o
 engine/**/*.obj
 engine/**/*.exe
+# Shared / static libraries produced by NDK or host-toolchain builds
+# of the engine.  ``engine/`` is intentionally source-only — binary
+# artefacts belong under build/ which is already ignored, but these
+# wildcards catch the case where someone runs cmake without setting
+# CMAKE_LIBRARY_OUTPUT_DIRECTORY and the .so / .dll / .dylib drops
+# next to the .cpp.
+engine/**/*.so
+engine/**/*.dll
+engine/**/*.dylib
+engine/**/*.a
+engine/**/*.lib
 
 # ========= PYTHON / LLM =========
 llm/.pytest_cache/
 llm/telemetry/
 llm/**/__pycache__/
 llm/**/*.pyc
+
+# mutmut local cache (Category F mutation testing).
+# The baseline summary is checked in at scripts/mutation_baseline.txt;
+# the cache is machine-specific SQLite that gets regenerated on each run.
+.mutmut-cache
+
+# Runtime SQLite stores.  ``data/seca.db`` holds auth/analytics/training
+# rows and is rebuilt on first run from SQLAlchemy metadata; it MUST
+# NEVER be tracked in this repository — it leaks user PII (email
+# hashes, refresh tokens) and breaks reproducibility because every
+# developer's runtime state would diff.  The wide ``*.db`` rule is a
+# safety net so a future developer who creates ``llm/foo/bar.db``
+# can't accidentally stage it; the more-specific rules document the
+# stores we know about today.  Pinned by tests/test_schema_boundary.py
+# (boundary between SQLAlchemy-owned and schema.sql-owned tables).
 *.db
 data/*.db
 llm/data/*.db
@@ -60,5 +86,28 @@ engines/stockfish.exe
 
 # ========= LOCAL TOOLS =========
 tools/run_autonomous.sh
+
+# ========= WORKING-TREE BACKUPS / SNAPSHOTS =========
+# Pre-squash artefacts kept for history preservation but never tracked
+# in this repository.  `chesscoach-purge.git/` is a bare archive of the
+# pre-squash history (referenced in the squash commit's message);
+# `chesscoach/` was a stray nested-repo working-tree clone of the same
+# pre-squash state, deleted in 2026-05-07 cleanup but listed here so
+# any future re-clone into the working tree won't be staged by an
+# accidental `git add -A`.
+#
+# Anchored with a leading slash — without it, gitignore matches any
+# path component called ``chesscoach`` and silently swallows every
+# new file under ``android/app/src/main/java/ai/chesscoach/app/``
+# (the Android package directory).  Existing tracked files surface
+# as modified in ``git status`` regardless, so the symptom only
+# manifests when a new file under that path is added: it never shows
+# up as ``??``, never gets staged, and only surfaces at deploy time
+# when the APK is missing the class.
+/chesscoach/
+/chesscoach-purge.git/
+
+# Gradle scratch directory for the Android wrapper distributions.
+tmp_gradle/
 
 .fake
