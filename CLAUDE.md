@@ -70,18 +70,18 @@ cp .env.example .env      # edit values if needed
 docker compose up
 ```
 
-API at `http://localhost:8000`. Requires [Ollama](https://ollama.ai) on the host:
+API at `http://localhost:8000`. LLM coaching is provided by [DeepSeek's API](https://platform.deepseek.com); set your key in `.env`:
 
 ```bash
-ollama pull qwen2.5:7b-instruct-q2_K
-ollama serve
+# Get a key at https://platform.deepseek.com → API Keys, then:
+echo 'COACH_DEEPSEEK_API_KEY=sk-...' >> .env
 ```
 
-`host.docker.internal` is mapped automatically on all platforms (macOS, Windows, Linux) via `extra_hosts` in `docker-compose.yml`.
+Without it, every `/chat` call falls back to the deterministic template (`chat_pipeline.py:557`) — the API still serves; coaching just degrades to canned responses. `GET /llm/health` reports the live LLM status so you can detect this in monitoring.
 
 ### Dev Container (VS Code)
 
-Open the repo and click **"Reopen in Container"**. Installs Python 3.13, Node.js 22, Stockfish, and all Python deps automatically. Ollama must still run on the host.
+Open the repo and click **"Reopen in Container"**. Installs Python 3.13, Node.js 22, Stockfish, and all Python deps automatically. The DeepSeek API key still needs to be set in `.env` (or as a shell env var) for LLM coaching.
 
 ### Android setup
 
@@ -119,8 +119,9 @@ See `.env.example` for the full reference. Key variables:
 | `SECA_API_KEY` | `dev-key` | Auth key; any value works in `dev` mode |
 | `SECA_ENV` | `dev` | `dev` or `prod` |
 | `SECRET_KEY` | — | JWT signing secret (≥ 32 chars; required in `prod`) |
-| `COACH_OLLAMA_URL` | `http://host.docker.internal:11434` | Ollama endpoint |
-| `COACH_OLLAMA_MODEL` | `qwen2.5:7b-instruct-q2_K` | LLM model |
+| `COACH_DEEPSEEK_API_KEY` | — | **Required** for LLM coaching. Sign up at platform.deepseek.com. |
+| `COACH_DEEPSEEK_API_BASE` | `https://api.deepseek.com` | OpenAI-compatible endpoint; override for self-hosted gateways |
+| `COACH_DEEPSEEK_MODEL` | `deepseek-chat` | DeepSeek-V3. Alternative: `deepseek-reasoner` (chain-of-thought, ~4× cost) |
 | `STOCKFISH_PATH` | auto-detected | Override Stockfish binary path |
 | `REDIS_URL` | *(unset)* | Redis for move cache; omit for in-memory only |
 | `TRUSTED_PROXIES` | prod: empty (XFF not trusted, warning logged); dev: loopback | Comma-separated proxy IPs / CIDRs. **Required in prod** for per-client rate limiting; otherwise every request behind the reverse proxy keys on the same bucket. See README and `docs/DEPLOYMENT.md` > Trusted Proxies. |

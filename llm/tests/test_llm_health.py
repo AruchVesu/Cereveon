@@ -1,37 +1,43 @@
 """
 ``/llm/health`` endpoint tests.
 
-The endpoint is a two-stage probe of the configured Ollama backend
-(``GET /api/tags`` then ``POST /api/generate``).  The deterministic-
-fallback path inside ``chat_pipeline`` and ``live_move_pipeline``
-swallows Ollama failures so users still get *some* coach reply — but
-that hides persistent outages (e.g. "deploy succeeded but the model
-was never pulled") behind 200 OK ``/chat`` responses.  ``/llm/health``
-exists to surface that signal directly to operators / uptime
-monitors.
+The endpoint is a single-shot probe of DeepSeek's chat-completions
+API — a 1-token ``POST /chat/completions`` that confirms API key
+validity, model-name acceptance, and network reachability all at
+once.  Replaces the prior Ollama two-stage probe (tags + generate);
+DeepSeek has no notion of locally-pulled models, so the "tags"
+stage is gone.
+
+The deterministic-fallback path inside ``chat_pipeline`` and
+``live_move_pipeline`` swallows LLM failures so users still get
+*some* coach reply — but that hides persistent outages (invalid
+API key, billing issue, DeepSeek downtime) behind 200-OK
+``/chat`` responses.  ``/llm/health`` exists to surface that
+signal directly to operators / uptime monitors.
 
 Stable test IDs (do NOT rename):
 
-  LLMH_01  All-OK path returns ok=true, model name, ollama_url, latency
-  LLMH_02  Tags HTTP error → ok=false, stage="tags"
-  LLMH_03  Model missing from `ollama list` → ok=false, stage="tags",
-           available_models surfaced
-  LLMH_04  Tags transport exception (Ollama unreachable) → ok=false,
-           stage="tags", error includes exception type
-  LLMH_05  Generate HTTP error → ok=false, stage="generate"
-  LLMH_06  Generate transport exception → ok=false, stage="generate"
-  LLMH_07  Endpoint always returns HTTP 200 even on probe failure
-           (operators / monitors should key on the ``ok`` field, not
-           the HTTP status — the endpoint itself succeeded; what it
-           probed is what failed)
-  LLMH_08  Endpoint requires no authentication
-  LLMH_09  Latency_ms is present and is a number
+  LLMH_01  Happy path returns ok=true, provider, model, api_base, latency
+  LLMH_02  Missing API key → ok=false with explicit message
+  LLMH_03  Upstream HTTP 4xx (e.g. 401 invalid key) → ok=false, error
+           includes status code and the upstream message
+  LLMH_04  Upstream HTTP 5xx → ok=false, error includes status code
+  LLMH_05  200 with unexpected JSON shape (no choices) → ok=false
+  LLMH_06  Transport exception (DNS / refused / unreachable) →
+           ok=false, error includes exception type
+  LLMH_07  Timeout exception → ok=false with error
+  LLMH_08  Endpoint always returns HTTP 200 even on probe failure
+           (operators key on body.ok, not status code)
+  LLMH_09  Endpoint requires no authentication
+  LLMH_10  Latency_ms is present and is a number
 """
 
 from __future__ import annotations
 
+import os
 from collections import deque
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI, Request
@@ -44,11 +50,14 @@ from fastapi.testclient import TestClient
 
 
 class _FakeResponse:
-    def __init__(self, status_code: int, json_body: dict | None = None):
+    def __init__(self, status_code: int, json_body: dict | None = None, text: str = ""):
         self.status_code = status_code
-        self._json = json_body or {}
+        self._json = json_body
+        self.text = text
 
     def json(self) -> Any:
+        if self._json is None:
+            raise ValueError("no JSON body")
         return self._json
 
 
@@ -56,19 +65,15 @@ class _FakeAsyncClient:
     """Drop-in replacement for ``httpx.AsyncClient`` driven by a script.
 
     The script is a deque of ``_FakeResponse`` (or ``Exception`` to raise),
-    SHARED across all instances of this class.  The /llm/health handler
-    constructs two AsyncClients (one for tags, one for generate); each
-    consumes one entry from the deque in order.  Per-instance copies
-    would let the second client re-consume the tags response — which
-    masked stage="generate" failures in earlier iterations of this test.
+    SHARED across all instances of this class.  Only ONE call per probe
+    (single-shot now), but we keep the deque pattern in case future
+    iterations need multi-step probing.
     """
 
-    # Class-level deque, shared across instances.  Tests reset it via
-    # ``_set_script(...)``; each call to ``get`` / ``post`` pops one.
     _script: deque = deque()
 
     def __init__(self, *_args, **_kwargs):
-        pass  # state lives on the class, not the instance
+        pass
 
     async def __aenter__(self):
         return self
@@ -81,12 +86,6 @@ class _FakeAsyncClient:
         if not cls._script:
             raise AssertionError("Fake AsyncClient: script exhausted")
         return cls._script.popleft()
-
-    async def get(self, *_a, **_k):
-        item = self._next()
-        if isinstance(item, Exception):
-            raise item
-        return item
 
     async def post(self, *_a, **_k):
         item = self._next()
@@ -103,112 +102,99 @@ def _set_script(*items: Any) -> None:
 # Minimal app that mirrors the server.py /llm/health handler.
 #
 # We deliberately do NOT import ``llm.server`` because it pulls in
-# Stockfish, the DB, and every coach pipeline — which would force this
-# test file into the integration tier.  The handler logic is small
-# enough to mirror here so the test stays a fast unit test.
+# Stockfish, the DB, and every coach pipeline.  Mirror the handler
+# inline so this stays a fast unit test.
 # ---------------------------------------------------------------------------
 
 
+_DEEPSEEK_API_BASE = "https://api.deepseek-test.com"
+_DEEPSEEK_URL = f"{_DEEPSEEK_API_BASE}/chat/completions"
+_MODEL_NAME = "deepseek-chat"
+
+
 def _build_health_app() -> FastAPI:
-    import os
     import time
 
     import httpx as _httpx
 
-    # Patch the AsyncClient class on the httpx module the handler will
-    # import.  The handler does ``async with httpx.AsyncClient(...)``,
-    # which constructs the class via the module's attribute lookup —
-    # so swapping it on the imported module is sufficient.
     _httpx.AsyncClient = _FakeAsyncClient  # type: ignore[assignment]
 
     stub = FastAPI()
 
     @stub.get("/llm/health")
     async def llm_health(request: Request):
-        # Mirror the production handler verbatim except for the lazy
-        # import — we substitute fixed values rather than reading
-        # llm.explain_pipeline so the test doesn't need that whole
-        # module imported.
-        ollama_base = "http://ollama-test:11434"
-        ollama_generate = f"{ollama_base}/api/generate"
-        model_name = "qwen2.5:7b-instruct-q2_K"
-        bare_model = model_name.split("@", 1)[0]
-
         started = time.perf_counter()
+        timeout_s = float(os.getenv("LLM_HEALTH_GENERATE_TIMEOUT_S", "10"))
 
         def _ms() -> float:
             return round((time.perf_counter() - started) * 1000.0, 2)
 
-        # Stage 1: tags
-        try:
-            async with _httpx.AsyncClient(timeout=5.0) as client:
-                tags_resp = await client.get(f"{ollama_base}/api/tags")
-            if tags_resp.status_code != 200:
-                return {
-                    "ok": False,
-                    "model": model_name,
-                    "ollama_url": ollama_base,
-                    "latency_ms": _ms(),
-                    "stage": "tags",
-                    "error": f"HTTP {tags_resp.status_code}",
-                }
-            installed = [m.get("name", "") for m in tags_resp.json().get("models", [])]
-            if not any(m.startswith(bare_model) for m in installed):
-                return {
-                    "ok": False,
-                    "model": model_name,
-                    "ollama_url": ollama_base,
-                    "latency_ms": _ms(),
-                    "stage": "tags",
-                    "error": "configured model not in ollama list — did you forget `ollama pull`?",
-                    "available_models": installed,
-                }
-        except Exception as exc:
+        api_key = os.getenv("COACH_DEEPSEEK_API_KEY", "").strip()
+        if not api_key:
             return {
                 "ok": False,
-                "model": model_name,
-                "ollama_url": ollama_base,
+                "provider": "deepseek",
+                "model": _MODEL_NAME,
+                "api_base": _DEEPSEEK_API_BASE,
                 "latency_ms": _ms(),
-                "stage": "tags",
-                "error": f"{type(exc).__name__}: {exc}",
+                "error": "COACH_DEEPSEEK_API_KEY is unset",
             }
 
-        # Stage 2: generate
-        generate_timeout_s = float(os.getenv("LLM_HEALTH_GENERATE_TIMEOUT_S", "10"))
         try:
-            async with _httpx.AsyncClient(timeout=generate_timeout_s) as client:
-                gen_resp = await client.post(
-                    ollama_generate,
+            async with _httpx.AsyncClient(timeout=timeout_s) as client:
+                resp = await client.post(
+                    _DEEPSEEK_URL,
                     json={
-                        "model": model_name,
-                        "prompt": "ok",
+                        "model": _MODEL_NAME,
+                        "messages": [{"role": "user", "content": "ok"}],
                         "stream": False,
-                        "options": {"num_predict": 1},
+                        "max_tokens": 1,
+                    },
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
                     },
                 )
-            if gen_resp.status_code != 200:
+            if resp.status_code != 200:
+                try:
+                    upstream = resp.json().get("error", {}).get("message") or resp.text[:200]
+                except Exception:
+                    upstream = resp.text[:200]
                 return {
                     "ok": False,
-                    "model": model_name,
-                    "ollama_url": ollama_base,
+                    "provider": "deepseek",
+                    "model": _MODEL_NAME,
+                    "api_base": _DEEPSEEK_API_BASE,
                     "latency_ms": _ms(),
-                    "stage": "generate",
-                    "error": f"HTTP {gen_resp.status_code}",
+                    "error": f"HTTP {resp.status_code}: {upstream}",
+                }
+            body = resp.json()
+            try:
+                _ = body["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError):
+                return {
+                    "ok": False,
+                    "provider": "deepseek",
+                    "model": _MODEL_NAME,
+                    "api_base": _DEEPSEEK_API_BASE,
+                    "latency_ms": _ms(),
+                    "error": "200 with unexpected response shape (no choices[0].message.content)",
                 }
         except Exception as exc:
             return {
                 "ok": False,
-                "model": model_name,
-                "ollama_url": ollama_base,
+                "provider": "deepseek",
+                "model": _MODEL_NAME,
+                "api_base": _DEEPSEEK_API_BASE,
                 "latency_ms": _ms(),
-                "stage": "generate",
                 "error": f"{type(exc).__name__}: {exc}",
             }
 
         return {
             "ok": True,
-            "model": model_name,
-            "ollama_url": ollama_base,
+            "provider": "deepseek",
+            "model": _MODEL_NAME,
+            "api_base": _DEEPSEEK_API_BASE,
             "latency_ms": _ms(),
         }
 
@@ -216,7 +202,11 @@ def _build_health_app() -> FastAPI:
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    # Default: API key set so the auth-key check doesn't short-circuit
+    # most tests.  Tests that exercise the missing-key path override
+    # this with a fresh monkeypatch.delenv.
+    monkeypatch.setenv("COACH_DEEPSEEK_API_KEY", "sk-fake-test-key")
     app = _build_health_app()
     with TestClient(app) as c:
         yield c
@@ -229,100 +219,103 @@ def client():
 
 class TestLlmHealth:
 
-    def test_llmh_01_all_ok(self, client):
-        """LLMH_01: tags returns the model and generate returns 200 →
-        ok=true with model name, ollama_url, latency_ms."""
+    def test_llmh_01_happy_path(self, client):
+        """LLMH_01: 200 + valid choices[0].message.content → ok=true."""
         _set_script(
-            _FakeResponse(200, {"models": [{"name": "qwen2.5:7b-instruct-q2_K"}]}),
-            _FakeResponse(200, {"response": "x"}),
+            _FakeResponse(
+                200,
+                {"choices": [{"message": {"content": "x"}}]},
+            ),
         )
         resp = client.get("/llm/health")
         assert resp.status_code == 200
         body = resp.json()
         assert body["ok"] is True, body
-        assert body["model"] == "qwen2.5:7b-instruct-q2_K"
-        assert body["ollama_url"] == "http://ollama-test:11434"
+        assert body["provider"] == "deepseek"
+        assert body["model"] == _MODEL_NAME
+        assert body["api_base"] == _DEEPSEEK_API_BASE
         assert isinstance(body["latency_ms"], (int, float))
 
-    def test_llmh_02_tags_http_error(self, client):
-        """LLMH_02: tags returns 500 → ok=false, stage='tags'."""
-        _set_script(_FakeResponse(500))
+    def test_llmh_02_missing_api_key(self, client, monkeypatch):
+        """LLMH_02: missing COACH_DEEPSEEK_API_KEY → ok=false, no upstream call."""
+        monkeypatch.delenv("COACH_DEEPSEEK_API_KEY", raising=False)
+        _set_script()  # empty — no upstream call should be made
         body = client.get("/llm/health").json()
         assert body["ok"] is False
-        assert body["stage"] == "tags"
-        assert "500" in body["error"]
+        assert "COACH_DEEPSEEK_API_KEY" in body["error"]
 
-    def test_llmh_03_model_missing(self, client):
-        """LLMH_03: tags 200 but configured model not present → ok=false,
-        stage='tags', available_models surfaced."""
+    def test_llmh_03_http_4xx_with_upstream_error(self, client):
+        """LLMH_03: DeepSeek returns 401 with JSON error body → ok=false,
+        error surfaces both the status code AND the upstream message."""
         _set_script(
-            _FakeResponse(200, {"models": [{"name": "llama3:8b"}]}),
+            _FakeResponse(
+                401,
+                {"error": {"message": "Authentication Fails, Your api key is invalid"}},
+            ),
         )
         body = client.get("/llm/health").json()
         assert body["ok"] is False
-        assert body["stage"] == "tags"
-        assert "ollama pull" in body["error"]
-        assert body["available_models"] == ["llama3:8b"]
+        assert "401" in body["error"]
+        assert "api key is invalid" in body["error"]
 
-    def test_llmh_04_tags_transport_exception(self, client):
-        """LLMH_04: Ollama unreachable → ok=false, stage='tags', error
-        includes the exception type so the operator can distinguish
-        timeout from refusal."""
+    def test_llmh_04_http_5xx(self, client):
+        """LLMH_04: DeepSeek returns 503 → ok=false with status code."""
+        _set_script(_FakeResponse(503, text="Service Unavailable"))
+        body = client.get("/llm/health").json()
+        assert body["ok"] is False
+        assert "503" in body["error"]
+
+    def test_llmh_05_unexpected_response_shape(self, client):
+        """LLMH_05: 200 but missing choices[0].message.content → ok=false.
+        Catches a provider regression where the wire format diverges
+        from OpenAI-compatible without us noticing."""
+        _set_script(_FakeResponse(200, {"unexpected": "shape"}))
+        body = client.get("/llm/health").json()
+        assert body["ok"] is False
+        assert "unexpected response shape" in body["error"]
+
+    def test_llmh_06_transport_exception(self, client):
+        """LLMH_06: Connection refused → ok=false, error includes
+        exception type so the operator can distinguish unreachable
+        from auth-failed from timed-out."""
         _set_script(ConnectionError("connection refused"))
         body = client.get("/llm/health").json()
         assert body["ok"] is False
-        assert body["stage"] == "tags"
         assert "ConnectionError" in body["error"]
         assert "connection refused" in body["error"]
 
-    def test_llmh_05_generate_http_error(self, client):
-        """LLMH_05: tags ok but generate returns 500 → ok=false, stage='generate'."""
-        _set_script(
-            _FakeResponse(200, {"models": [{"name": "qwen2.5:7b-instruct-q2_K"}]}),
-            _FakeResponse(500),
-        )
+    def test_llmh_07_timeout_exception(self, client):
+        """LLMH_07: read timeout → ok=false with TimeoutError."""
+        _set_script(TimeoutError("read timeout"))
         body = client.get("/llm/health").json()
         assert body["ok"] is False
-        assert body["stage"] == "generate"
-        assert "500" in body["error"]
-
-    def test_llmh_06_generate_transport_exception(self, client):
-        """LLMH_06: tags ok but generate raises → ok=false, stage='generate'."""
-        _set_script(
-            _FakeResponse(200, {"models": [{"name": "qwen2.5:7b-instruct-q2_K"}]}),
-            TimeoutError("read timeout"),
-        )
-        body = client.get("/llm/health").json()
-        assert body["ok"] is False
-        assert body["stage"] == "generate"
         assert "TimeoutError" in body["error"]
 
-    def test_llmh_07_always_returns_200(self, client):
-        """LLMH_07: HTTP 200 even on probe failure.  Operators must key
-        on body.ok, not the HTTP status — the probe endpoint itself
+    def test_llmh_08_always_returns_200(self, client):
+        """LLMH_08: HTTP 200 even on probe failure.  Operators key on
+        body.ok, not the HTTP status — the probe endpoint itself
         succeeded; what it probed is what failed."""
         _set_script(_FakeResponse(503))
         resp = client.get("/llm/health")
         assert resp.status_code == 200
         assert resp.json()["ok"] is False
 
-    def test_llmh_08_no_auth_required(self, client):
-        """LLMH_08: open endpoint, accessible without Authorization or X-Api-Key.
-        Uptime monitors and operators must be able to hit it without provisioning
-        secrets."""
+    def test_llmh_09_no_auth_required(self, client):
+        """LLMH_09: open endpoint, accessible without Authorization or
+        X-Api-Key header.  Uptime monitors and operators must be able
+        to hit it without provisioning secrets."""
         _set_script(
-            _FakeResponse(200, {"models": [{"name": "qwen2.5:7b-instruct-q2_K"}]}),
-            _FakeResponse(200, {"response": "x"}),
+            _FakeResponse(200, {"choices": [{"message": {"content": "x"}}]}),
         )
         resp = client.get("/llm/health")  # no headers
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
-    def test_llmh_09_latency_ms_present(self, client):
-        """LLMH_09: latency_ms is present on every response shape."""
+    def test_llmh_10_latency_ms_present(self, client):
+        """LLMH_10: latency_ms is a non-negative number on every
+        response shape (success and every failure branch)."""
         _set_script(
-            _FakeResponse(200, {"models": [{"name": "qwen2.5:7b-instruct-q2_K"}]}),
-            _FakeResponse(200, {"response": "x"}),
+            _FakeResponse(200, {"choices": [{"message": {"content": "x"}}]}),
         )
         body = client.get("/llm/health").json()
         assert "latency_ms" in body

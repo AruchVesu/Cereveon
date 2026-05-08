@@ -14,12 +14,29 @@ from llm.confidence_language_controller import build_language_controller_block
 from llm.rag.prompts.input_sanitizer import sanitize_user_query
 from llm.rag.safety.output_firewall import check_output, OutputFirewallError
 
-_ollama_base = os.getenv("COACH_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
-OLLAMA_URL = f"{_ollama_base}/api/generate"
-MODEL_NAME = os.getenv("COACH_OLLAMA_MODEL", "qwen2.5:7b-instruct-q2_K")
-# Explicit context window size sent to Ollama on every request.
-# Without this, quantized models may default to 4K–8K, silently truncating history.
-NUM_CTX = int(os.getenv("COACH_OLLAMA_NUM_CTX", "32768"))
+# ---------------------------------------------------------
+# DeepSeek configuration
+#
+# We talk to DeepSeek via its OpenAI-compatible chat-completions
+# endpoint at {COACH_DEEPSEEK_API_BASE}/chat/completions.  All three
+# values are env-overridable so a future model bump or alternate
+# provider with the same wire format (Together, Groq, OpenAI proper)
+# can be reached by changing env without editing code.
+#
+#   COACH_DEEPSEEK_API_BASE   default ``https://api.deepseek.com``
+#   COACH_DEEPSEEK_MODEL      default ``deepseek-chat`` (V3)
+#   COACH_DEEPSEEK_API_KEY    required at runtime (no default)
+#
+# The Ollama variant of this module previously read
+# ``COACH_OLLAMA_URL`` / ``COACH_OLLAMA_MODEL`` / ``COACH_OLLAMA_NUM_CTX``;
+# those have been removed.  The deterministic fallback in
+# chat_pipeline.py / live_move_pipeline.py keeps coaching available
+# during DeepSeek outages, exactly as it did during Ollama outages.
+# ---------------------------------------------------------
+
+DEEPSEEK_API_BASE = os.getenv("COACH_DEEPSEEK_API_BASE", "https://api.deepseek.com").rstrip("/")
+DEEPSEEK_URL = f"{DEEPSEEK_API_BASE}/chat/completions"
+MODEL_NAME = os.getenv("COACH_DEEPSEEK_MODEL", "deepseek-chat")
 
 MAX_RETRIES = 2
 _RETRY_DELAY_SECONDS = 0.5
@@ -30,20 +47,64 @@ _RETRY_DELAY_SECONDS = 0.5
 # ---------------------------------------------------------
 
 
+class LLMConfigError(RuntimeError):
+    """Raised when the LLM provider is misconfigured (e.g. missing API key)."""
+
+
 def call_llm(prompt: str) -> str:
+    """Single-shot LLM completion against DeepSeek's chat-completions API.
+
+    The Mode-2 prompt that arrives here is already a fully-rendered
+    string (system + style + RAG + history + user query, assembled by
+    ``render_mode_2_prompt``).  Rather than re-architect the prompt
+    layer to use OpenAI-style multi-turn ``messages``, we wrap the
+    rendered prompt as a single user message — the model receives the
+    same content it would have received via Ollama's ``/api/generate``,
+    just over a different wire format.
+
+    Returns the assistant's reply text, stripped.  Raises:
+      - ``LLMConfigError`` when ``COACH_DEEPSEEK_API_KEY`` is unset.
+      - ``httpx.HTTPStatusError`` on non-2xx (caught upstream by the
+        retry loop in ``generate_validated_explanation`` and the
+        deterministic-fallback path in chat_pipeline / live_move).
+
+    Architecture: this function is the LLM Layer's only outbound
+    point per ``docs/ARCHITECTURE.md`` ("LLM Generation
+    (untrusted)").  Output validators downstream (Mode-2 negative,
+    output firewall, ESV grounding) are unaffected by the provider
+    swap — they validate the returned text regardless of where it
+    came from.
+    """
+    api_key = os.getenv("COACH_DEEPSEEK_API_KEY", "").strip()
+    if not api_key:
+        raise LLMConfigError(
+            "COACH_DEEPSEEK_API_KEY is unset; cannot call DeepSeek. "
+            "Set it in .env.prod (or shell env in dev) and restart the api container."
+        )
+
     response = httpx.post(
-        OLLAMA_URL,
+        DEEPSEEK_URL,
         json={
             "model": MODEL_NAME,
-            "prompt": prompt,
+            "messages": [{"role": "user", "content": prompt}],
             "stream": False,
-            "options": {"num_ctx": NUM_CTX},
+        },
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
         },
         timeout=120,
     )
 
     response.raise_for_status()
-    return response.json()["response"].strip()
+    body = response.json()
+    # OpenAI-compatible shape: choices[0].message.content
+    try:
+        return body["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError, TypeError) as exc:
+        raise httpx.HTTPError(
+            f"DeepSeek response missing expected choices[0].message.content: {body!r}"
+        ) from exc
 
 
 # ---------------------------------------------------------

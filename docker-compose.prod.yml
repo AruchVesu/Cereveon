@@ -5,26 +5,29 @@
 #   docker compose -f docker-compose.prod.yml up -d
 #
 # Required on the server:
-#   - .env.prod (see .env.example, set SECA_ENV=prod + all required vars)
+#   - .env.prod (see .env.example, set SECA_ENV=prod + all required vars
+#     including COACH_DEEPSEEK_API_KEY for LLM coaching)
 #   - DOMAIN env var exported in shell (e.g. export DOMAIN=api.yourdomain.com)
 #   - GHCR_IMAGE env var, or edit the api.image line below
 #
-# Ollama model lifecycle:
-#   The ``ollama`` service's entrypoint pulls ``$COACH_OLLAMA_MODEL``
-#   on every container start (idempotent — a no-op when already
-#   present).  The healthcheck only goes "healthy" once the model is
-#   actually loaded, so ``api`` (which ``depends_on: ollama: condition:
-#   service_healthy``) waits for the pull instead of starting against
-#   a model-less Ollama.  See the ``ollama:`` block below for the
-#   full rationale and the chat_pipeline.py:557 callsite that used to
-#   silently mask "model not pulled" as deterministic-fallback replies.
+# LLM provider:
+#   The api container reaches DeepSeek's chat-completions API directly
+#   (https://api.deepseek.com/chat/completions) — no local Ollama
+#   container.  This collapses what used to be a 4-service stack
+#   (caddy + api + db + ollama) plus a model-pull dance into a
+#   3-service stack with no LLM-side state on disk.  See
+#   ``llm/explain_pipeline.py`` for the call site and
+#   ``docs/DEPLOYMENT.md > LLM provider`` for the rationale (4 GB
+#   Hetzner VPS could not run 7B inference reliably; DeepSeek-V3 at
+#   ~$0.14 / $0.28 per million in/out tokens is cheaper and faster
+#   than upgrading the box).
 #
-#   Pin a specific tag in production by setting
-#   ``COACH_OLLAMA_MODEL=qwen2.5:7b-instruct-q2_K@sha256:<digest>`` in
-#   .env.prod so a re-pushed upstream tag cannot silently change the
-#   served model under the LLM regression contract.  The entrypoint
-#   strips the ``@sha256:...`` suffix before passing to ``ollama pull``;
-#   the digest pin lives only in the api container's runtime config.
+#   The deterministic-fallback path inside ``chat_pipeline.py`` and
+#   ``live_move_pipeline.py`` still kicks in when DeepSeek is
+#   unreachable (network blip, billing issue, key revoked) — coaching
+#   never errors, just degrades to template responses for the duration.
+#   ``GET /llm/health`` surfaces the live LLM status so you can detect
+#   degraded mode without parsing chat replies.
 
 services:
 
@@ -59,16 +62,12 @@ services:
       - "8000"
     env_file: .env.prod
     environment:
-      # Ollama runs as a sibling container — reachable by service name.
-      COACH_OLLAMA_URL: http://ollama:11434
       # Redis cache — comment out to fall back to in-memory.
       REDIS_URL: redis://redis:6379/0
     volumes:
       - api_data:/app/data
     depends_on:
       db:
-        condition: service_healthy
-      ollama:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -106,92 +105,6 @@ services:
         max-size: "20m"
         max-file: "3"
 
-  # LLM inference — internal only, not exposed to the host.
-  #
-  # The entrypoint below replaces the previous "you have to remember
-  # to ``ollama pull`` manually before first start" footgun.  Concrete
-  # failure mode it closes: a deploy where the volume ``ollama_data``
-  # is fresh (new VM, post-`docker volume rm`, or a CI rebuild that
-  # forgets to mount the named volume) silently produces 200-OK
-  # ``/chat`` responses with deterministic-fallback content because
-  # the API container can reach Ollama but the model isn't loaded.
-  # See chat_pipeline.py:557 — the LLM exception is caught and
-  # falls back to a template reply, so external probes can't
-  # distinguish "LLM healthy" from "LLM completely missing".
-  #
-  # Mechanism:
-  #   1.  ``ollama serve`` runs in the background as PID 1's child.
-  #   2.  We poll ``ollama list`` until the local API is up.
-  #   3.  ``ollama pull <model>`` is idempotent — a no-op when the
-  #       model is already present (exits 0 after a quick registry
-  #       digest check).  Cheap to re-run on every restart and
-  #       self-healing if ``ollama_data`` is ever wiped.
-  #   4.  On pull failure (offline registry, transient DNS) we log
-  #       the warning and keep ``ollama serve`` alive — the api
-  #       container's deterministic fallback still gives users a
-  #       reply, and the next restart will retry the pull.
-  #   5.  ``wait`` blocks on the serve PID forever so the container
-  #       stays alive.
-  #
-  # The healthcheck below was tightened in lockstep: instead of just
-  # ``curl /`` (which passes as soon as ``ollama serve`` is up — well
-  # before the model is loaded), we ``ollama list | grep`` for the
-  # configured model.  ``api`` ``depends_on: ollama: condition:
-  # service_healthy`` then correctly waits for the model to be
-  # present, not just for Ollama's HTTP socket.
-  #
-  # ``start_period: 600s`` gives the first pull up to ten minutes
-  # (Qwen 2.5 7B q2_K ≈ 2.7 GB; slow Hetzner links can need most of
-  # that).  Subsequent restarts are instant — the model is on the
-  # named volume.
-  #
-  # ``OLLAMA_AUTO_PULL_MODEL`` defaults to the same value
-  # ``COACH_OLLAMA_MODEL`` already documents, but is exposed as its
-  # own env so a Hetzner operator can pin a specific tag (with
-  # @sha256:digest) without touching the API container's env.
-  ollama:
-    image: ollama/ollama
-    expose:
-      - "11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    environment:
-      OLLAMA_AUTO_PULL_MODEL: ${COACH_OLLAMA_MODEL:-qwen2.5:7b-instruct-q2_K}
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        set -e
-        ollama serve &
-        SERVE_PID=$$!
-        until ollama list >/dev/null 2>&1; do sleep 1; done
-        # Strip any @sha256:... digest suffix before pulling — Ollama's
-        # `pull` accepts the bare tag, the digest pin lives only in
-        # the api container's COACH_OLLAMA_MODEL for runtime safety.
-        MODEL="$${OLLAMA_AUTO_PULL_MODEL%@*}"
-        echo "[ollama-entrypoint] ensuring model present: $$MODEL"
-        ollama pull "$$MODEL" || \
-          echo "[ollama-entrypoint] WARN: pull failed; serving anyway, will retry on next restart"
-        wait "$$SERVE_PID"
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - 'MODEL="$${OLLAMA_AUTO_PULL_MODEL%@*}"; ollama list 2>/dev/null | tail -n +2 | grep -q "^$$MODEL"'
-      interval: 15s
-      timeout: 10s
-      start_period: 600s
-      retries: 5
-    restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "3"
-    # For GPU-enabled Hetzner instances, uncomment:
-    # runtime: nvidia
-    # environment:
-    #   NVIDIA_VISIBLE_DEVICES: all
-
   # Redis — distributed move cache shared across all uvicorn workers.
   # No persistence: cache is warm-only; a restart causes cache misses, not data loss.
   redis:
@@ -217,4 +130,3 @@ volumes:
   caddy_data:
   caddy_config:
   pg_data:
-  ollama_data:
