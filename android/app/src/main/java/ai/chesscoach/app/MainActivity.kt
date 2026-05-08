@@ -20,10 +20,18 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.viewModels
 import androidx.core.view.GravityCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.appcompat.app.AppCompatActivity
 import androidx.drawerlayout.widget.DrawerLayout
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.material.snackbar.Snackbar
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 class MainActivity : AppCompatActivity() {
 
@@ -54,6 +62,25 @@ class MainActivity : AppCompatActivity() {
      * the next chat session opened via [openChat].  Null before the first game ends.
      */
     private var lastGameFinishResponse: GameFinishResponse? = null
+
+    /**
+     * Backend safe-mode gate (see [SecaSafetyGate]).  Built in [onCreate]
+     * after the API client, refreshed at cold-start and on every
+     * [onResume].  Null only between [onCreate] entry and the API
+     * client construction; every reference site below uses `?.` so
+     * tests with a null Activity surface don't NPE.
+     */
+    private var secaSafetyGate: SecaSafetyGate? = null
+
+    /**
+     * Persistent Snackbar shown while [secaSafetyGate] is not in the
+     * Safe state.  The gate's [SecaSafetyState.Unsafe.reason] is
+     * surfaced as the message; tapping "Retry" calls [refreshSafetyGate].
+     * Held as a field so we can [Snackbar.dismiss] it as soon as the
+     * state flips to Safe — Material's Snackbar doesn't auto-dismiss
+     * indefinite ones.
+     */
+    private var safetySnackbar: Snackbar? = null
 
     /**
      * Game id captured from the most recent /game/start success.
@@ -98,7 +125,15 @@ class MainActivity : AppCompatActivity() {
         // this wiring the engine plays at full strength regardless of
         // the user's calibration — see test_adaptive_engine_wiring.py
         // for the contract on both ends.
-        viewModel.playerProfileCache = PlayerProfileCache(gameApiClient)
+        //
+        // Fire-and-forget warm: the AI move dispatch reads the cache
+        // non-blockingly via cachedOpponentEloOrNull(), so populating
+        // it in the background here ensures the very first AI move
+        // already sees a calibrated strength level instead of falling
+        // back to 100.  Failures are absorbed inside warm().
+        viewModel.playerProfileCache = PlayerProfileCache(gameApiClient).also { cache ->
+            lifecycleScope.launch { cache.warm() }
+        }
         authApiClient = HttpAuthApiClient(
             baseUrl = BuildConfig.COACH_API_BASE,
             // Wire X-Auth-Token rotation: every successful authenticated
@@ -115,17 +150,16 @@ class MainActivity : AppCompatActivity() {
         // method's kdoc for the keep-vs-drop policy.
         retryPendingFinishOnColdStart()
 
-        // Verify SECA safe_mode at cold-start — fire-and-forget, no UI update.
-        lifecycleScope.launch {
-            when (val r = gameApiClient.getSecaStatus()) {
-                is ApiResult.Success -> {
-                    Log.d("SECA", "seca/status: safe_mode=${r.data.safeModeEnabled}")
-                    if (!r.data.safeModeEnabled) {
-                        Log.w("SECA", "WARNING: backend reports safe_mode=false — bandit training may be active")
-                    }
-                }
-                else -> Log.d("SECA", "seca/status unavailable (${r::class.simpleName})")
-            }
+        // Verify SECA safe_mode before any coaching call leaves the
+        // app.  The gate stays in [SecaSafetyState.Unknown] until the
+        // first refresh resolves; ChessViewModel's per-move coach
+        // dispatch checks `gate.isSafe()` and skips `/live/move` until
+        // the state clears, and [openChat] refuses similarly.  See
+        // README > "Trust Boundaries" and SecaSafetyGate kdoc.
+        secaSafetyGate = HttpSecaSafetyGate(gameApiClient).also { gate ->
+            viewModel.secaSafetyGate = gate
+            observeSafetyGate(gate)
+            refreshSafetyGate(gate)
         }
 
         setContentView(R.layout.activity_main)
@@ -146,6 +180,7 @@ class MainActivity : AppCompatActivity() {
         txtRatingHeader = findViewById(R.id.txtRatingHeader)
         txtWeaknessTags = findViewById(R.id.txtWeaknessTags)
         txtNextTrainingChip = findViewById(R.id.txtNextTrainingChip)
+        val btnExitToHome = findViewById<Button>(R.id.btnExitToHome)
         val btnReset = findViewById<Button>(R.id.btnReset)
         val btnUndo = findViewById<Button>(R.id.btnUndo)
         val btnChat = findViewById<Button>(R.id.btnChat)
@@ -156,6 +191,14 @@ class MainActivity : AppCompatActivity() {
 
         // START PULSE ANIMATION
         startPulseAnimation()
+
+        // Theme runs edge-to-edge (transparent statusBarColor; the
+        // navigationBarColor sits behind the gesture area on
+        // Android 13+).  Without an inset listener the action bar
+        // at the bottom would render under the system nav, making
+        // "Ask the coach" / "?" untappable on devices that overlap
+        // the bottom of the activity with the gesture pill.
+        applyBottomSystemBarInset(findViewById(R.id.atriumActionBar))
 
         // 🛡️ SAFETY CHECK
         if (!ChessNative.isLibraryLoaded) {
@@ -201,6 +244,18 @@ class MainActivity : AppCompatActivity() {
         }
 
         // -------- SIDEBAR BUTTONS --------
+        // Exit to Home — finishes MainActivity; the standard back-stack
+        // pops to HomeActivity (which started us via startActivity).  We
+        // deliberately persist the in-progress snapshot before finishing
+        // so the user can resume from HomeActivity's Resume card.
+        btnExitToHome.setOnClickListener {
+            drawerLayout.closeDrawer(GravityCompat.END)
+            if (::chessBoard.isInitialized && viewModel.moveCount > 0) {
+                persistInProgressSnapshot()
+            }
+            finish()
+        }
+
         btnReset.setOnClickListener {
             if (ChessNative.isLibraryLoaded) {
                 viewModel.reset()
@@ -420,10 +475,15 @@ class MainActivity : AppCompatActivity() {
                         lastGameFinishResponse = r.data
                         showCoachingResult(r.data, finalResult, finalMoveCount)
                         // Server bumped the rating + (likely) shifted
-                        // opponent_elo.  Drop the cached profile so
-                        // the next AI move re-fetches and the
-                        // strength dial reflects the updated level.
-                        viewModel.playerProfileCache?.invalidate()
+                        // opponent_elo.  Drop the cached profile and
+                        // warm a fresh entry in the background so the
+                        // next AI move sees the updated strength
+                        // level without paying for `/player/progress`
+                        // on the AI dispatch path.
+                        viewModel.playerProfileCache?.let { cache ->
+                            cache.invalidate()
+                            lifecycleScope.launch { cache.warm() }
+                        }
                     }
                     is ApiResult.HttpError -> {
                         if (r.code == 401) {
@@ -590,6 +650,16 @@ class MainActivity : AppCompatActivity() {
         // noise from the float→JSON→float conversion.
         const val RATING_RECONCILE_EPSILON = 0.5f
 
+        /**
+         * Maximum time openChat waits for the SECA gate to settle out
+         * of [SecaSafetyState.Unknown] before deciding whether to
+         * present the chat sheet.  Covers the common cold-start case
+         * where /seca/status is round-tripping; long enough for a
+         * mobile network round-trip, short enough that a stuck call
+         * doesn't feel hung.
+         */
+        const val SECA_OPEN_CHAT_AWAIT_MS: Long = 1500L
+
         // Intent extras used by HomeActivity to ask MainActivity to
         // open a specific bottom sheet on startup.  String constants
         // (rather than an enum) keep the Intent contract trivially
@@ -672,7 +742,87 @@ class MainActivity : AppCompatActivity() {
         statusPulse.startAnimation(pulse)
     }
 
+    /**
+     * Adds the system-bar bottom inset onto [view]'s padding so a
+     * bottom-anchored container clears the gesture / 3-button nav
+     * bar on edge-to-edge devices.
+     *
+     * Captures the original paddingBottom on the first invocation so
+     * the inset is added on top of the layout's static padding rather
+     * than replacing it — without that, the action-bar's 16dp visual
+     * breathing room would collapse to zero when the system bar inset
+     * happens to be 0 (e.g. landscape with hidden nav bar).
+     */
+    private fun applyBottomSystemBarInset(view: View) {
+        val basePaddingBottom = view.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.updatePadding(bottom = basePaddingBottom + bars.bottom)
+            insets
+        }
+    }
+
     private fun openChat() {
+        if (supportFragmentManager.isStateSaved) return
+        // README: confirm safe_mode=true before sending coaching requests.
+        // Chat is the most coaching-heavy surface in the app; refuse
+        // until the gate is in [SecaSafetyState.Safe].  The persistent
+        // safety Snackbar already explains why and offers Retry.
+        //
+        // Three-way branch on the gate state so the cold-start window
+        // (state=Unknown until the first /seca/status response lands)
+        // doesn't immediately fail.  Used to bail with a toast on
+        // anything-but-Safe — including the Unknown window — which
+        // forced the user to retry several times in the second or two
+        // it took /seca/status to round-trip.
+        val gate = secaSafetyGate
+        when (val state = gate?.state?.value) {
+            null, SecaSafetyState.Safe -> presentChatSheet()
+            SecaSafetyState.Unknown -> awaitGateThenOpenChat(gate!!)
+            is SecaSafetyState.Unsafe ->
+                Toast.makeText(
+                    this,
+                    getString(R.string.seca_safety_chat_blocked),
+                    Toast.LENGTH_LONG,
+                ).show()
+        }
+    }
+
+    /**
+     * Suspend up to [SECA_OPEN_CHAT_AWAIT_MS] for the first
+     * `/seca/status` response to land, then re-decide.  Confirmed
+     * Unsafe still blocks chat — only the cold-start "we don't know
+     * yet" window changes from immediate-bail to wait-then-decide.
+     *
+     * If the gate stays Unknown past the timeout (network is so slow
+     * the first refresh hasn't completed), we treat it the same as
+     * Unsafe: surface the blocked-toast so the user knows to wait /
+     * tap Retry on the persistent safety Snackbar.
+     */
+    private fun awaitGateThenOpenChat(gate: SecaSafetyGate) {
+        lifecycleScope.launch {
+            val resolved = withTimeoutOrNull(SECA_OPEN_CHAT_AWAIT_MS) {
+                gate.state.first { it !is SecaSafetyState.Unknown }
+            }
+            when (resolved) {
+                SecaSafetyState.Safe -> presentChatSheet()
+                is SecaSafetyState.Unsafe, SecaSafetyState.Unknown, null ->
+                    Toast.makeText(
+                        this@MainActivity,
+                        getString(R.string.seca_safety_chat_blocked),
+                        Toast.LENGTH_LONG,
+                    ).show()
+            }
+        }
+    }
+
+    /**
+     * Caller-side preconditions: the SECA gate has cleared and the
+     * activity is in a state safe to commit a fragment transaction.
+     * Split out of [openChat] so both the synchronous Safe branch and
+     * the deferred await-then-open branch share the sheet construction.
+     */
+    private fun presentChatSheet() {
         if (supportFragmentManager.isStateSaved) return
         if (drawerLayout.isDrawerOpen(GravityCompat.END)) {
             drawerLayout.closeDrawer(GravityCompat.END)
@@ -1044,5 +1194,69 @@ class MainActivity : AppCompatActivity() {
         if (::chessBoard.isInitialized) {
             chessBoard.boardStyle = SettingsBottomSheet.readBoardStyle(this)
         }
+        // Re-check SECA safe-mode on every resume so a backend that
+        // drifts to unsafe mid-session is caught the next time the
+        // activity comes to the foreground.  Cheap (single open
+        // GET) and cancelled by lifecycle if the user immediately
+        // navigates away.
+        secaSafetyGate?.let { refreshSafetyGate(it) }
+    }
+
+    /**
+     * Subscribe the activity to [gate.state] so the persistent safety
+     * Snackbar appears whenever the state is not [SecaSafetyState.Safe]
+     * and dismisses as soon as the state clears.  Uses
+     * [repeatOnLifecycle(STARTED)] so the collector pauses while the
+     * activity is in the background — no coroutine leak across
+     * configuration changes.
+     */
+    private fun observeSafetyGate(gate: SecaSafetyGate) {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                gate.state.collect { state ->
+                    when (state) {
+                        SecaSafetyState.Safe -> {
+                            safetySnackbar?.dismiss()
+                            safetySnackbar = null
+                        }
+                        SecaSafetyState.Unknown -> {
+                            // Cold-start window before the first refresh
+                            // resolves; show a soft "checking" message.
+                            showSafetySnackbar(
+                                getString(R.string.seca_safety_checking),
+                                gate,
+                            )
+                        }
+                        is SecaSafetyState.Unsafe -> {
+                            showSafetySnackbar(
+                                getString(R.string.seca_safety_unsafe, state.reason),
+                                gate,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun showSafetySnackbar(message: String, gate: SecaSafetyGate) {
+        val anchor = drawerLayout
+        val existing = safetySnackbar
+        if (existing != null && existing.isShown) {
+            existing.setText(message)
+            return
+        }
+        val snackbar = Snackbar.make(anchor, message, Snackbar.LENGTH_INDEFINITE)
+            .setAction(R.string.seca_safety_retry) { refreshSafetyGate(gate) }
+        safetySnackbar = snackbar
+        snackbar.show()
+    }
+
+    /**
+     * Fire-and-forget refresh.  The Snackbar reflects the result
+     * automatically through the [observeSafetyGate] flow collector.
+     */
+    private fun refreshSafetyGate(gate: SecaSafetyGate) {
+        lifecycleScope.launch { gate.refresh() }
     }
 }

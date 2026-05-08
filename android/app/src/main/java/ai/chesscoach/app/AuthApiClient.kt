@@ -164,6 +164,7 @@ class HttpAuthApiClient(
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
             conn.doOutput = true
             conn.connectTimeout = connectTimeoutMs
             conn.readTimeout = readTimeoutMs
@@ -192,6 +193,7 @@ class HttpAuthApiClient(
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.setRequestProperty("Authorization", "Bearer $token")
+            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
             conn.connectTimeout = connectTimeoutMs
             conn.readTimeout = readTimeoutMs
 
@@ -216,6 +218,7 @@ class HttpAuthApiClient(
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
             conn.setRequestProperty("Authorization", "Bearer $token")
+            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
             conn.connectTimeout = connectTimeoutMs
             conn.readTimeout = readTimeoutMs
 
@@ -263,6 +266,7 @@ class HttpAuthApiClient(
             conn.setRequestProperty("X-HTTP-Method-Override", "PATCH")
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("Authorization", "Bearer $token")
+            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
             conn.doOutput = true
             conn.connectTimeout = connectTimeoutMs
             conn.readTimeout = readTimeoutMs
@@ -299,6 +303,7 @@ class HttpAuthApiClient(
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("Authorization", "Bearer $token")
+            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
             conn.doOutput = true
             conn.connectTimeout = connectTimeoutMs
             conn.readTimeout = readTimeoutMs
@@ -345,6 +350,7 @@ class HttpAuthApiClient(
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
             conn.doOutput = true
             conn.connectTimeout = connectTimeoutMs
             conn.readTimeout = readTimeoutMs

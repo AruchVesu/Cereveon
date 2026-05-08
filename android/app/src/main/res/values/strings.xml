@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      SECA safe-mode gate strings.  See:
+        - llm/seca/shared_limiter.py  (server-side counterpart)
+        - SecaSafetyGate.kt           (client gate)
+        - MainActivity.observeSafetyGate
+    -->
+    <string name="seca_safety_checking">Checking backend safety…</string>
+    <string name="seca_safety_unsafe">Backend safety unverified: %1$s. Coaching disabled.</string>
+    <string name="seca_safety_chat_blocked">Coaching unavailable until the backend safety check passes. Tap Retry on the safety banner.</string>
+    <string name="seca_safety_retry">Retry</string>
+
+    <!--
+      In-game drawer "Exit to Home" affordance.  See MainActivity.btnExitToHome
+      wiring; finishes the activity so the back-stack pops to HomeActivity.
+    -->
+    <string name="game_exit_to_home">Exit to Home</string>
+</resources>

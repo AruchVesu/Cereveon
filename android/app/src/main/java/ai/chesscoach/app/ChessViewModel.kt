@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 enum class Turn { HUMAN, AI }
 
@@ -33,6 +34,23 @@ class ChessViewModel(
      * the server applied.
      */
     var playerProfileCache: PlayerProfileCache? = null,
+    /**
+     * Optional safe-mode gate.  When non-null, [dispatchHumanMoveCoach]
+     * skips the `POST /live/move` call whenever the gate is not in the
+     * [SecaSafetyState.Safe] state.  This is the per-move enforcement
+     * of the README "before sending coaching requests, confirm
+     * safe_mode" contract.  When null, the legacy unconditional
+     * behaviour applies (kept for tests that don't care about the
+     * gate).
+     *
+     * The local engine path (C++ via [engineProvider]) is intentionally
+     * NOT gated by this — it doesn't reach the backend's coaching
+     * pipeline.  Engine eval (`/analyze`, via [engineEvalClient]) is
+     * also not gated: it returns the deterministic ESV with no LLM /
+     * adaptive surface.  Only the live coaching hint and chat go
+     * through the gate.
+     */
+    var secaSafetyGate: SecaSafetyGate? = null,
 ) : ViewModel() {
 
     private var turn: Turn = Turn.HUMAN
@@ -170,8 +188,29 @@ $moves"""
             try {
                 val fen = withContext(Dispatchers.Main) { exportFEN() }
 
-                val strengthLevel: Int = playerProfileCache?.let {
-                    try { EloToStrength.map(it.getOpponentElo()) } catch (_: Exception) { 100 }
+                // Hybrid cache lookup with a hard ceiling on blocking.
+                //
+                // The previous implementation called the suspending
+                // `getOpponentElo()` directly; that issues
+                // `/player/progress` on a cache miss and would wait up
+                // to the HTTP read timeout (~15s) when the backend is
+                // unhealthy.  During that wait `turn = AI` and the
+                // board visually freezes — the symptom users saw when
+                // the SECA snackbar showed "Backend safety unverified".
+                //
+                // Steady-state: warmed by MainActivity at cold-start
+                // and after every /game/finish, so the fast path is a
+                // cache hit and resolves instantly.  Cold-start race:
+                // when the warm hasn't returned yet, fall back to a
+                // bounded fetch and degrade to strength 100 after
+                // [STRENGTH_FETCH_BUDGET_MS] so the AI dispatch is
+                // never blocked for longer than half a second.
+                val strengthLevel: Int = playerProfileCache?.let { cache ->
+                    cache.cachedOpponentEloOrNull()?.let { return@let EloToStrength.map(it) }
+                    val elo = withTimeoutOrNull(STRENGTH_FETCH_BUDGET_MS) {
+                        try { cache.getOpponentElo() } catch (_: Exception) { null }
+                    }
+                    elo?.let { EloToStrength.map(it) } ?: 100
                 } ?: 100
 
                 val move = engineProvider.getBestMove(fen, strengthLevel)
@@ -207,6 +246,18 @@ $moves"""
         requestId: Long,
     ) {
         val liveClient = liveCoachClient ?: return
+        // README contract: confirm safe_mode=true before sending coaching
+        // requests.  When the gate is wired and reports Unknown / Unsafe,
+        // skip the `/live/move` call rather than fall through to the
+        // optimistic path.  Engine eval (dispatched separately) still
+        // runs because it's not a coaching request.
+        if (secaSafetyGate?.isSafe() == false) {
+            Log.d(
+                "AI_TEST",
+                "dispatchHumanMoveCoach: skipped — SECA gate state=${secaSafetyGate?.state?.value}",
+            )
+            return
+        }
         viewModelScope.launch(ioDispatcher) {
             val liveResult = if (uci.length in 4..5) liveClient.getLiveCoaching(fen, uci) else null
             withContext(Dispatchers.Main) {
@@ -343,5 +394,19 @@ $moves"""
         invalidateState()
         moveHistory.addAll(uciList)
         turn = if (uciList.size % 2 == 0) Turn.HUMAN else Turn.AI
+    }
+
+    companion object {
+        /**
+         * Hard ceiling on how long [requestAIMove] is allowed to wait
+         * for [PlayerProfileCache.getOpponentElo] when the cache is
+         * cold.  Without this bound the AI dispatch waited up to the
+         * underlying HTTP read timeout (~15s) on a slow / unhealthy
+         * backend, which left `turn = AI` and made the board appear
+         * frozen between human moves.  500ms keeps the interaction
+         * snappy and the cold-start fallback to strength 100 is
+         * recovered on the next move once the warm completes.
+         */
+        const val STRENGTH_FETCH_BUDGET_MS: Long = 500L
     }
 }

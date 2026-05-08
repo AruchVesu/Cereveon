@@ -10,6 +10,9 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -114,6 +117,18 @@ class HomeActivity : AppCompatActivity() {
         resumeTitle   = findViewById(R.id.homeResumeTitle)
         resumeSub     = findViewById(R.id.homeResumeSub)
         syncIndicator = findViewById(R.id.homeSyncIndicator)
+
+        // Theme runs edge-to-edge — without this listener the bottom
+        // tab bar (Home / Lessons / Coach / You) sits underneath the
+        // system gesture / 3-button navigation bar, making the tabs
+        // unreachable on Android 13+ devices.
+        val tabBar = findViewById<LinearLayout>(R.id.homeTabBar)
+        val tabBarBasePaddingBottom = tabBar.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(tabBar) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.updatePadding(bottom = tabBarBasePaddingBottom + bars.bottom)
+            insets
+        }
 
         val playerId = (authRepo.authState() as? AuthState.Authenticated)?.playerId
         avatar.text = initialsFor(playerId)

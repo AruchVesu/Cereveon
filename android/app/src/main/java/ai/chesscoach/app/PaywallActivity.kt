@@ -10,6 +10,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 
 /**
  * Cereveon · Atrium · Paywall (handoff screen #11 — final Atrium screen).
@@ -45,6 +48,17 @@ class PaywallActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_paywall)
+
+        // Theme runs edge-to-edge; without this listener the bottom
+        // "Begin · 7 days free" / "Maybe later" footer would render
+        // under the system gesture / nav bar.
+        val footer = findViewById<LinearLayout>(R.id.paywallFooter)
+        val footerBasePaddingBottom = footer.paddingBottom
+        ViewCompat.setOnApplyWindowInsetsListener(footer) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.updatePadding(bottom = footerBasePaddingBottom + bars.bottom)
+            insets
+        }
 
         renderFeatureBullets(findViewById(R.id.paywallFeatures))
 
