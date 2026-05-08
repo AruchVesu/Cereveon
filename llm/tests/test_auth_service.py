@@ -140,7 +140,23 @@ class TestGetPlayerBySession:
         result = service.get_player_by_session("nonexistent-session-id", "fake-token")
         assert result is None
 
-    def test_wrong_token_returns_none(self, db, service):
+    def test_token_value_no_longer_checked_against_session_hash(self, db, service):
+        """Pre-AUTH_ROT_01 this test asserted that a wrong token string
+        against a real session_id returned None.  That behaviour came
+        from a sha256(token) ?= session.token_hash check that was
+        incompatible with the X-Auth-Token JWT-rotation feature in
+        [router.get_current_player] — rotation mints a new JWT every
+        request without updating session.token_hash, so the strict
+        check killed every call after the first.  See AUTH_ROT_01 in
+        test_auth_rotation_regression.py.
+
+        The token-authenticity guarantee now lives in the JWT
+        signature check at the router boundary; this service-layer
+        method only enforces session lifecycle (row exists +
+        not-expired).  A garbage token paired with a real session_id
+        therefore VALIDATES at this layer — the router would have
+        already rejected it via decode_token() before we got here.
+        """
         service.register("wrong_tok@example.com", "pass1234")
         token, _ = service.login("wrong_tok@example.com", "pass1234")
 
@@ -148,7 +164,11 @@ class TestGetPlayerBySession:
 
         payload = decode_token(token)
         result = service.get_player_by_session(payload["session_id"], "completely-wrong-token")
-        assert result is None
+        # Post-AUTH_ROT_01: any token value is accepted at this layer
+        # because the JWT signature is the authenticator, checked in
+        # the router before this method runs.
+        assert result is not None
+        assert result.email == "wrong_tok@example.com"
 
     def test_expired_db_session_returns_none(self, db, service):
         service.register("expired@example.com", "pass1234")

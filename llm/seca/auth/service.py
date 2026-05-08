@@ -140,6 +140,27 @@ class AuthService:
     # Validate session
     # ---------------------------
     def get_player_by_session(self, session_id: str, token: str) -> Player | None:
+        # Token authenticity is established upstream by the JWT signature
+        # check in [router.get_current_player.decode_token]; the JWT itself
+        # is what proves the bearer once held a valid login.  This method
+        # only validates the server-side session lifecycle:
+        #   - the session row exists (revocation = row deletion)
+        #   - the session has not yet hit its expires_at deadline
+        #
+        # An older implementation also recomputed a per-request hash from
+        # the inbound token and compared it against session.token_hash
+        # with a constant-time check.  That comparison was incompatible
+        # with the JWT-rotation feature in [router.get_current_player],
+        # which mints a fresh JWT on every successful authenticated
+        # response (returned via X-Auth-Token) without updating
+        # session.token_hash.  Every authenticated call after the first
+        # 401'd in production once the Android client rotated its stored
+        # token.  See AUTH_ROT_01 in the auth tests.
+        #
+        # The trade-off: per-token revocation (revoke a single leaked JWT
+        # without killing the session) is no longer possible.  The 24 h
+        # ACCESS_EXPIRE_MINUTES cap and password-change session-wipe in
+        # [change_password] are the remaining containment levers.
         session = self.db.query(Session).filter_by(id=session_id).first()
         if not session:
             return None
@@ -149,16 +170,12 @@ class AuthService:
         if session.expires_at is None or session.expires_at < now:
             return None
 
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        if not hmac.compare_digest(token_hash, session.token_hash or ""):
-            return None
-
         # Sliding-session window: extend expires_at when the session is
         # within _SESSION_SLIDE_THRESHOLD of expiring.  Threshold-gated
         # so we don't write on every API call for an active user.
-        # Skipped entirely on validation failure above so an attacker
-        # probing with a stolen-then-revoked token can't keep a dead
-        # session alive.
+        # Skipped entirely on the validation failures above so an
+        # attacker probing with a revoked / unknown session_id can't
+        # keep a dead session alive.
         if (session.expires_at - now) < _SESSION_SLIDE_THRESHOLD:
             session.expires_at = now + _SESSION_EXTEND
             self.db.commit()

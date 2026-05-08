@@ -188,32 +188,43 @@ class TestSessionSliding:
             f"sliding bump didn't persist; only {time_left} remains"
         )
 
-    def test_bad_token_does_not_slide(self, service, db):
+    def test_unknown_session_id_does_not_slide(self, service, db):
         """SLIDE_FAILED_AUTH_NO_BUMP — sliding must happen AFTER the
-        token comparison succeeds, otherwise an attacker probing with
-        a stolen-then-revoked token could keep a dead session alive."""
+        session-existence check passes, otherwise an attacker probing
+        with a deleted-then-replayed session_id could keep a dead
+        session alive.
+
+        Before AUTH_ROT_01 this test also covered the "wrong token,
+        right session_id" branch via a sha256(token) ?= token_hash
+        check.  That check was removed because it was incompatible
+        with X-Auth-Token JWT rotation (see
+        test_auth_rotation_regression.py).  The remaining failure
+        branches that must not slide are: unknown session_id, expired
+        session_id.  Both early-return before the sliding block, so
+        an extension is impossible.
+        """
+        # Unknown session_id — no row exists, so there's nothing to
+        # slide and no row to inspect afterwards.  This is the
+        # post-AUTH_ROT_01 spelling of SLIDE_FAILED_AUTH_NO_BUMP.
+        result = service.get_player_by_session("does-not-exist", "any-token")
+        assert result is None
+
+        # Insert another player's session and check it wasn't touched.
         token, session_row = _login_and_get_session(service, db)
         session_row.expires_at = datetime.utcnow() + timedelta(hours=1)
         db.commit()
         original_expiry = session_row.expires_at
 
-        # Wrong token — same session_id, garbage token.
-        result = service.get_player_by_session(session_row.id, "not-the-real-token")
-        assert result is None
+        # Probe a different (unknown) session_id while a real one
+        # exists — the real one must not be slid as a side-effect.
+        assert service.get_player_by_session("still-not-the-id", "junk") is None
 
         db.expire_all()
         refetched = db.query(Session).filter_by(id=session_row.id).first()
         assert refetched.expires_at == original_expiry, (
-            "session was extended despite a failed token check — "
-            "this would let an attacker keep a dead session alive"
+            "an unrelated session was extended by a probe against an "
+            "unknown session_id — sliding leaked across rows"
         )
-
-    def test_unknown_session_id_returns_none(self, service, db):
-        # Defence against a session_id that simply doesn't exist
-        # (logged out, or never created).  Must return None, not
-        # silently slide some other row.
-        result = service.get_player_by_session("does-not-exist", "any-token")
-        assert result is None
 
     def test_expired_session_not_revived(self, service, db):
         """SLIDE_EXPIRED_SESSION_NOT_REVIVED — once a session is past
