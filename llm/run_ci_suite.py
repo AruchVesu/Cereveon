@@ -102,6 +102,11 @@ TEST_TARGETS = [
     "llm/tests/test_bug_regressions.py",
     # API05 — LLM retry cap, inter-retry backoff delay, and safe fallback contract.
     "llm/tests/test_explain_pipeline_retry.py",
+    # CALL_LLM_01–05 — DeepSeek wire-format unit tests against ``call_llm``
+    # itself (the retry-test file mocks call_llm at the boundary; this file
+    # exercises the function body): missing-API-key fail-fast, content
+    # extraction + strip, malformed-response guards, HTTP-error propagation.
+    "llm/tests/test_call_llm_deepseek.py",
     # QA plan — server-related categories (all 111 pass, zero external deps).
     # INV-01–05: architectural invariants (LLM output, engine format, isolation, call order, game independence).
     "llm/tests/test_architectural_invariants.py",

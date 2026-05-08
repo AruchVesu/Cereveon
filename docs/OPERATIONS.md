@@ -53,13 +53,11 @@ Required:
 
 Python ≥ 3.11
 
-Ollama installed and running
+DeepSeek API key (https://platform.deepseek.com)
 
-One supported LLM model available locally
+Default model:
 
-Example:
-
-qwen2.5:7b-instruct-q2_K
+deepseek-chat (DeepSeek-V3, OpenAI-compatible /chat/completions)
 
 3.2 Required Environment Variables
 LLM_MODEL=qwen2.5:7b-instruct-q2_K
@@ -157,88 +155,71 @@ Or retry with same prompt (optional, bounded)
 
 Do NOT auto-accept low-quality output.
 
-5.3 LLM Runtime Errors (Ollama)
+5.3 LLM Runtime Errors (DeepSeek)
 
 Examples:
 
-Unknown flags
+HTTP 401 — invalid or revoked API key
 
-Model not found
+HTTP 402 — billing exhausted / payment failed
 
-Encoding errors
+HTTP 429 — rate limit exceeded
+
+HTTP 5xx — DeepSeek upstream incident
 
 Action
 
-Treat as infrastructure error
+Treat as infrastructure error.  The chat_pipeline retry loop
+(MAX_MODE_2_RETRIES) does not retry on these — instead the
+exception is logged at WARNING level (chat_pipeline.py:557) and
+the deterministic fallback in `_build_reply_deterministic` ships
+to the user.  Users see template prose, never an HTTP error.
 
-Do not retry automatically
+Confirm via `GET /llm/health` — the response carries the upstream
+HTTP code and DeepSeek's error message in its `error` field, e.g.
+`{"ok": false, "error": "HTTP 401: Authentication Fails, Your api key is invalid"}`.
 
-Restart Ollama if needed
+For 401 / 402, rotate `COACH_DEEPSEEK_API_KEY` in `.env.prod` and
+restart api: `docker compose -f docker-compose.prod.yml up -d --force-recreate api`.
 
-5.4 Known Model-Controllability Limit (qwen2.5:7b-instruct-q2_K)
+For 429, check DeepSeek's [rate-limit dashboard](https://platform.deepseek.com).
+The api falls back gracefully so users never see the limit; the
+WARNING log lines are the operator signal.
+
+5.4 Switching the LLM model (or provider)
 
 Status
 
-Parked, scheduled for resolution before the next v*.*.* release tag.
+DeepSeek-V3 (`deepseek-chat`) is the production default.  Switching
+to a different OpenAI-compatible model or provider is one env-var
+change.
 
-Symptom
+Procedure
 
-`test_llm_regression.py` (RUN_OLLAMA_TESTS=1) intermittently fails on
-`validate_mode_2_negative` and `validate_mode_2_structure` patterns
-even when the system prompt explicitly forbids the same words.
-Observed during the 2026-04-28 pre-deploy verification: the model
-produces "calculation" / "white can" / "line" tokens after being
-shown the comprehensive forbidden vocabulary in ABSOLUTE RULE 9.
+1.  Update `COACH_DEEPSEEK_MODEL` in `.env.prod` to the new model
+    string (e.g. `deepseek-reasoner` for chain-of-thought, or any
+    OpenAI-compatible model name on a different gateway).
+2.  If you're switching providers entirely (OpenAI, Together, Groq,
+    self-hosted vLLM), also update `COACH_DEEPSEEK_API_BASE` to the
+    new endpoint and `COACH_DEEPSEEK_API_KEY` to the new key.  The
+    code talks pure OpenAI-compatible JSON so no Python changes
+    are needed for any of these.
+3.  `docker compose -f docker-compose.prod.yml up -d --force-recreate api`
+4.  Probe `GET /llm/health` — should return `ok: true` within a
+    few seconds.
 
-Root cause
+Do NOT weaken the validators or the regression test to accommodate
+a worse-behaved model — per CLAUDE.md rule #5, the failure is the
+signal.
 
-Q2 quantization is the most aggressive variant available for
-qwen2.5:7b-instruct (~3 GB on disk vs. ~4 GB for Q4_K_M).  The
-quality-vs-memory trade-off bites hardest on negation constraints —
-the model knows the words are forbidden but reaches for them anyway
-when generating fluent prose.  This is documented behaviour for
-heavily-quantized 7B-class models, not a bug in the prompt.
+Telemetry to monitor
 
-Production impact
-
-Zero direct user-visible 500s.  The chat_pipeline retry loop
-(MAX_MODE_2_RETRIES) catches violations and retries with a
-strict-hint rewrite; if all retries fail, the deterministic
-fallback in _build_reply_deterministic ships instead.  Users see
-either a compliant LLM reply or the deterministic prose — never an
-HTTP error.  The same retry+fallback chain is wired into
-generate_chat_reply (chat_pipeline.py:528-571) and
-generate_live_reply (live_move_pipeline.py:285-318).
-
-What to do at the next release
-
-Before the next `git tag v*.*.*` push (which gates the CI
-`llm-regression` job), evaluate one or more of the following per
-OPERATIONS.md §5.2's standard fix-list:
-
-1.  Lower `LLM_TEMPERATURE` from 0.2 toward 0.0 (deterministic
-    argmax).  Cheapest change, but neutralises REPEATS=3 in the
-    regression test — output becomes deterministic.
-2.  Switch model variant to `qwen2.5:7b-instruct-q4_K_M` (~+1 GB
-    disk, materially better instruction-following).  Update both
-    `COACH_OLLAMA_MODEL` in `.env.prod` and the hardcoded
-    `MODEL_NAME` in `llm/rag/tests/llm/test_llm_regression.py`,
-    `llm/rag/tests/llm/test_ollama_smoke.py`.  Pull the new model
-    on the Hetzner Ollama volume before flipping the env var:
-    `docker compose -f docker-compose.prod.yml exec ollama ollama pull qwen2.5:7b-instruct-q4_K_M`
-3.  Adjust RAG phrasing if specific forbidden tokens correlate with
-    specific RAG documents.
-
-Do NOT weaken the validators or the regression test to make this
-green — per CLAUDE.md rule #5, the failure is the signal.
-
-Telemetry to monitor before deciding
-
-The retry-loop instrumentation in chat_pipeline (DEBUG-level logs
-"Mode-2 LLM path failed" and "Chat LLM blocked by output firewall")
-is the existing window into how often production hits this path.
-Spike in either log line = controllability is degrading; flat or
-declining = current model is acceptable in practice.
+The retry-loop instrumentation in chat_pipeline (WARNING-level log
+"Mode-2 LLM path failed" and DEBUG-level "Chat LLM blocked by
+output firewall") is the operator window into how often production
+hits the fallback path.  Spike in either log line = controllability
+is degrading; flat or declining = current model is acceptable in
+practice.  `docker compose -f docker-compose.prod.yml logs api -f | grep -i fallback`.
 
 6. Telemetry Operations
 6.1 What Is Collected
@@ -326,7 +307,7 @@ No test skips
 
 CI must not:
 
-Require Ollama
+Require a real LLM provider (DeepSeek API key, etc.)
 
 Execute live LLM inference
 

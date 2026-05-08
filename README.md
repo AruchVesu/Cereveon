@@ -17,7 +17,7 @@ hallucination structurally impossible, not to detect it after the fact.
 | | |
 |---|---|
 | **Status** | Source-available · production deployed |
-| **Backend** | Python 3.13 · FastAPI · Stockfish pool · Ollama (local LLM) |
+| **Backend** | Python 3.13 · FastAPI · Stockfish pool · DeepSeek API (LLM) |
 | **Client** | Android (Kotlin) · native C++ ~1800 Elo opponent via JNI |
 | **Tests** | 1 723 passing · coverage 94.4 % · 95 % floor on validators |
 | **License** | See [`docs/LICENSE.md`](docs/LICENSE.md) |
@@ -58,10 +58,11 @@ premise.
 | Source-available | Open-source (see licence) |
 
 The system runs an Android client against a FastAPI backend; the backend
-houses a Stockfish process pool for evaluation, a local Ollama LLM for prose,
-and the Mode-2 explanation pipeline that gates everything between them. A
-small, deterministic adaptation layer (SECA) personalises opponent strength
-and teaching tone per player without ever retraining a model.
+houses a Stockfish process pool for evaluation, a managed DeepSeek API
+client for prose, and the Mode-2 explanation pipeline that gates everything
+between them. A small, deterministic adaptation layer (SECA) personalises
+opponent strength and teaching tone per player without ever retraining a
+model.
 
 ---
 
@@ -79,8 +80,8 @@ and teaching tone per player without ever retraining a model.
                                                   ┌──────────────┼──────────────┐
                                                   ▼              ▼              ▼
                                           ┌──────────────┐ ┌─────────┐ ┌──────────────┐
-                                          │ Ollama       │ │ Postgres│ │ Redis (opt.) │
-                                          │ (local LLM)  │ │ (auth + │ │ (move L2)    │
+                                          │ DeepSeek API │ │ Postgres│ │ Redis (opt.) │
+                                          │ (managed LLM)│ │ (auth + │ │ (move L2)    │
                                           │              │ │  events)│ │              │
                                           └──────────────┘ └─────────┘ └──────────────┘
 ```
@@ -234,22 +235,24 @@ cp .env.example .env       # fill in values if you want non-defaults
 docker compose up
 ```
 
-API at `http://localhost:8000`. Requires [Ollama](https://ollama.ai)
-running on the **host** (not in the container):
+API at `http://localhost:8000`. LLM coaching is provided by the
+[DeepSeek API](https://platform.deepseek.com); set your key in `.env`:
 
 ```bash
-ollama pull qwen2.5:7b-instruct-q2_K
-ollama serve
+echo 'COACH_DEEPSEEK_API_KEY=sk-...' >> .env
 ```
 
-`host.docker.internal` is mapped automatically on macOS, Windows, and
-Linux via `extra_hosts` in `docker-compose.yml`.
+Without it, every `/chat` call falls back to the deterministic template
+(`chat_pipeline.py:557` — see the trust-boundary diagram). The API still
+serves; coaching just degrades to canned responses. `GET /llm/health`
+surfaces the live LLM status so you can detect this in monitoring rather
+than only in chat replies.
 
 ### VS Code dev container
 
 Open the repo and choose **"Reopen in Container"**. Provisions Python 3.13,
-Node.js 22, Stockfish, and all Python dependencies. Ollama still runs on
-the host.
+Node.js 22, Stockfish, and all Python dependencies. The DeepSeek API key
+still needs to be set in `.env` (or as a shell env var).
 
 ### Bare-metal Python
 
@@ -390,8 +393,9 @@ need most often.
 | `SECA_API_KEY` | `dev-key` | Auth key. Any value works in `dev`; required in `prod`. |
 | `SECA_ENV` | `dev` | `dev` or `prod`. |
 | `SECRET_KEY` | — | JWT signing secret (≥ 32 chars; required in `prod`). |
-| `COACH_OLLAMA_URL` | `http://host.docker.internal:11434` | Ollama endpoint. |
-| `COACH_OLLAMA_MODEL` | `qwen2.5:7b-instruct-q2_K` | LLM model. **Pin the digest (`model:tag@sha256:...`) in production**, otherwise an upstream tag re-push silently changes behaviour under the LLM regression contract. Recipe in `.env.prod.example`. |
+| `COACH_DEEPSEEK_API_KEY` | — | **Required for LLM coaching**. Sign up at [platform.deepseek.com](https://platform.deepseek.com), create a key, paste here. Without it the api still serves but every `/chat` call falls back to the deterministic template. |
+| `COACH_DEEPSEEK_API_BASE` | `https://api.deepseek.com` | OpenAI-compatible endpoint. Override only when pointing at a self-hosted gateway (LiteLLM, vLLM, etc.). |
+| `COACH_DEEPSEEK_MODEL` | `deepseek-chat` | DeepSeek-V3. Strong general-purpose; ~$0.14/M input + $0.28/M output. Alternative `deepseek-reasoner` (chain-of-thought) is ~4× cost — usually overkill for explain-the-position prose. |
 | `STOCKFISH_PATH` | auto-detected | Override Stockfish binary path. |
 | `REDIS_URL` | *(unset)* | Redis URL for the L2 move cache; in-memory only when unset. |
 | `DATABASE_URL` | `sqlite:///data/seca.db` | SQLAlchemy DSN. PostgreSQL required for multi-worker deployments. |
@@ -428,7 +432,7 @@ pipeline. Full runbook: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 | Tier | Image | Source | Port | Role |
 |---|---|---|---|---|
 | **Fly.io edge** | `cereveon` | root [`Dockerfile`](Dockerfile) → [`llm/server.js`](llm/server.js) (Node + Express) | 3000 | Public ingress, regional distribution, security middleware |
-| **Hetzner backend** | `cereveon-llm-api` | [`llm/Dockerfile.api`](llm/Dockerfile.api) (Python + Stockfish + full SECA stack) | 8000 | Heavy compute: engine pool, RAG, validators, auth, Postgres / Ollama / Redis |
+| **Hetzner backend** | `cereveon-llm-api` | [`llm/Dockerfile.api`](llm/Dockerfile.api) (Python + Stockfish + full SECA stack) | 8000 | Heavy compute: engine pool, RAG, validators, auth, Postgres + Redis. LLM coaching via DeepSeek API. |
 
 Both tiers auto-deploy from
 [`.github/workflows/fly-deploy.yml`](.github/workflows/fly-deploy.yml) on
@@ -448,7 +452,7 @@ the edge proxies to.
 `docker-compose.prod.yml` ships two hardening tiers, applied per
 service. The aggressive tier (`api`, `redis`) carries `read_only: true`,
 `tmpfs: [/tmp]`, `cap_drop: [ALL]`, and `no-new-privileges`. The
-conservative tier (`caddy`, `db`, `ollama`) carries only
+conservative tier (`caddy`, `db`) carries only
 `no-new-privileges` pending staging validation of upstream-specific
 hardening recipes. Pinned by `llm/tests/test_container_hardening.py`
 (CH_01–CH_13). See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §8 for
@@ -466,8 +470,8 @@ Pre-release checklist (non-negotiable):
 
 1. Clean working tree (`git status`)
 2. CI-safe tests pass (golden, contract, API contract, pipeline regression)
-3. LLM regression tests pass (`test_llm_regression.py`)
-4. Real LLM smoke test passes (`test_ollama_smoke.py`)
+3. LLM regression tests pass (`test_llm_regression.py` — currently disabled; needs follow-up to wire against DeepSeek)
+4. Real LLM smoke test passes (`test_ollama_smoke.py` — currently disabled; needs follow-up to wire against DeepSeek)
 5. Manual output sanity review (no engine mentions, no move suggestions)
 
 Pushing a `vX.Y.Z` tag publishes the GitHub Release and GHCR images for
@@ -483,7 +487,7 @@ The project uses six test categories. No layer is unprotected.
 |---|---|---|---|
 | **A — Golden** | ESV mapping, RAG retrieval, prompt snapshots | ✅ | `pytest llm/rag/tests/golden/` |
 | **B — Contract** | Forbidden patterns, mate handling, missing data (Fake LLM) | ✅ | `pytest llm/rag/tests/contracts/` |
-| **C — Smoke** | Real LLM connectivity, output passes validators | local only | `pytest llm/rag/tests/llm/test_ollama_smoke.py` |
+| **C — Smoke** | Real LLM connectivity, output passes validators | local only | `pytest llm/rag/tests/llm/test_ollama_smoke.py` *(legacy name; needs follow-up rewrite to hit DeepSeek)* |
 | **D — Regression** | Repeated real LLM runs, contract compliance over time | tag pushes only | `pytest llm/rag/tests/llm/test_llm_regression.py` |
 | **E — Quality** | Length, sentence structure, non-triviality | advisory | `pytest llm/rag/tests/quality/` |
 | **F — Mutation** | mutmut against `llm/rag/validators/`: does the test fail when the validator is logically wrong? | local, on-demand | `bash scripts/run_mutation_tests.sh` |
@@ -568,7 +572,7 @@ update — and never in CI.
 │   │   ├── prompts/          # Mode-2 prompt templates (golden-tested)
 │   │   ├── validators/       # Output contracts (≥ 95 % coverage floor)
 │   │   ├── safety/           # Output firewall (≥ 95 % coverage floor)
-│   │   ├── llm/              # BaseLLM + Ollama / Fake adapters
+│   │   ├── llm/              # BaseLLM + Fake adapter (real LLM via call_llm → DeepSeek)
 │   │   ├── llm/run_mode_2.py # Inner repair loop + REQUIRED-phrase fail-safe
 │   │   ├── deploy/embedded.py
 │   │   ├── documents/        # Static RAG corpus (no runtime submission)

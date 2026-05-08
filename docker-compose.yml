@@ -10,8 +10,14 @@ services:
       SECRET_KEY: ${SECRET_KEY:-}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
       DATABASE_URL: ${DATABASE_URL:-sqlite:///data/seca.db}
-      COACH_OLLAMA_URL: ${COACH_OLLAMA_URL:-http://host.docker.internal:11434}
-      COACH_OLLAMA_MODEL: ${COACH_OLLAMA_MODEL:-qwen2.5:7b-instruct-q2_K}
+      # LLM provider: DeepSeek (https://api.deepseek.com).  Set
+      # COACH_DEEPSEEK_API_KEY in your shell or .env so the container
+      # inherits it.  COACH_DEEPSEEK_API_BASE / COACH_DEEPSEEK_MODEL
+      # default to https://api.deepseek.com / deepseek-chat and
+      # rarely need overriding.
+      COACH_DEEPSEEK_API_KEY: ${COACH_DEEPSEEK_API_KEY:-}
+      COACH_DEEPSEEK_API_BASE: ${COACH_DEEPSEEK_API_BASE:-https://api.deepseek.com}
+      COACH_DEEPSEEK_MODEL: ${COACH_DEEPSEEK_MODEL:-deepseek-chat}
       STOCKFISH_PATH: ${STOCKFISH_PATH:-/usr/games/stockfish}
       REDIS_URL: ${REDIS_URL:-}
     ports:

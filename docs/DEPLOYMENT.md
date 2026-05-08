@@ -11,7 +11,7 @@ Production runs in two tiers, both built and signed by the same CI pipeline:
 | Tier | Image | Source | Port | Role |
 |---|---|---|---|---|
 | **Fly.io edge** | `cereveon` | root [`Dockerfile`](../Dockerfile) → [`llm/server.js`](../llm/server.js) (Node + Express) | 3000 | Public entry point, security middleware, regionally distributed for global scalability |
-| **Hetzner backend** | `cereveon-llm-api` | [`llm/Dockerfile.api`](../llm/Dockerfile.api) (Python + Stockfish + full SECA pipeline) | 8000 | Heavy compute: engine pool, RAG, validators, auth, Postgres/Ollama/Redis stack from [`docker-compose.prod.yml`](../docker-compose.prod.yml) |
+| **Hetzner backend** | `cereveon-llm-api` | [`llm/Dockerfile.api`](../llm/Dockerfile.api) (Python + Stockfish + full SECA pipeline) | 8000 | Heavy compute: engine pool, RAG, validators, auth, Postgres + Redis stack from [`docker-compose.prod.yml`](../docker-compose.prod.yml). LLM coaching via DeepSeek API. |
 
 **Both tiers are auto-deployed by [`.github/workflows/fly-deploy.yml`](../.github/workflows/fly-deploy.yml)** on push to `main`:
 
@@ -22,7 +22,7 @@ The workflow filename is historical (the file pre-dates the rename to a unified 
 
 ### Why two tiers
 
-Fly.io provides regional distribution + low-latency public ingress; the Node edge is small enough to deploy globally without paying for the heavy Stockfish + Ollama + Postgres footprint everywhere. Hetzner hosts the single heavy backend that the edge talks to. The split is intentional and load-bearing.
+Fly.io provides regional distribution + low-latency public ingress; the Node edge is small enough to deploy globally without paying for the heavy Stockfish + Postgres footprint everywhere. Hetzner hosts the single heavy backend that the edge talks to. The split is intentional and load-bearing.
 
 ### Manual updates
 
@@ -46,8 +46,9 @@ explicit `RuntimeError` at startup — the server will not start.
 | `SECA_API_KEY` | yes | *(none)* | API key for `X-Api-Key` protected routes. Any non-empty string. Server aborts startup if unset when `SECA_ENV=prod`. |
 | `SECRET_KEY` | yes | *(random, ephemeral)* | JWT signing secret. Must be ≥ 32 characters. In dev an ephemeral key is generated; all tokens are invalidated on restart. Generate with: `python -c "import secrets; print(secrets.token_hex(32))"` |
 | `CORS_ALLOWED_ORIGINS` | yes | *(empty — blocks all cross-origin)* | Comma-separated list of allowed CORS origins (e.g. `https://app.example.com`). Empty value blocks all cross-origin requests and logs a warning. |
-| `COACH_OLLAMA_URL` | yes | `http://host.docker.internal:11434` | URL of the running Ollama instance. |
-| `COACH_OLLAMA_MODEL` | yes | `qwen2.5:7b-instruct-q2_K` | Ollama model name. Must be pulled before starting. |
+| `COACH_DEEPSEEK_API_KEY` | yes | *(none)* | DeepSeek API key (sign up at platform.deepseek.com). Without it, every `/chat` call falls back to the deterministic template — coaching degrades, doesn't error. |
+| `COACH_DEEPSEEK_API_BASE` | no | `https://api.deepseek.com` | OpenAI-compatible endpoint. Override only for self-hosted gateways. |
+| `COACH_DEEPSEEK_MODEL` | no | `deepseek-chat` | DeepSeek-V3. ~$0.14/M in + $0.28/M out. |
 | `STOCKFISH_PATH` | no | auto-detected | Override path to Stockfish binary. Auto-detection checks `PATH`, then `/usr/games/stockfish` (Linux) or `engines/stockfish.exe` (Windows). |
 | `DATABASE_URL` | no | `sqlite:///data/seca.db` | SQLAlchemy DB URL. Use Postgres in production for multi-worker deployments. |
 | `REDIS_URL` | no | *(in-memory only)* | Redis URL for persistent move cache. Omit to use local in-memory cache. |
@@ -69,7 +70,7 @@ The server performs these checks on startup and fails hard if they are not met:
 |-------|-------------|------------|
 | `SECA_API_KEY` set when `SECA_ENV=prod` | `RuntimeError` at import time | Set a non-empty `SECA_API_KEY` |
 | Stockfish binary reachable | Engine pool disabled; move endpoints return `{"error": "engine pool unavailable"}` | Install Stockfish or set `STOCKFISH_PATH` |
-| Ollama reachable at `COACH_OLLAMA_URL` | Coaching/chat/explain endpoints error at request time | Start Ollama and confirm the model is pulled |
+| `COACH_DEEPSEEK_API_KEY` set and DeepSeek reachable | Coaching/chat/explain fall back to deterministic template (logged at WARNING by chat_pipeline.py:557) | Set the API key in `.env.prod`, restart api. `GET /llm/health` reports the live status. |
 | `CORS_ALLOWED_ORIGINS` non-empty | Warning logged; all cross-origin requests blocked | Set at least one origin |
 | DB migration / table creation | Exception at startup | Check `DATABASE_URL` and that the DB is reachable |
 
@@ -90,9 +91,10 @@ GET /health
 Use this route for load-balancer health checks and readiness probes.
 
 > **Note:** A 200 response from `/health` confirms the process is alive and
-> FastAPI is serving. It does not verify that the engine pool or Ollama are
-> functional. For a deeper liveness check, call `GET /debug/engine` (requires
-> `X-Api-Key`) and confirm `pool_size > 0`.
+> FastAPI is serving. It does not verify that the engine pool or LLM provider
+> are functional. For a deeper liveness check, call `GET /debug/engine`
+> (requires `X-Api-Key`) and confirm `pool_size > 0`, and `GET /llm/health`
+> (open) and confirm `ok: true`.
 
 ---
 
@@ -103,8 +105,7 @@ Use this route for load-balancer health checks and readiness probes.
 cp .env.example .env
 # edit .env: set SECA_ENV=prod, SECA_API_KEY, SECRET_KEY, CORS_ALLOWED_ORIGINS, ...
 
-# 2. Pull the Ollama model (must be done before starting)
-ollama pull qwen2.5:7b-instruct-q2_K
+# 2. Confirm DeepSeek API key is set in .env (COACH_DEEPSEEK_API_KEY=sk-...)
 
 # 3. Start the server
 python -m uvicorn llm.server:app --host 0.0.0.0 --port 8000 --workers 4
@@ -137,7 +138,8 @@ The script performs three checks and exits non-zero on any failure:
 3. `POST /engine/eval` with the starting FEN → `best_move` is non-null
 
 After confirming the script passes, check the server logs for startup warnings
-(CORS, engine pool, DB, Ollama).
+(CORS, engine pool, DB) and probe `GET /llm/health` to confirm DeepSeek
+connectivity.
 
 ---
 
@@ -217,11 +219,12 @@ cd /opt/chesscoach
 The script:
 
 1. Validates prerequisites and generates `.env.prod` from `.env.prod.example`
-   (prompts you to fill in `SECA_API_KEY`, `POSTGRES_PASSWORD`, `DOMAIN`, `GHCR_IMAGE`)
+   (prompts you to fill in `SECA_API_KEY`, `POSTGRES_PASSWORD`, `DOMAIN`,
+   `GHCR_IMAGE`, **`COACH_DEEPSEEK_API_KEY`**)
 2. Pulls all GHCR images
-3. Starts Ollama and pulls `qwen2.5:7b-instruct-q2_K` into the persistent volume
-4. Starts the full stack (`db`, `ollama`, `api`, `caddy`)
-5. Waits for the API health check and runs the smoke tests
+3. Starts the full stack (`db`, `redis`, `api`, `caddy`)
+4. Waits for the API health check and runs the smoke tests
+5. Probes `GET /llm/health` and confirms DeepSeek connectivity
 
 The script is idempotent — safe to re-run if interrupted.
 
@@ -243,8 +246,11 @@ migration step is needed for a fresh deployment — the full schema
 ### After bootstrap
 
 ```bash
-# Tail logs to confirm TLS cert provisioned and Ollama is connected
+# Tail logs to confirm TLS cert provisioned
 docker compose -f docker-compose.prod.yml logs -f caddy api
+
+# Confirm DeepSeek is reachable from inside the api container
+curl -s https://api.yourdomain.com/llm/health
 
 # Register the first player (replace values)
 curl -s -X POST https://api.yourdomain.com/auth/register \
