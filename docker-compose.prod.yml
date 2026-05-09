@@ -55,8 +55,25 @@ services:
         max-file: "5"
 
   # Python FastAPI backend. Image is built and pushed to GHCR by CI.
+  #
+  # Image resolution:
+  #   - CI deploy steps always pass GHCR_IMAGE explicitly as the
+  #     digest-pinned reference produced by the docker-images job.
+  #   - Manual operator commands (`docker compose up`, recovery from
+  #     a half-failed deploy) without GHCR_IMAGE fall back to
+  #     :latest on the real GHCR namespace.  The fly-deploy.yml
+  #     workflow tags every successful main build with :latest
+  #     alongside :sha-<short> (see meta-api step), so the fallback
+  #     is always a meaningful "deploy whatever just landed" target.
+  #
+  # The previous fallback used the literal placeholder
+  # `ghcr.io/owner/cereveon-llm-api:latest`.  When pulled, GHCR
+  # returned 404 (no such namespace) and `docker compose --force-recreate`
+  # silently kept the local cached image — which on 2026-05-09 left
+  # production briefly running an old build after a manual recovery.
+  # Pinned by test_ci_pipeline.py::test_compose_fallback_targets_real_ghcr_namespace.
   api:
-    image: ${GHCR_IMAGE:-ghcr.io/owner/cereveon-llm-api:latest}
+    image: ${GHCR_IMAGE:-ghcr.io/artiomgusev/cereveon-llm-api:latest}
     user: "10001:10001"
     expose:
       - "8000"
