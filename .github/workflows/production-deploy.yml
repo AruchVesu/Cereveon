@@ -97,6 +97,23 @@ jobs:
             echo "available=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Sync deploy-time configs from the checked-out commit before the
+      # SSH step runs `docker compose up`.  Mirrors the same step in
+      # fly-deploy.yml so a manual hotfix deploy lands the same compose
+      # topology as the automatic CI deploy.  See the long comment in
+      # fly-deploy.yml for the rationale (PR #65 ollama-resurrection
+      # incident, 2026-05-08).
+      - name: Sync compose file and Caddyfile to Hetzner
+        if: steps.hetzner-check.outputs.available == 'true'
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: deploy
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          source: "docker-compose.prod.yml,Caddyfile"
+          target: "/opt/chesscoach"
+          overwrite: true
+
       # Zero-downtime rolling deploy — identical strategy to fly-deploy.yml.
       #
       # Why --scale api=2 works:

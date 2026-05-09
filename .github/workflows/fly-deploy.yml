@@ -673,6 +673,29 @@ jobs:
             echo "available=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Sync the deploy-time configs from the just-checked-out commit BEFORE
+      # the SSH step runs `docker compose up`.  Without this, the compose
+      # file and Caddyfile on /opt/chesscoach/ are whatever was last copied
+      # there manually — they don't update with the repo, so every deploy
+      # uses a stale topology.  Concrete failure mode: PR #65 dropped the
+      # `ollama` service from docker-compose.prod.yml in the repo, but the
+      # on-box file still declared it; subsequent `docker compose up` runs
+      # silently re-created the orphan ollama container, OOM-cascading the
+      # 4 GB box.  Now the deploy is repo-as-source-of-truth: any change
+      # to the compose file or Caddyfile is in effect on the next merge.
+      # The .env.prod file is intentionally NOT synced — it holds runtime
+      # secrets that never live in the repo.
+      - name: Sync compose file and Caddyfile to Hetzner
+        if: steps.hetzner-check.outputs.available == 'true'
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: deploy
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          source: "docker-compose.prod.yml,Caddyfile"
+          target: "/opt/chesscoach"
+          overwrite: true
+
       # Zero-downtime rolling deploy (blue/green-style via Docker Compose scale):
       #
       #  1. Record old container ID and image (rollback reference).
