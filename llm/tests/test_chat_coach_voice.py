@@ -249,21 +249,30 @@ class TestVoiceInDeterministicFallback:
         assert "following up" not in r.reply.lower()
 
     def test_formal_swaps_question_framing(self):
-        """Formal swaps 'On your question \"X\":' → 'On the matter of \"X\":'."""
+        """Formal uses a restrained 'On the matter at hand:' prefix before the
+        coaching advice; conversational uses 'In response to your question:'.
+        The user's raw query is NOT echoed back (Mode-2 boundary validator
+        would 500 on forbidden tokens leaked from the prior turn — see the
+        comment block at chat_pipeline.py:446-449), so the prefix is
+        constant rather than templated with the query.
+        """
         from llm.seca.coach.chat_pipeline import generate_chat_reply
         with self._patch_llm_unavailable():
             r = generate_chat_reply(self._STARTING_FEN, self._prior_turns(), coach_voice="formal")
-        assert "on the matter of" in r.reply.lower()
-        assert "on your question" not in r.reply.lower()
+        assert "on the matter at hand" in r.reply.lower()
+        assert "in response to your question" not in r.reply.lower()
 
     def test_conversational_keeps_default_phrasing(self):
-        """Conversational is the documented default — copy must
-        match what existed before voice landed in the fallback."""
+        """Conversational is the documented default.  Pins both halves of
+        the conversational copy: the 'Following up on your earlier question:'
+        preface and the 'In response to your question:' advice prefix.
+        Like the formal variant, the user's raw query is not echoed.
+        """
         from llm.seca.coach.chat_pipeline import generate_chat_reply
         with self._patch_llm_unavailable():
             r = generate_chat_reply(self._STARTING_FEN, self._prior_turns(), coach_voice="conversational")
         assert "following up" in r.reply.lower()
-        assert "on your question" in r.reply.lower()
+        assert "in response to your question" in r.reply.lower()
 
     def test_none_voice_defaults_to_conversational(self):
         """coach_voice=None (existing client) keeps the default copy
