@@ -114,26 +114,10 @@ jobs:
           target: "/opt/chesscoach"
           overwrite: true
 
-      # Zero-downtime rolling deploy — identical strategy to fly-deploy.yml.
-      #
-      # Why --scale api=2 works:
-      #   docker-compose.prod.yml uses `expose` (not `ports`) for the api service,
-      #   so multiple containers coexist without host-port conflicts.
-      #   Caddy proxies to the "api" service name; Docker's internal DNS
-      #   round-robins across all running containers automatically.
-      #
-      # Sequence:
-      #  1. Record PREV_CONTAINER + PREV_IMAGE (rollback reference).
-      #  2. docker pull "$DEPLOY_IMAGE" — fetch pinned digest; never resolves :latest.
-      #  3. docker compose up --scale api=2 --no-recreate:
-      #       --no-recreate  → existing container keeps serving during rollout.
-      #       --scale api=2  → adds one more container running the NEW image.
-      #  4. Identify NEW_CONTAINER (the one that wasn't there before).
-      #  5. Poll Docker's .State.Health.Status on NEW_CONTAINER for up to 90 s.
-      #  6a. healthy  → docker stop --time 30 PREV_CONTAINER (SIGTERM drain), rm.
-      #                 Traffic already on new container. Zero downtime.
-      #  6b. unhealthy → docker stop/rm NEW_CONTAINER.
-      #                  PREV_CONTAINER never touched. Automatic rollback.
+      # Stop-and-replace deploy — identical strategy to fly-deploy.yml.
+      # See the long comment in fly-deploy.yml for the trade-off rationale
+      # (4 GB box can't host two api containers in parallel; brief 502s
+      # during swap accepted in exchange for not OOMing the host).
       - name: Deploy to Hetzner via SSH
         if: steps.hetzner-check.outputs.available == 'true'
         uses: appleboy/ssh-action@v1.2.5
@@ -148,7 +132,7 @@ jobs:
             set -euo pipefail
             cd /opt/chesscoach
 
-            # ── 1. Record running container for rollback reference ──────────
+            # ── 1. Record running container's image for rollback ────────────
             PREV_CONTAINER=$(docker compose -f docker-compose.prod.yml ps -q api 2>/dev/null | head -1 || true)
             PREV_IMAGE=$([ -n "$PREV_CONTAINER" ] && \
               docker inspect --format='{{.Config.Image}}' "$PREV_CONTAINER" 2>/dev/null || true)
@@ -158,15 +142,14 @@ jobs:
             # ── 2. Pull pinned, CI-signed image by digest ───────────────────
             docker pull "$DEPLOY_IMAGE"
 
-            # ── 3. Scale to 2: new container alongside old ──────────────────
+            # ── 3. Stop-and-replace: tear down old api, bring up new ────────
             GHCR_IMAGE="$DEPLOY_IMAGE" \
-              docker compose -f docker-compose.prod.yml up -d --scale api=2 --no-recreate api
+              docker compose -f docker-compose.prod.yml up -d --force-recreate api
 
             # ── 4. Identify the new container ───────────────────────────────
-            NEW_CONTAINER=$(docker compose -f docker-compose.prod.yml ps -q api \
-              | grep -vxF "${PREV_CONTAINER:-}" | head -1 || true)
+            NEW_CONTAINER=$(docker compose -f docker-compose.prod.yml ps -q api | head -1 || true)
             if [ -z "$NEW_CONTAINER" ]; then
-              echo "::error::Could not identify new container after scale-up."
+              echo "::error::No api container present after --force-recreate."
               exit 1
             fi
             echo "New container: $NEW_CONTAINER"
@@ -180,19 +163,19 @@ jobs:
             done
             STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$NEW_CONTAINER" 2>/dev/null || echo "failed")
 
-            # ── 6a. Healthy: gracefully drain old, traffic shifts to new ────
+            # ── 6a. Healthy: deploy done ────────────────────────────────────
             if [ "$STATUS" = "healthy" ]; then
-              if [ -n "${PREV_CONTAINER:-}" ]; then
-                docker stop --time 30 "$PREV_CONTAINER"
-                docker rm "$PREV_CONTAINER"
-              fi
               echo "Deployment complete."
               exit 0
             fi
 
-            # ── 6b. Unhealthy: remove new, old container keeps serving ──────
-            echo "::error::New container unhealthy ($STATUS). Rolling back..."
-            docker stop "$NEW_CONTAINER" 2>/dev/null || true
-            docker rm  "$NEW_CONTAINER" 2>/dev/null || true
-            echo "Rolled back — ${PREV_IMAGE:-original container} still running."
+            # ── 6b. Unhealthy: roll back to the previous image ──────────────
+            echo "::error::New container unhealthy ($STATUS). Rolling back to ${PREV_IMAGE:-(none)}..."
+            if [ -n "${PREV_IMAGE:-}" ]; then
+              GHCR_IMAGE="$PREV_IMAGE" \
+                docker compose -f docker-compose.prod.yml up -d --force-recreate api
+              echo "Rolled back to $PREV_IMAGE."
+            else
+              echo "::error::No previous image recorded; cannot auto-roll-back.  Investigate manually."
+            fi
             exit 1
