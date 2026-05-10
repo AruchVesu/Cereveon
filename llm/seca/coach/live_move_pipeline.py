@@ -223,21 +223,55 @@ def _build_hint(
 # ---------------------------------------------------------------------------
 
 
+def _derive_player_color(fen: str) -> str:
+    """Return ``"white"`` or ``"black"`` for the player who just moved.
+
+    The Mode-1 hint addresses the human (``you``).  Without knowing
+    whether that ``you`` is White or Black, the LLM has no way to tell
+    whether ``engine_signal.side == "white"`` means the player is
+    winning or losing — and the production probe on 2026-05-10 showed
+    DeepSeek defaulting to a wrong "you have a decisive advantage"
+    when the player was actually Black being mated on f7.
+
+    The FEN after a move has the OPPONENT's side-to-move flag, so the
+    player's colour is the opposite of FEN field 2.  ``"startpos"`` and
+    malformed FENs return ``"unknown"`` so the renderer can fall back
+    to the side-neutral framing.
+    """
+    if not fen or fen.strip().lower() == "startpos":
+        return "unknown"
+    try:
+        parts = fen.split()
+        if len(parts) < 2:
+            return "unknown"
+        side_to_move = parts[1].lower()
+        if side_to_move == "w":
+            return "black"
+        if side_to_move == "b":
+            return "white"
+        return "unknown"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
 def _build_hint_llm(
     engine_signal: dict,
     explanation_style: str | None,
+    fen: str,
 ) -> str:
     """Generate a coaching hint via the LLM (Mode-1 system prompt).
 
     Raises on any failure so the caller can fall back to _build_hint().
     """
     rag_docs = _retrieve(engine_signal, _DOCS)
+    player_color = _derive_player_color(fen)
     prompt = render_mode_1_prompt(
         system_prompt=SYSTEM_PROMPT_MODE_1,
         engine_signal=engine_signal,
-        fen="",  # FEN already captured in engine_signal context
+        fen=fen,
         explanation_style=explanation_style,
         rag_docs=rag_docs,
+        player_color=player_color,
     )
     response = _call_llm(prompt).strip()
     if not response:
@@ -291,7 +325,7 @@ def generate_live_reply(
             if attempt > 0:
                 time.sleep(_LIVE_RETRY_DELAY_SECONDS)
             try:
-                hint = _build_hint_llm(engine_signal, explanation_style)
+                hint = _build_hint_llm(engine_signal, explanation_style, fen)
                 if not hint.strip():
                     raise ValueError("Empty hint from LLM")
                 return LiveMoveReply(

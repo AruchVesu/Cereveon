@@ -32,6 +32,7 @@ def render_mode_1_prompt(
     fen: str,
     explanation_style: str | None,
     rag_docs: list[dict] | None = None,
+    player_color: str = "unknown",
 ) -> str:
     """Build the Mode-1 LLM prompt.
 
@@ -47,6 +48,17 @@ def render_mode_1_prompt(
         One of "simple", "intermediate", "advanced" (or None → intermediate).
     rag_docs:
         Optional retrieved coaching documents for contextual grounding.
+    player_color:
+        ``"white"`` or ``"black"`` — the colour the player is playing.
+        Derived by the caller from the FEN's side-to-move flag (which
+        points to the OPPONENT after the player has moved).  Used to
+        pre-frame the evaluation from the player's perspective so the
+        LLM doesn't have to compare ``engine_signal.side`` to the
+        player's colour itself — when it had to guess, DeepSeek
+        defaulted to "you have a decisive advantage" even when the
+        player was losing (production probe 2026-05-10).  Defaults to
+        ``"unknown"`` for backwards compatibility, which falls back to
+        the side-neutral phrasing.
     """
     level = _STYLE_TO_LEVEL.get(explanation_style or "intermediate", "intermediate")
 
@@ -63,6 +75,17 @@ def render_mode_1_prompt(
         band_label = _BAND_LABEL.get(band, band.replace("_", " "))
         eval_desc = f"{side} has {band_label}"
 
+    # Pre-framed player perspective.  The LLM was guessing wrong on
+    # this — see the docstring above and PR #88 for the production
+    # incident.  We do the side comparison here in deterministic code
+    # so the LLM only has to repeat it, not derive it.
+    player_perspective = _frame_player_perspective(
+        eval_type=eval_type,
+        band=band,
+        side=side,
+        player_color=player_color,
+    )
+
     # Optional RAG context (brief — Mode-1 is short)
     rag_block = ""
     if rag_docs:
@@ -78,8 +101,10 @@ POSITION CONTEXT
 ────────────────────────────
 FEN: {safe_fen}
 Player level: {level}
+Player colour: {player_color}
 Move quality: {move_quality}
-Engine evaluation: {eval_desc}
+Engine evaluation (neutral): {eval_desc}
+After the player's move: {player_perspective}
 Game phase: {phase}
 Engine signal (structured):
 {json.dumps(engine_signal, indent=2)}{rag_block}
@@ -87,6 +112,46 @@ Engine signal (structured):
 ────────────────────────────
 TASK
 ────────────────────────────
-Provide your 1–2 sentence coaching feedback for the move just played:"""
+Provide your 1–2 sentence coaching feedback for the move just played.
+When you say "you" or "your", it refers to the player (colour shown
+above).  Use the "After the player's move" line as the authoritative
+framing for whose position improved or worsened — do NOT re-derive
+which colour is ahead from the structured engine_signal.side field."""
 
     return prompt.strip()
+
+
+def _frame_player_perspective(
+    *,
+    eval_type: str,
+    band: str,
+    side: str,
+    player_color: str,
+) -> str:
+    """Pre-compute the player-perspective evaluation line.
+
+    Returns a single phrase like ``"you have a decisive advantage"``,
+    ``"your opponent has a decisive advantage"``, or ``"the position is
+    equal"``.  When either side info is unknown, falls back to the
+    side-neutral neutral phrasing so the LLM at least sees the raw
+    engine fact.
+    """
+    if eval_type == "mate":
+        if player_color in ("white", "black") and side in ("white", "black"):
+            if side == player_color:
+                return "you are about to deliver mate"
+            return "you are about to be mated"
+        return f"forced mate — {side} is winning"
+
+    if band == "equal":
+        return "the position is equal"
+
+    band_label = _BAND_LABEL.get(band, band.replace("_", " "))
+
+    if player_color not in ("white", "black") or side not in ("white", "black"):
+        # No reliable perspective comparison — fall back to side-neutral.
+        return f"{side} has {band_label}"
+
+    if side == player_color:
+        return f"you have {band_label}"
+    return f"your opponent has {band_label}"
