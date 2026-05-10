@@ -1202,16 +1202,52 @@ async def live_move(
     """Mode-1: per-move coaching feedback after the human's move.
 
     LLM-powered (1-2 sentences); falls back to deterministic hint when
-    Ollama is unavailable.  Runs in a thread-pool executor so the async
-    event loop is not blocked during the Ollama HTTP call.
+    the DeepSeek call fails.  Runs in a thread-pool executor so the
+    async event loop is not blocked during Stockfish + DeepSeek work.
+
+    Stockfish evaluation
+    --------------------
+    Before invoking the Mode-1 LLM pipeline we run Stockfish against
+    the post-move FEN to populate ``stockfish_json``.  Without this,
+    ``extract_engine_signal`` falls back to a FEN-only heuristic that
+    can't see hanging pieces or tactical threats — the LLM then writes
+    "solid, balanced" replies regardless of whether the human just
+    walked into a fork.  See PR #87 and probe transcript dated
+    2026-05-10 for the symptom that prompted this wiring.
+
+    On any engine-pool failure (no pool, queue exhausted, engine
+    crashed) we skip the eval and pass ``stockfish_json=None``, which
+    preserves the pre-PR-#87 heuristic-only behaviour as the graceful
+    degradation path — coaching never errors, just loses tactical
+    nuance for that one move.
     """
     adaptation = compute_adaptation(player.rating, player.confidence)
+
+    stockfish_json: dict | None = None
+    if engine_pool is not None:
+        try:
+            stockfish_json = await asyncio.to_thread(
+                engine_pool.evaluate_position,
+                fen=req.fen,
+                movetime_ms=200,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Engine unavailable or crashed; fall back to heuristic-only
+            # engine signal.  Log at WARNING because this affects every
+            # live-move hint until the pool recovers.
+            logger.warning(
+                "Stockfish eval failed for /live/move (%s: %s); using heuristic",
+                type(exc).__name__,
+                exc,
+            )
+
     result = await asyncio.to_thread(
         generate_live_reply,
         req.fen,
         req.uci,
         str(player.id),
         adaptation["teaching"]["style"],
+        stockfish_json,
     )
     if _dynamic_registry.get_state(str(player.id)).enabled:
         _dynamic_registry.record_move_quality(str(player.id), result.move_quality)

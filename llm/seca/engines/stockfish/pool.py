@@ -431,6 +431,67 @@ class StockfishEnginePool:
         finally:
             self._release_engine(engine)
 
+    def evaluate_position(
+        self,
+        *,
+        fen: str,
+        movetime_ms: int = 200,
+        queue_timeout_ms: int | None = None,
+    ) -> dict:
+        """Run Stockfish on a single position and return a stockfish_json dict.
+
+        Returns the shape that ``extract_engine_signal`` consumes:
+            {"evaluation": {"type": "cp" | "mate", "value": int}}
+
+        ``value`` is centipawns from White's perspective for "cp", or the
+        signed mate-in-N for "mate" (positive = White mates, negative =
+        Black mates).  Always returns a dict; on any engine failure the
+        function raises so the caller can decide whether to fall back
+        to the heuristic-only path.
+
+        Caller is the Mode-1 ``/live/move`` route, which uses the result
+        to give the LLM real tactical context (band, side, mate flag)
+        instead of the FEN-only heuristic ``extract_engine_signal``
+        derives when ``stockfish_json`` is empty.  See PR #87.
+        """
+        if not self._started:
+            raise RuntimeError("Engine pool not started")
+
+        board = chess.Board(fen)
+
+        timeout_ms = queue_timeout_ms
+        if timeout_ms is None:
+            timeout_ms = self.settings.queue_timeout_ms
+        if timeout_ms <= 0:
+            timeout_ms = 1
+
+        try:
+            engine = self._engines.get(timeout=timeout_ms / 1000.0)
+        except queue.Empty as exc:
+            raise RuntimeError(f"Stockfish queue wait exceeded {timeout_ms}ms") from exc
+
+        try:
+            limit = chess.engine.Limit(time=movetime_ms / 1000.0)
+            info = engine.analyse(board, limit)
+        finally:
+            self._release_engine(engine)
+
+        score = info.get("score") if isinstance(info, dict) else None
+        if score is None:
+            # Engine returned no score (shouldn't happen with a finite limit,
+            # but defend against it).  Return a neutral cp eval so the caller
+            # gets a usable shape; extract_engine_signal will tag this as
+            # band="equal".
+            return {"evaluation": {"type": "cp", "value": 0}}
+
+        white_score = score.white()
+        if white_score.is_mate():
+            mate_in = white_score.mate()
+            return {"evaluation": {"type": "mate", "value": int(mate_in or 0)}}
+
+        cp = white_score.score(mate_score=10000)
+        return {"evaluation": {"type": "cp", "value": int(cp or 0)}}
+
     def prewarm_cache(
         self,
         *,
