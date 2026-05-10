@@ -338,7 +338,7 @@ class ChessBoardView @JvmOverloads constructor(
     fun undoBoth() { if (undoMove() == false) undoMove() }
 
     fun exportFEN(): String {
-        val rows = board.joinToString("/") { 
+        val rows = board.joinToString("/") {
             var empty = 0
             val row = StringBuilder()
             for (char in it) {
@@ -351,7 +351,21 @@ class ChessBoardView @JvmOverloads constructor(
             if (empty > 0) row.append(empty)
             row.toString()
         }
-        return "$rows ${if (whiteToMove) "w" else "b"}"
+        val side = if (whiteToMove) "w" else "b"
+        // Server's _validate_fen_field (llm/server.py:518) requires all 6
+        // FEN fields and parses with python-chess; a 2-field "position +
+        // side" string returned 422 from /chat/stream and any other
+        // FEN-taking endpoint, surfacing as the silent "Coach is offline"
+        // fallback on the client.  This view does not track castling
+        // rights, en-passant target, or move counters, so we emit
+        // conservative defaults: no castling possible, no en-passant
+        // square, halfmove 0, fullmove 1.  Engine-side analysis on the
+        // server may slightly under-represent castling availability for
+        // mid-game positions, which is acceptable for chat coaching
+        // (the conversation is high-level strategy, not exact tactical
+        // depth — that path uses Stockfish via /engine-eval, which has
+        // its own position-tracking).
+        return "$rows $side - - 0 1"
     }
 
     fun promotePawn(r: Int, c: Int, to: Char) {
