@@ -250,12 +250,19 @@ services:
       - "/etc/alloy/config.alloy"
       - "--storage.path=/var/lib/alloy/data"
       - "--disable-reporting"
+    # ``env_file: .env.prod`` injects every var in that file into the
+    # alloy container's runtime env, including ``SECA_API_KEY`` (which
+    # the alloy config reads via ``sys.env("SECA_API_KEY")`` to
+    # bearer-authenticate the /metrics scrape) and the five
+    # ``GRAFANA_CLOUD_*`` vars (Loki / Prometheus push credentials).
+    # No ``environment:`` override here: an earlier draft used
+    # ``${SECA_API_KEY:?...}`` interpolation but docker compose only
+    # reads ``.env`` (not ``.env.prod``) for compose-time substitution,
+    # so ``docker compose -f docker-compose.prod.yml config`` failed
+    # in CI where no ``SECA_API_KEY`` was in the shell env.  The
+    # env_file path is the correct injection for container-runtime
+    # variables.
     env_file: .env.prod
-    environment:
-      # Forward the same SECA_API_KEY that authenticates the Android
-      # client so Alloy's ``/metrics`` scrape passes the
-      # ``Depends(verify_metrics_auth)`` check on the API.
-      SECA_API_KEY: ${SECA_API_KEY:?SECA_API_KEY required for /metrics scrape auth}
     depends_on:
       api:
         condition: service_healthy
