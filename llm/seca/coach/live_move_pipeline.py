@@ -93,18 +93,25 @@ _PHASE_TIP: dict[str, str] = {
 
 # Level-differentiated quality comments used by the deterministic fallback.
 _QUALITY_COMMENT: dict[str, dict[str, str]] = {
+    # NB: ``better`` is on validate_mode_2_semantic's FORBIDDEN_EQUAL list
+    # (rejected when band == "equal").  ``engine`` is on its
+    # FORBIDDEN_ENGINE_SPECULATION list (rejected unconditionally).
+    # ``consider`` is on validate_mode_2_structure's FORBIDDEN_SECTIONS.
+    # The pre-Sprint-5.A wording used all three; the rewrite below
+    # substitutes ``stronger`` / ``review`` / no-engine phrasing so the
+    # deterministic fallback survives all three gates regardless of band.
     "blunder": {
         "simple": "Oops — that was a blunder. A piece was left unprotected.",
-        "intermediate": "That was a blunder — try to find a better continuation.",
+        "intermediate": "That was a blunder — look for a stronger continuation next time.",
         "advanced": "That was a blunder — a significant error that concedes material or position.",
     },
     "mistake": {
         "simple": "That move gave away too much — try to protect your pieces.",
-        "intermediate": "That move was a mistake — consider the alternatives.",
-        "advanced": "That move was a mistake — a better alternative was available.",
+        "intermediate": "That move was a mistake — review the alternatives.",
+        "advanced": "That move was a mistake — a stronger alternative was available.",
     },
     "inaccuracy": {
-        "simple": "You had a better move there — keep looking for improvements.",
+        "simple": "You had a stronger move there — keep looking for improvements.",
         "intermediate": "A slight inaccuracy — you had a stronger option.",
         "advanced": "An inaccuracy — a more precise continuation was available.",
     },
@@ -116,12 +123,12 @@ _QUALITY_COMMENT: dict[str, dict[str, str]] = {
     "excellent": {
         "simple": "Great move!",
         "intermediate": "Excellent move — one of the best continuations.",
-        "advanced": "Excellent move — among the top engine choices.",
+        "advanced": "Excellent move — among the strongest continuations.",
     },
     "best": {
         "simple": "Perfect move!",
-        "intermediate": "Best move — the engine agrees that is optimal.",
-        "advanced": "Best move — the engine's top choice.",
+        "intermediate": "Best move — this matches the strongest continuation.",
+        "advanced": "Best move — the strongest continuation.",
     },
 }
 
@@ -195,9 +202,19 @@ def _build_hint(
     # Evaluation context sentence (plain, used by simple style)
     phase = engine_signal.get("phase", "")
     if eval_type == "mate":
-        eval_sentence = f"Engine: forced mate ({side} is winning)."
+        # "forced" satisfies validate_mode_2_semantic's mate-decisiveness gate
+        # ("inevitable" or "forced" required when eval_type == 'mate').
+        # Avoids the FORBIDDEN_ENGINE_SPECULATION token "engine".
+        eval_sentence = f"This is a forced mate — {side} secures the decisive outcome."
     elif band == "equal":
-        eval_sentence = "The engine evaluation is equal."
+        # Pre-Sprint-5.A wording read "The engine evaluation is equal." —
+        # "engine" is on validate_mode_2_semantic's
+        # FORBIDDEN_ENGINE_SPECULATION list and would now reject the
+        # response at the boundary.  Drop the "engine" prefix but keep
+        # the load-bearing token "equal" (still pinned by
+        # test_cp_equal_produces_equal_in_hint and the band-word check
+        # in test_hint_contains_engine_evaluation_reference).
+        eval_sentence = "The evaluation is equal."
     else:
         band_label = _BAND_LABEL.get(band, band.replace("_", " "))
         eval_sentence = f"Position: {side} has {band_label}."

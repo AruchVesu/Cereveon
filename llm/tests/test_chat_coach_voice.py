@@ -217,8 +217,12 @@ class TestVoiceInDeterministicFallback:
             r = generate_chat_reply(self._STARTING_FEN, self._prior_turns(), coach_voice="terse")
         assert "following up" not in r.reply.lower()
         assert "regarding your earlier" not in r.reply.lower()
-        # Engine fact still in output
-        assert "engine evaluation" in r.reply.lower()
+        # Engine fact still in output.  Phrasing changed in Sprint 5.A —
+        # the deterministic eval line dropped the "Engine" prefix because
+        # validate_mode_2_semantic's FORBIDDEN_ENGINE_SPECULATION list
+        # rejects "engine" unconditionally; "evaluation:" remains as
+        # the load-bearing token that this assertion guards.
+        assert "evaluation" in r.reply.lower()
 
     def test_terse_drops_phase_tip(self):
         """Terse output drops the generic per-phase tip; engine-truth
@@ -319,6 +323,9 @@ class TestVoiceInDeterministicFallback:
                 r = generate_chat_reply(
                     self._STARTING_FEN, self._prior_turns(), coach_voice=voice,
                 )
-            assert "engine evaluation" in r.reply.lower(), (
-                f"voice={voice!r} dropped the engine evaluation line"
+            # Phrasing change in Sprint 5.A — see test_terse_drops_history_brackets
+            # for the rationale.  The eval line now reads "Evaluation: ..."
+            # (without "Engine"); we assert on "evaluation" only.
+            assert "evaluation" in r.reply.lower(), (
+                f"voice={voice!r} dropped the evaluation line"
             )

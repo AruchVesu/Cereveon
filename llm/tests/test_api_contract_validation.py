@@ -1118,6 +1118,115 @@ class TestChatResponseValidation:
         validated = validate_chat_response(payload)
         assert validated.mode == "CHAT_V1"
 
+    # -----------------------------------------------------------------------
+    # Sprint 5.A: structure + semantic enforcement at the boundary.
+    #
+    # Pre-Sprint-5.A, only ``validate_mode_2_negative`` ran inside
+    # ``validate_chat_response``.  Sprint 5.A added the structure and
+    # semantic gates so the matrix in ``docs/TESTING.md`` (rows 3, 8, 9)
+    # is honest about what's actually enforced at the live API edge.
+    # These tests pick replies that violate ONLY the new gates (the
+    # negative validator passes them) so the structure / semantic
+    # contribution is unambiguous.
+    # -----------------------------------------------------------------------
+
+    def test_chat_forbidden_section_plan_raises(self):
+        """``plan`` is on validate_mode_2_structure's FORBIDDEN_SECTIONS
+        but absent from validate_mode_2_negative.FORBIDDEN_PATTERNS — this
+        reply passes the negative gate and must be caught by structure."""
+        from llm.rag.validators.explain_response_schema import (
+            ExplainSchemaError,
+            validate_chat_response,
+        )
+
+        with pytest.raises(ExplainSchemaError, match="structure"):
+            validate_chat_response(
+                self._payload(reply="Develop your pieces and form a concrete plan.")
+            )
+
+    def test_chat_forbidden_section_recommended_move_raises(self):
+        from llm.rag.validators.explain_response_schema import (
+            ExplainSchemaError,
+            validate_chat_response,
+        )
+
+        with pytest.raises(ExplainSchemaError, match="structure"):
+            validate_chat_response(
+                self._payload(reply="The recommended move keeps activity.")
+            )
+
+    def test_chat_speculative_engine_token_raises(self):
+        """``engine`` is on validate_mode_2_semantic's
+        FORBIDDEN_ENGINE_SPECULATION list (rejected unconditionally,
+        regardless of band) but the bare token is not in the negative
+        validator's FORBIDDEN_PATTERNS (only ``the engine wants`` is)."""
+        from llm.rag.validators.explain_response_schema import (
+            ExplainSchemaError,
+            validate_chat_response,
+        )
+
+        with pytest.raises(ExplainSchemaError, match="semantic"):
+            validate_chat_response(
+                self._payload(
+                    reply="The position is solid; the engine sees a small edge."
+                )
+            )
+
+    def test_chat_equal_band_describes_advantage_raises(self):
+        """When engine_signal says band='equal', the reply must NOT use
+        FORBIDDEN_EQUAL tokens (slight advantage / better / winning /
+        initiative / pressure).  ``initiative`` is the canary picked
+        here because it does not collide with any negative regex."""
+        from llm.rag.validators.explain_response_schema import (
+            ExplainSchemaError,
+            validate_chat_response,
+        )
+
+        equal_signal = _valid_engine_signal()
+        equal_signal["evaluation"]["band"] = "equal"
+        with pytest.raises(ExplainSchemaError, match="semantic"):
+            validate_chat_response(
+                self._payload(
+                    reply="White holds a clear initiative across the board.",
+                    engine_signal=equal_signal,
+                )
+            )
+
+    def test_chat_mate_missing_inevitability_raises(self):
+        """When engine_signal says type='mate', the reply MUST contain
+        ``inevitable`` or ``forced`` — otherwise the mate framing reads
+        as ambiguous and semantic rejects it."""
+        from llm.rag.validators.explain_response_schema import (
+            ExplainSchemaError,
+            validate_chat_response,
+        )
+
+        mate_signal = _valid_engine_signal()
+        mate_signal["evaluation"]["type"] = "mate"
+        with pytest.raises(ExplainSchemaError, match="semantic"):
+            validate_chat_response(
+                self._payload(
+                    reply="The result here will be decided in a few moves.",
+                    engine_signal=mate_signal,
+                )
+            )
+
+    def test_chat_invented_tactic_without_flag_raises(self):
+        """When tactical_flags == [] the reply must NOT invent tactical
+        terms (fork / pin / sacrifice / attack / threat).  ``fork`` is
+        the canary because it's absent from the negative regex set."""
+        from llm.rag.validators.explain_response_schema import (
+            ExplainSchemaError,
+            validate_chat_response,
+        )
+
+        with pytest.raises(ExplainSchemaError, match="semantic"):
+            validate_chat_response(
+                self._payload(
+                    reply="A knight fork on the next move would shift the balance."
+                )
+            )
+
 
 class TestLiveMoveResponseValidation:
     """Boundary validator for POST /live/move response.
@@ -1216,6 +1325,78 @@ class TestLiveMoveResponseValidation:
         payload["dynamic_adaptation"] = True
         validated = validate_live_move_response(payload)
         assert validated.mode == "LIVE_V1"
+
+    # -----------------------------------------------------------------------
+    # Sprint 5.A: structure + semantic enforcement at the live-move boundary.
+    # Mirrors the chat-boundary tests above.  Empty hints still skip all
+    # content gates (the deterministic-fallback path can emit "" — see
+    # ``test_empty_hint_is_allowed`` above).
+    # -----------------------------------------------------------------------
+
+    def test_live_forbidden_section_plan_raises(self):
+        from llm.rag.validators.explain_response_schema import (
+            ExplainSchemaError,
+            validate_live_move_response,
+        )
+
+        with pytest.raises(ExplainSchemaError, match="structure"):
+            validate_live_move_response(
+                self._payload(hint="Form a concrete plan and trade pieces.")
+            )
+
+    def test_live_speculative_engine_token_raises(self):
+        from llm.rag.validators.explain_response_schema import (
+            ExplainSchemaError,
+            validate_live_move_response,
+        )
+
+        with pytest.raises(ExplainSchemaError, match="semantic"):
+            validate_live_move_response(
+                self._payload(hint="Solid move; the engine evaluates this as small edge.")
+            )
+
+    def test_live_equal_band_describes_advantage_raises(self):
+        from llm.rag.validators.explain_response_schema import (
+            ExplainSchemaError,
+            validate_live_move_response,
+        )
+
+        equal_signal = _valid_engine_signal()
+        equal_signal["evaluation"]["band"] = "equal"
+        with pytest.raises(ExplainSchemaError, match="semantic"):
+            validate_live_move_response(
+                self._payload(
+                    hint="Black has the initiative now.",
+                    engine_signal=equal_signal,
+                )
+            )
+
+    def test_live_invented_tactic_without_flag_raises(self):
+        from llm.rag.validators.explain_response_schema import (
+            ExplainSchemaError,
+            validate_live_move_response,
+        )
+
+        with pytest.raises(ExplainSchemaError, match="semantic"):
+            validate_live_move_response(
+                self._payload(hint="Watch out — a knight fork could land next move.")
+            )
+
+    def test_live_mate_missing_inevitability_raises(self):
+        from llm.rag.validators.explain_response_schema import (
+            ExplainSchemaError,
+            validate_live_move_response,
+        )
+
+        mate_signal = _valid_engine_signal()
+        mate_signal["evaluation"]["type"] = "mate"
+        with pytest.raises(ExplainSchemaError, match="semantic"):
+            validate_live_move_response(
+                self._payload(
+                    hint="The position will resolve in a few moves.",
+                    engine_signal=mate_signal,
+                )
+            )
 
 
 class TestDeterministicFallbacksPassBoundaryValidator:

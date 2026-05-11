@@ -106,12 +106,17 @@ class TestLiveMovePipelineQuality:
 
     SAMPLE_FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
 
-    def test_sint05_live_reply_contains_engine_reference(self):
+    def test_sint05_live_reply_contains_evaluation_reference(self):
+        """Sprint 5.A: the deterministic eval line no longer carries the
+        bare word ``engine`` — ``validate_mode_2_semantic`` rejects it
+        unconditionally via FORBIDDEN_ENGINE_SPECULATION.  The
+        load-bearing token shifts to ``evaluation`` (still present in
+        every CP-band live hint and most mate / equal phrasings)."""
         from llm.seca.coach.live_move_pipeline import generate_live_reply
 
         reply = generate_live_reply(fen=self.SAMPLE_FEN, uci="e2e4")
-        assert "engine" in reply.hint.lower(), (
-            f"Live hint must reference engine evaluation: {reply.hint!r}"
+        assert "evaluation" in reply.hint.lower() or "mate" in reply.hint.lower(), (
+            f"Live hint must reference the evaluation (or mate context): {reply.hint!r}"
         )
 
     def test_sint06_blunder_quality_in_hint_when_stockfish_json_provided(self):

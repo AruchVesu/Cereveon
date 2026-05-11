@@ -231,11 +231,19 @@ def validate_chat_response(response: dict) -> ChatResponse:
     - reply passes validate_mode_2_negative (no forbidden patterns,
       including invented chess moves, mate claims, and analysis language
       forbidden in Mode-2).
+    - reply passes validate_mode_2_structure (no forbidden advisory
+      sections — "recommended move", "plan", "white can", "consider", ...).
+    - reply passes validate_mode_2_semantic against the validated
+      engine_signal (equal-position neutrality, mate decisiveness,
+      no engine speculation, no invented tactics when tactical_flags == []).
 
     The chat pipeline already runs validate_mode_2_negative inside the LLM
-    retry loop and the OutputFirewall on top.  This validator is the
-    boundary defence-in-depth seam: any future refactor that drops or
-    weakens those internal checks will be caught here at the API edge.
+    retry loop and the OutputFirewall on top.  Structure + semantic, prior
+    to Sprint 5.A, ran only inside ``run_mode_2`` and the test corpus —
+    advertised as enforcement points in ``docs/TESTING.md`` Validator
+    Coverage Matrix rows 3, 8, 9 but absent from the live API edge.  This
+    validator now closes that gap so a refactor that drops or weakens any
+    in-pipeline check is caught here, and the matrix matches reality.
 
     Raises ExplainSchemaError on failure.  Returns the validated
     ChatResponse on success.
@@ -249,11 +257,29 @@ def validate_chat_response(response: dict) -> ChatResponse:
         raise ExplainSchemaError("Chat reply must be non-empty")
 
     from llm.rag.validators.mode_2_negative import validate_mode_2_negative
+    from llm.rag.validators.mode_2_structure import validate_mode_2_structure
+    from llm.rag.validators.mode_2_semantic import validate_mode_2_semantic, Mode2Violation
 
     try:
         validate_mode_2_negative(validated.reply)
     except AssertionError as exc:
         raise ExplainSchemaError(f"Chat reply failed Mode-2 content validation: {exc}") from exc
+
+    try:
+        validate_mode_2_structure(validated.reply)
+    except AssertionError as exc:
+        raise ExplainSchemaError(
+            f"Chat reply failed Mode-2 structure validation: {exc}"
+        ) from exc
+
+    try:
+        validate_mode_2_semantic(
+            validated.reply, validated.engine_signal.model_dump()
+        )
+    except (Mode2Violation, AssertionError) as exc:
+        raise ExplainSchemaError(
+            f"Chat reply failed Mode-2 semantic validation: {exc}"
+        ) from exc
 
     return validated
 
@@ -268,11 +294,24 @@ def validate_live_move_response(response: dict) -> LiveMoveResponse:
     - move_quality is one of the EngineSignalSchema.last_move_quality bucket
       labels.
 
-    For non-empty hints the Mode-2 negative validator applies — invented
-    chess moves, mate claims, and forbidden analysis language are rejected.
+    For non-empty hints, three Mode-2 content gates apply:
+    - validate_mode_2_negative — invented chess moves, mate claims,
+      forbidden analysis language.
+    - validate_mode_2_structure — forbidden advisory sections
+      ("recommended move", "plan", "consider", "white can", ...).
+    - validate_mode_2_semantic — equal-position neutrality, mate
+      decisiveness ("inevitable" / "forced"), no engine speculation,
+      no invented tactics when tactical_flags == [].
+
     Empty hints pass through unchanged: API_CONTRACTS.md §4 explicitly
     permits the deterministic-fallback path to emit ``""`` and requires
     clients to preserve it as-is rather than substituting null.
+
+    Structure + semantic, prior to Sprint 5.A, ran only inside
+    ``run_mode_2`` and the test corpus — advertised as enforcement
+    points in ``docs/TESTING.md`` Validator Coverage Matrix rows 3, 8, 9
+    but absent from the live /live/move boundary.  This validator now
+    closes that gap.
 
     Raises ExplainSchemaError on failure.  Returns the validated
     LiveMoveResponse on success.
@@ -284,12 +323,30 @@ def validate_live_move_response(response: dict) -> LiveMoveResponse:
 
     if validated.hint.strip():
         from llm.rag.validators.mode_2_negative import validate_mode_2_negative
+        from llm.rag.validators.mode_2_structure import validate_mode_2_structure
+        from llm.rag.validators.mode_2_semantic import validate_mode_2_semantic, Mode2Violation
 
         try:
             validate_mode_2_negative(validated.hint)
         except AssertionError as exc:
             raise ExplainSchemaError(
                 f"Live-move hint failed Mode-2 content validation: {exc}"
+            ) from exc
+
+        try:
+            validate_mode_2_structure(validated.hint)
+        except AssertionError as exc:
+            raise ExplainSchemaError(
+                f"Live-move hint failed Mode-2 structure validation: {exc}"
+            ) from exc
+
+        try:
+            validate_mode_2_semantic(
+                validated.hint, validated.engine_signal.model_dump()
+            )
+        except (Mode2Violation, AssertionError) as exc:
+            raise ExplainSchemaError(
+                f"Live-move hint failed Mode-2 semantic validation: {exc}"
             ) from exc
 
     return validated
