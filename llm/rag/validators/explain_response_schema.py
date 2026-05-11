@@ -66,12 +66,14 @@ class EngineSignalSchema(BaseModel):
     position_flags: list[str]
     phase: Literal["opening", "middlegame", "endgame"]
 
-    @field_validator("tactical_flags", "position_flags")
-    @classmethod
-    def validate_string_lists(cls, v: list) -> list:
-        if not all(isinstance(item, str) for item in v):
-            raise ValueError("all items must be strings")
-        return v
+    # Pydantic v2 enforces ``list[str]`` element typing at the schema layer
+    # before any ``@field_validator`` runs: a non-string element (``[7]``,
+    # ``[None]``, ...) surfaces as ``Input should be a valid string`` from
+    # Pydantic itself.  The earlier ``validate_string_lists`` field
+    # validator that re-checked ``isinstance(item, str)`` was therefore
+    # unreachable dead code — surfaced by the Sprint 6.D mutation-testing
+    # refresh as a 4-mutant cluster that no test could kill regardless of
+    # shape.  Deleted in the same pass.
 
 
 # ---------------------------------------------------------------
@@ -111,12 +113,11 @@ class EmbeddedExplainResponse(BaseModel):
             raise ValueError("explanation must be non-empty")
         return v
 
-    @field_validator("tags")
-    @classmethod
-    def tags_must_be_strings(cls, v: list) -> list:
-        if not all(isinstance(t, str) for t in v):
-            raise ValueError("all tags must be strings")
-        return v
+    # ``tags_must_be_strings`` was deleted in the Sprint 6.D mutation pass:
+    # Pydantic v2's ``list[str]`` enforcement at the schema layer makes the
+    # element-type re-check unreachable.  Empty-tags is not a constraint —
+    # an empty list is valid per the API contract — so no field validator
+    # is needed at all once the dead one is gone.
 
 
 class ChatResponse(BaseModel):

@@ -135,6 +135,12 @@ TEST_TARGETS = [
     "llm/tests/test_auth_hashing.py",
     "llm/tests/test_auth_tokens_import_guards.py",
     "llm/tests/test_event_storage.py",
+    # Sprint 6.D — mutation-killer tests for the explain_response_schema
+    # boundary validator.  Strict-phrase assertions per Mode-2 branch
+    # (content / structure / semantic / schema / empty) so a mutation
+    # that swaps "content" → "structure" in a wrap-around message
+    # fails loudly.  Adds the file to mutmut's effective test surface.
+    "llm/tests/test_explain_schema_mutation_killers.py",
     # Progress dashboard: /player/progress endpoint contract + world-model transparency tests.
     "llm/tests/test_progress_dashboard.py",
     # Bug regression suite: guards the six confirmed fixes (reward ZeroDivision,
