@@ -1,11 +1,6 @@
 package ai.chesscoach.app
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.SocketTimeoutException
-import java.net.URL
 
 /**
  * Client for POST /live/move (server.py).
@@ -49,52 +44,33 @@ interface LiveMoveClient {
 class HttpLiveMoveClient(
     val baseUrl: String,
     val apiKey: String,
-    val connectTimeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
-    val readTimeoutMs: Int = DEFAULT_READ_TIMEOUT_MS,
+    val connectTimeoutMs: Int = BaseHttpClient.DEFAULT_CONNECT_TIMEOUT_MS,
+    val readTimeoutMs: Int = BaseHttpClient.DEFAULT_READ_TIMEOUT_MS,
 ) : LiveMoveClient {
 
     companion object {
-        const val DEFAULT_CONNECT_TIMEOUT_MS = 8_000
-        const val DEFAULT_READ_TIMEOUT_MS = 15_000
+        const val DEFAULT_CONNECT_TIMEOUT_MS = BaseHttpClient.DEFAULT_CONNECT_TIMEOUT_MS
+        const val DEFAULT_READ_TIMEOUT_MS = BaseHttpClient.DEFAULT_READ_TIMEOUT_MS
         private const val LIVE_MOVE_PATH = "/live/move"
     }
+
+    private val http = BaseHttpClient(baseUrl, connectTimeoutMs, readTimeoutMs)
 
     override suspend fun getLiveCoaching(
         fen: String,
         uci: String,
         playerId: String,
-    ): ApiResult<LiveMoveResponse> = withContext(Dispatchers.IO) {
-        try {
-            val url = URL("$baseUrl$LIVE_MOVE_PATH")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.setRequestProperty("X-Api-Key", apiKey)
-            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
-            conn.doOutput = true
-            conn.connectTimeout = connectTimeoutMs
-            conn.readTimeout = readTimeoutMs
-
-            val body = JSONObject()
-                .put("fen", fen)
-                .put("uci", uci)
-                .put("player_id", playerId)
-                .toString()
-            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-
-            val code = conn.responseCode
-            if (code == HttpURLConnection.HTTP_OK) {
-                val text = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
-                ApiResult.Success(parseResponse(text))
-            } else {
-                ApiResult.HttpError(code)
-            }
-        } catch (_: SocketTimeoutException) {
-            ApiResult.Timeout
-        } catch (e: Exception) {
-            ApiResult.NetworkError(e)
-        }
-    }
+    ): ApiResult<LiveMoveResponse> = http.request(
+        path = LIVE_MOVE_PATH,
+        method = "POST",
+        headers = mapOf("X-Api-Key" to apiKey),
+        body = JSONObject()
+            .put("fen", fen)
+            .put("uci", uci)
+            .put("player_id", playerId)
+            .toString(),
+        parse = ::parseResponse,
+    )
 
     private fun parseResponse(body: String): LiveMoveResponse {
         val root = JSONObject(body)

@@ -1,11 +1,7 @@
 package ai.chesscoach.app
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
-import java.net.SocketTimeoutException
-import java.net.URL
 
 // ── Interface ─────────────────────────────────────────────────────────────────
 
@@ -195,393 +191,210 @@ class HttpGameApiClient(
     val tokenSink: ((String) -> Unit)? = null,
 ) : GameApiClient {
 
-    override suspend fun startGame(playerId: String): ApiResult<GameStartResponse> =
-        withContext(Dispatchers.IO) {
-            try {
-                val conn = openConnection("$baseUrl/game/start")
-                conn.setRequestProperty("X-Api-Key", apiKey)
-                // T3: /game/start now requires a JWT-authenticated session.
-                // The server derives player_id from the token; the body
-                // player_id is accepted for back-compat but ignored.
-                tokenProvider?.invoke()?.let { token ->
-                    conn.setRequestProperty("Authorization", "Bearer $token")
-                }
+    private val http = BaseHttpClient(baseUrl, connectTimeoutMs, readTimeoutMs)
 
-                val body = JSONObject().put("player_id", playerId).toString()
-                conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+    /**
+     * Header set used by most game endpoints: X-Api-Key plus optional
+     * Bearer token from [tokenProvider].  Some endpoints (getNextTraining,
+     * getNextCurriculum, getGameHistory, getPlayerProgress) omit the
+     * X-Api-Key — set [includeApiKey] = false for those.
+     */
+    private fun authHeaders(includeApiKey: Boolean = true): Map<String, String> = buildMap {
+        if (includeApiKey) put("X-Api-Key", apiKey)
+        tokenProvider?.invoke()?.let { token -> put("Authorization", "Bearer $token") }
+    }
 
-                val code = conn.responseCode
-                if (code == 200) {
-                    val text = conn.inputStream.bufferedReader().readText()
-                    consumeRefreshedToken(conn, tokenSink)
-                    val json = JSONObject(text)
-                    val gameId = json.opt("game_id")?.toString() ?: ""
-                    ApiResult.Success(GameStartResponse(gameId))
-                } else {
-                    ApiResult.HttpError(code)
-                }
-            } catch (e: SocketTimeoutException) {
-                ApiResult.Timeout
-            } catch (e: Exception) {
-                ApiResult.NetworkError(e)
-            }
-        }
+    private fun refreshOnSuccess(): (HttpURLConnection) -> Unit =
+        { conn -> consumeRefreshedToken(conn, tokenSink) }
+
+    override suspend fun startGame(playerId: String): ApiResult<GameStartResponse> = http.request(
+        path = "/game/start",
+        method = "POST",
+        headers = authHeaders(),
+        // T3: /game/start now requires a JWT-authenticated session.
+        // The server derives player_id from the token; the body
+        // player_id is accepted for back-compat but ignored.
+        body = JSONObject().put("player_id", playerId).toString(),
+        onResponse = refreshOnSuccess(),
+        parse = { text ->
+            val json = JSONObject(text)
+            GameStartResponse(gameId = json.opt("game_id")?.toString() ?: "")
+        },
+    )
 
     override suspend fun finishGame(req: GameFinishRequest): ApiResult<GameFinishResponse> =
         withRetry(maxAttempts = 3) {
-            withContext(Dispatchers.IO) {
-                try {
-                    val conn = openConnection("$baseUrl/game/finish")
-                    conn.setRequestProperty("X-Api-Key", apiKey)
-                    tokenProvider?.invoke()?.let { token ->
-                        conn.setRequestProperty("Authorization", "Bearer $token")
-                    }
-
-                    val weaknessesJson = JSONObject()
-                    req.weaknesses.forEach { (k, v) -> weaknessesJson.put(k, v) }
-
-                    val body =
-                        JSONObject()
-                            .put("pgn", req.pgn)
-                            .put("result", req.result)
-                            .put("accuracy", req.accuracy)
-                            .put("weaknesses", weaknessesJson)
-                            .apply { req.playerId?.let { put("player_id", it) } }
-                            // game_id ties this finish back to the
-                            // original /game/start row server-side;
-                            // omitted-when-null keeps the wire shape
-                            // compatible with the pre-resume contract.
-                            .apply {
-                                req.gameId?.takeIf { it.isNotBlank() }?.let { put("game_id", it) }
-                            }
-                            .toString()
-
-                    conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-
-                    val code = conn.responseCode
-                    if (code == 200) {
-                        val text = conn.inputStream.bufferedReader().readText()
-                        consumeRefreshedToken(conn, tokenSink)
-                        ApiResult.Success(parseFinishResponse(text))
-                    } else {
-                        ApiResult.HttpError(code)
-                    }
-                } catch (e: SocketTimeoutException) {
-                    ApiResult.Timeout
-                } catch (e: Exception) {
-                    ApiResult.NetworkError(e)
-                }
-            }
+            val weaknessesJson = JSONObject()
+            req.weaknesses.forEach { (k, v) -> weaknessesJson.put(k, v) }
+            val body = JSONObject()
+                .put("pgn", req.pgn)
+                .put("result", req.result)
+                .put("accuracy", req.accuracy)
+                .put("weaknesses", weaknessesJson)
+                .apply { req.playerId?.let { put("player_id", it) } }
+                // game_id ties this finish back to the original /game/start
+                // row server-side; omitted-when-null keeps the wire shape
+                // compatible with the pre-resume contract.
+                .apply { req.gameId?.takeIf { it.isNotBlank() }?.let { put("game_id", it) } }
+                .toString()
+            http.request(
+                path = "/game/finish",
+                method = "POST",
+                headers = authHeaders(),
+                body = body,
+                onResponse = refreshOnSuccess(),
+                parse = ::parseFinishResponse,
+            )
         }
 
     override suspend fun getNextTraining(playerId: String): ApiResult<TrainingRecommendation> =
-        withContext(Dispatchers.IO) {
-            try {
-                val conn = openGetConnection("$baseUrl/next-training/$playerId")
-                conn.setRequestProperty("X-Api-Key", apiKey)
-                val code = conn.responseCode
-                if (code == 200) {
-                    val text = conn.inputStream.bufferedReader().readText()
-                    ApiResult.Success(parseTrainingResponse(text))
-                } else {
-                    ApiResult.HttpError(code)
-                }
-            } catch (e: SocketTimeoutException) {
-                ApiResult.Timeout
-            } catch (e: Exception) {
-                ApiResult.NetworkError(e)
-            }
-        }
+        http.request(
+            path = "/next-training/$playerId",
+            method = "GET",
+            headers = mapOf("X-Api-Key" to apiKey),
+            parse = ::parseTrainingResponse,
+        )
 
     override suspend fun getNextCurriculum(playerId: String): ApiResult<CurriculumRecommendation> =
-        withContext(Dispatchers.IO) {
-            try {
-                val conn = openConnection("$baseUrl/curriculum/next")
-                tokenProvider?.invoke()?.let { token ->
-                    conn.setRequestProperty("Authorization", "Bearer $token")
-                }
-                val body = JSONObject().put("player_id", playerId).toString()
-                conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+        http.request(
+            path = "/curriculum/next",
+            method = "POST",
+            // Bearer-only; X-Api-Key is intentionally omitted here to
+            // match the pre-refactor wire shape.
+            headers = authHeaders(includeApiKey = false),
+            body = JSONObject().put("player_id", playerId).toString(),
+            onResponse = refreshOnSuccess(),
+            parse = ::parseCurriculumResponse,
+        )
 
-                val code = conn.responseCode
-                if (code == 200) {
-                    val text = conn.inputStream.bufferedReader().readText()
-                    consumeRefreshedToken(conn, tokenSink)
-                    ApiResult.Success(parseCurriculumResponse(text))
-                } else {
-                    ApiResult.HttpError(code)
-                }
-            } catch (e: SocketTimeoutException) {
-                ApiResult.Timeout
-            } catch (e: Exception) {
-                ApiResult.NetworkError(e)
-            }
-        }
+    override suspend fun getGameHistory(): ApiResult<List<GameHistoryItem>> = http.request(
+        path = "/game/history",
+        method = "GET",
+        // Bearer-only; pre-refactor wire shape did not send X-Api-Key.
+        headers = authHeaders(includeApiKey = false),
+        onResponse = refreshOnSuccess(),
+        parse = ::parseHistoryResponse,
+    )
 
-    override suspend fun getGameHistory(): ApiResult<List<GameHistoryItem>> =
-        withContext(Dispatchers.IO) {
-            try {
-                val conn = openGetConnection("$baseUrl/game/history")
-                tokenProvider?.invoke()?.let { token ->
-                    conn.setRequestProperty("Authorization", "Bearer $token")
-                }
-                val code = conn.responseCode
-                if (code == 200) {
-                    val text = conn.inputStream.bufferedReader().readText()
-                    consumeRefreshedToken(conn, tokenSink)
-                    ApiResult.Success(parseHistoryResponse(text))
-                } else {
-                    ApiResult.HttpError(code)
-                }
-            } catch (e: SocketTimeoutException) {
-                ApiResult.Timeout
-            } catch (e: Exception) {
-                ApiResult.NetworkError(e)
-            }
-        }
+    override suspend fun getPlayerProgress(): ApiResult<PlayerProgressResponse> = http.request(
+        path = "/player/progress",
+        method = "GET",
+        // Bearer-only; pre-refactor wire shape did not send X-Api-Key.
+        headers = authHeaders(includeApiKey = false),
+        onResponse = refreshOnSuccess(),
+        parse = ::parseProgressResponse,
+    )
 
-    override suspend fun getPlayerProgress(): ApiResult<PlayerProgressResponse> =
-        withContext(Dispatchers.IO) {
-            try {
-                val conn = openGetConnection("$baseUrl/player/progress")
-                tokenProvider?.invoke()?.let { token ->
-                    conn.setRequestProperty("Authorization", "Bearer $token")
-                }
-                val code = conn.responseCode
-                if (code == 200) {
-                    val text = conn.inputStream.bufferedReader().readText()
-                    consumeRefreshedToken(conn, tokenSink)
-                    ApiResult.Success(parseProgressResponse(text))
-                } else {
-                    ApiResult.HttpError(code)
-                }
-            } catch (e: SocketTimeoutException) {
-                ApiResult.Timeout
-            } catch (e: Exception) {
-                ApiResult.NetworkError(e)
-            }
-        }
-
-    override suspend fun getSecaStatus(): ApiResult<SecaStatusDto> =
-        withContext(Dispatchers.IO) {
-            try {
-                val conn = openGetConnection("$baseUrl/seca/status")
-                val code = conn.responseCode
-                if (code == 200) {
-                    val text = conn.inputStream.bufferedReader().readText()
-                    ApiResult.Success(parseSecaStatusResponse(text))
-                } else {
-                    ApiResult.HttpError(code)
-                }
-            } catch (e: SocketTimeoutException) {
-                ApiResult.Timeout
-            } catch (e: Exception) {
-                ApiResult.NetworkError(e)
-            }
-        }
+    override suspend fun getSecaStatus(): ApiResult<SecaStatusDto> = http.request(
+        path = "/seca/status",
+        method = "GET",
+        // Open endpoint — no auth headers.
+        parse = ::parseSecaStatusResponse,
+    )
 
     override suspend fun checkpointGame(
         gameId: String,
         fen: String,
         uciHistory: String,
-    ): ApiResult<Unit> = withContext(Dispatchers.IO) {
-        try {
-            val conn = openConnection("$baseUrl/game/${gameId}/checkpoint")
-            conn.setRequestProperty("X-Api-Key", apiKey)
-            tokenProvider?.invoke()?.let { token ->
-                conn.setRequestProperty("Authorization", "Bearer $token")
-            }
-            val body = JSONObject()
-                .put("fen", fen)
-                .put("uci_history", uciHistory)
-                .toString()
-            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            val code = conn.responseCode
-            if (code == 200) {
+    ): ApiResult<Unit> = http.requestNoBody(
+        path = "/game/${gameId}/checkpoint",
+        method = "POST",
+        headers = authHeaders(),
+        body = JSONObject().put("fen", fen).put("uci_history", uciHistory).toString(),
+        onResponse = refreshOnSuccess(),
+    )
+
+    override suspend fun getActiveGame(): ApiResult<ActiveGameResponse?> {
+        // Special case: 404 is the documented "no resumable game" signal —
+        // a normal absence-of-data response, not an error.  We treat both
+        // 200 and 404 as success; the parser distinguishes them by the
+        // response code captured in [observedCode] from the onResponse
+        // hook.  FastAPI emits a non-empty ``{"detail": ...}`` body on
+        // 404 so we cannot rely on body-blankness to discriminate.
+        var observedCode = 0
+        return http.request<ActiveGameResponse?>(
+            path = "/game/active",
+            method = "GET",
+            headers = authHeaders(),
+            successCodes = setOf(200, 404),
+            onResponse = { conn ->
+                observedCode = conn.responseCode
                 consumeRefreshedToken(conn, tokenSink)
-                ApiResult.Success(Unit)
-            } else {
-                ApiResult.HttpError(code)
-            }
-        } catch (e: SocketTimeoutException) {
-            ApiResult.Timeout
-        } catch (e: Exception) {
-            ApiResult.NetworkError(e)
-        }
+            },
+            parse = { text ->
+                if (observedCode == 404) {
+                    null
+                } else {
+                    val root = JSONObject(text)
+                    ActiveGameResponse(
+                        gameId = root.optString("game_id", ""),
+                        currentFen = root.optString("current_fen", ""),
+                        currentUciHistory = root.optString("current_uci_history", ""),
+                    )
+                }
+            },
+        )
     }
 
-    override suspend fun getActiveGame(): ApiResult<ActiveGameResponse?> =
-        withContext(Dispatchers.IO) {
-            try {
-                val conn = openGetConnection("$baseUrl/game/active")
-                conn.setRequestProperty("X-Api-Key", apiKey)
-                tokenProvider?.invoke()?.let { token ->
-                    conn.setRequestProperty("Authorization", "Bearer $token")
-                }
-                val code = conn.responseCode
-                when (code) {
-                    200 -> {
-                        val text = conn.inputStream.bufferedReader().readText()
-                        consumeRefreshedToken(conn, tokenSink)
-                        val root = JSONObject(text)
-                        ApiResult.Success(
-                            ActiveGameResponse(
-                                gameId = root.optString("game_id", ""),
-                                currentFen = root.optString("current_fen", ""),
-                                currentUciHistory = root.optString("current_uci_history", ""),
-                            ),
-                        )
-                    }
-                    // 404 is the documented "no resumable game" signal —
-                    // a normal absence-of-data response, not an error.
-                    // Return Success(null) so callers can treat it as
-                    // "start fresh" without a separate code path.
-                    404 -> ApiResult.Success(null)
-                    else -> ApiResult.HttpError(code)
-                }
-            } catch (e: SocketTimeoutException) {
-                ApiResult.Timeout
-            } catch (e: Exception) {
-                ApiResult.NetworkError(e)
-            }
-        }
-
-    override suspend fun getRepertoire(): ApiResult<List<RepertoireOpeningDto>> =
-        withContext(Dispatchers.IO) {
-            try {
-                val conn = openGetConnection("$baseUrl/repertoire")
-                conn.setRequestProperty("X-Api-Key", apiKey)
-                tokenProvider?.invoke()?.let { token ->
-                    conn.setRequestProperty("Authorization", "Bearer $token")
-                }
-                val code = conn.responseCode
-                if (code == 200) {
-                    val text = conn.inputStream.bufferedReader().readText()
-                    consumeRefreshedToken(conn, tokenSink)
-                    ApiResult.Success(parseRepertoireResponse(text))
-                } else {
-                    ApiResult.HttpError(code)
-                }
-            } catch (e: SocketTimeoutException) {
-                ApiResult.Timeout
-            } catch (e: Exception) {
-                ApiResult.NetworkError(e)
-            }
-        }
+    override suspend fun getRepertoire(): ApiResult<List<RepertoireOpeningDto>> = http.request(
+        path = "/repertoire",
+        method = "GET",
+        headers = authHeaders(),
+        onResponse = refreshOnSuccess(),
+        parse = ::parseRepertoireResponse,
+    )
 
     override suspend fun addOpening(
         eco: String,
         name: String,
         line: String,
         mastery: Float,
-    ): ApiResult<List<RepertoireOpeningDto>> = withContext(Dispatchers.IO) {
-        try {
-            val conn = openConnection("$baseUrl/repertoire")
-            conn.setRequestProperty("X-Api-Key", apiKey)
-            tokenProvider?.invoke()?.let { token ->
-                conn.setRequestProperty("Authorization", "Bearer $token")
-            }
-            val body = JSONObject()
-                .put("eco", eco)
-                .put("name", name)
-                .put("line", line)
-                .put("mastery", mastery.toDouble())
-                .toString()
-            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            val code = conn.responseCode
-            if (code == 200) {
-                val text = conn.inputStream.bufferedReader().readText()
-                consumeRefreshedToken(conn, tokenSink)
-                ApiResult.Success(parseRepertoireResponse(text))
-            } else {
-                ApiResult.HttpError(code)
-            }
-        } catch (e: SocketTimeoutException) {
-            ApiResult.Timeout
-        } catch (e: Exception) {
-            ApiResult.NetworkError(e)
-        }
-    }
+    ): ApiResult<List<RepertoireOpeningDto>> = http.request(
+        path = "/repertoire",
+        method = "POST",
+        headers = authHeaders(),
+        body = JSONObject()
+            .put("eco", eco)
+            .put("name", name)
+            .put("line", line)
+            .put("mastery", mastery.toDouble())
+            .toString(),
+        onResponse = refreshOnSuccess(),
+        parse = ::parseRepertoireResponse,
+    )
 
     override suspend fun deleteOpening(eco: String): ApiResult<List<RepertoireOpeningDto>> =
-        withContext(Dispatchers.IO) {
-            try {
-                val conn = (URL("$baseUrl/repertoire/$eco").openConnection() as HttpURLConnection).apply {
-                    requestMethod = "DELETE"
-                    connectTimeout = connectTimeoutMs
-                    readTimeout = readTimeoutMs
-                }
-                conn.setRequestProperty("X-Api-Key", apiKey)
-                tokenProvider?.invoke()?.let { token ->
-                    conn.setRequestProperty("Authorization", "Bearer $token")
-                }
-                val code = conn.responseCode
-                if (code == 200) {
-                    val text = conn.inputStream.bufferedReader().readText()
-                    consumeRefreshedToken(conn, tokenSink)
-                    ApiResult.Success(parseRepertoireResponse(text))
-                } else {
-                    ApiResult.HttpError(code)
-                }
-            } catch (e: SocketTimeoutException) {
-                ApiResult.Timeout
-            } catch (e: Exception) {
-                ApiResult.NetworkError(e)
-            }
-        }
+        http.request(
+            path = "/repertoire/$eco",
+            method = "DELETE",
+            headers = authHeaders(),
+            onResponse = refreshOnSuccess(),
+            parse = ::parseRepertoireResponse,
+        )
 
     override suspend fun setActiveOpening(eco: String): ApiResult<List<RepertoireOpeningDto>> =
-        withContext(Dispatchers.IO) {
-            try {
-                val conn = openConnection("$baseUrl/repertoire/$eco/active")
-                conn.setRequestProperty("X-Api-Key", apiKey)
-                tokenProvider?.invoke()?.let { token ->
-                    conn.setRequestProperty("Authorization", "Bearer $token")
-                }
-                // Empty body — the eco from the path is the only
-                // input; the endpoint takes no JSON.
-                conn.outputStream.use { it.write("{}".toByteArray(Charsets.UTF_8)) }
-                val code = conn.responseCode
-                if (code == 200) {
-                    val text = conn.inputStream.bufferedReader().readText()
-                    consumeRefreshedToken(conn, tokenSink)
-                    ApiResult.Success(parseRepertoireResponse(text))
-                } else {
-                    ApiResult.HttpError(code)
-                }
-            } catch (e: SocketTimeoutException) {
-                ApiResult.Timeout
-            } catch (e: Exception) {
-                ApiResult.NetworkError(e)
-            }
-        }
+        http.request(
+            path = "/repertoire/$eco/active",
+            method = "POST",
+            headers = authHeaders(),
+            // Empty body — the eco from the path is the only input;
+            // the endpoint takes no JSON.
+            body = "{}",
+            onResponse = refreshOnSuccess(),
+            parse = ::parseRepertoireResponse,
+        )
 
     override suspend fun recordDrillResult(
         eco: String,
         outcome: Float,
-    ): ApiResult<List<RepertoireOpeningDto>> = withContext(Dispatchers.IO) {
-        try {
-            val conn = openConnection("$baseUrl/repertoire/$eco/drill-result")
-            conn.setRequestProperty("X-Api-Key", apiKey)
-            tokenProvider?.invoke()?.let { token ->
-                conn.setRequestProperty("Authorization", "Bearer $token")
-            }
-            val body = JSONObject().put("outcome", outcome.toDouble()).toString()
-            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            val code = conn.responseCode
-            if (code == 200) {
-                val text = conn.inputStream.bufferedReader().readText()
-                consumeRefreshedToken(conn, tokenSink)
-                ApiResult.Success(parseRepertoireResponse(text))
-            } else {
-                ApiResult.HttpError(code)
-            }
-        } catch (e: SocketTimeoutException) {
-            ApiResult.Timeout
-        } catch (e: Exception) {
-            ApiResult.NetworkError(e)
-        }
-    }
+    ): ApiResult<List<RepertoireOpeningDto>> = http.request(
+        path = "/repertoire/$eco/drill-result",
+        method = "POST",
+        headers = authHeaders(),
+        body = JSONObject().put("outcome", outcome.toDouble()).toString(),
+        onResponse = refreshOnSuccess(),
+        parse = ::parseRepertoireResponse,
+    )
 
     private fun parseRepertoireResponse(body: String): List<RepertoireOpeningDto> {
         val root = JSONObject(body)
@@ -602,25 +415,6 @@ class HttpGameApiClient(
             }
         }
     }
-
-    private fun openConnection(urlStr: String): HttpURLConnection =
-        (URL(urlStr).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = connectTimeoutMs
-            readTimeout = readTimeoutMs
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
-        }
-
-    private fun openGetConnection(urlStr: String): HttpURLConnection =
-        (URL(urlStr).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = connectTimeoutMs
-            readTimeout = readTimeoutMs
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
-        }
 
     private fun parseTrainingResponse(text: String): TrainingRecommendation {
         val json = JSONObject(text)

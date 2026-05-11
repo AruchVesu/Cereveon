@@ -1,11 +1,7 @@
 package ai.chesscoach.app
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
-import java.net.SocketTimeoutException
-import java.net.URL
 
 /**
  * Shared client interface for the backend authentication endpoints.
@@ -125,8 +121,8 @@ interface AuthApiClient {
  */
 class HttpAuthApiClient(
     val baseUrl: String,
-    val connectTimeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
-    val readTimeoutMs: Int = DEFAULT_READ_TIMEOUT_MS,
+    val connectTimeoutMs: Int = BaseHttpClient.DEFAULT_CONNECT_TIMEOUT_MS,
+    val readTimeoutMs: Int = BaseHttpClient.DEFAULT_READ_TIMEOUT_MS,
     /**
      * Optional sink for the X-Auth-Token refresh header — see
      * [TokenRefresh].  When provided, every successful authenticated
@@ -139,8 +135,8 @@ class HttpAuthApiClient(
 ) : AuthApiClient {
 
     companion object {
-        const val DEFAULT_CONNECT_TIMEOUT_MS = 8_000
-        const val DEFAULT_READ_TIMEOUT_MS = 15_000
+        const val DEFAULT_CONNECT_TIMEOUT_MS = BaseHttpClient.DEFAULT_CONNECT_TIMEOUT_MS
+        const val DEFAULT_READ_TIMEOUT_MS = BaseHttpClient.DEFAULT_READ_TIMEOUT_MS
         private const val LOGIN_PATH = "/auth/login"
         private const val LOGOUT_PATH = "/auth/logout"
         private const val ME_PATH = "/auth/me"
@@ -148,179 +144,100 @@ class HttpAuthApiClient(
         private const val CHANGE_PASSWORD_PATH = "/auth/change-password"
     }
 
+    private val http = BaseHttpClient(baseUrl, connectTimeoutMs, readTimeoutMs)
+
+    private fun bearerHeader(token: String): Map<String, String> =
+        mapOf("Authorization" to "Bearer $token")
+
+    private fun refreshOnSuccess(): (java.net.HttpURLConnection) -> Unit =
+        { conn -> consumeRefreshedToken(conn, tokenSink) }
+
     override suspend fun login(
         email: String,
         password: String,
-    ): ApiResult<LoginResponse> = withContext(Dispatchers.IO) {
-        try {
-            val body =
-                JSONObject().apply {
-                    put("email", email)
-                    put("password", password)
-                    put("device_info", "android")
-                }.toString()
+    ): ApiResult<LoginResponse> = http.request(
+        path = LOGIN_PATH,
+        method = "POST",
+        body = JSONObject().apply {
+            put("email", email)
+            put("password", password)
+            put("device_info", "android")
+        }.toString(),
+        parse = ::parseLoginResponse,
+    )
 
-            val url = URL("$baseUrl$LOGIN_PATH")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
-            conn.doOutput = true
-            conn.connectTimeout = connectTimeoutMs
-            conn.readTimeout = readTimeoutMs
+    override suspend fun logout(token: String): ApiResult<Unit> = http.requestNoBody(
+        path = LOGOUT_PATH,
+        method = "POST",
+        headers = bearerHeader(token),
+    )
 
-            conn.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(body) }
-
-            val code = conn.responseCode
-            if (code == HttpURLConnection.HTTP_OK) {
-                val raw = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
-                ApiResult.Success(parseLoginResponse(raw))
-            } else {
-                ApiResult.HttpError(code)
-            }
-        } catch (_: SocketTimeoutException) {
-            ApiResult.Timeout
-        } catch (e: Exception) {
-            ApiResult.NetworkError(e)
-        }
-    }
-
-    override suspend fun logout(
-        token: String,
-    ): ApiResult<Unit> = withContext(Dispatchers.IO) {
-        try {
-            val url = URL("$baseUrl$LOGOUT_PATH")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Authorization", "Bearer $token")
-            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
-            conn.connectTimeout = connectTimeoutMs
-            conn.readTimeout = readTimeoutMs
-
-            val code = conn.responseCode
-            if (code == HttpURLConnection.HTTP_OK) {
-                ApiResult.Success(Unit)
-            } else {
-                ApiResult.HttpError(code)
-            }
-        } catch (_: SocketTimeoutException) {
-            ApiResult.Timeout
-        } catch (e: Exception) {
-            ApiResult.NetworkError(e)
-        }
-    }
-
-    override suspend fun me(
-        token: String,
-    ): ApiResult<MeResponse> = withContext(Dispatchers.IO) {
-        try {
-            val url = URL("$baseUrl$ME_PATH")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("Authorization", "Bearer $token")
-            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
-            conn.connectTimeout = connectTimeoutMs
-            conn.readTimeout = readTimeoutMs
-
-            val code = conn.responseCode
-            if (code == HttpURLConnection.HTTP_OK) {
-                val raw = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
-                consumeRefreshedToken(conn, tokenSink)
-                ApiResult.Success(parseMeResponse(raw))
-            } else {
-                ApiResult.HttpError(code)
-            }
-        } catch (_: SocketTimeoutException) {
-            ApiResult.Timeout
-        } catch (e: Exception) {
-            ApiResult.NetworkError(e)
-        }
-    }
+    override suspend fun me(token: String): ApiResult<MeResponse> = http.request(
+        path = ME_PATH,
+        method = "GET",
+        headers = bearerHeader(token),
+        onResponse = refreshOnSuccess(),
+        parse = ::parseMeResponse,
+    )
 
     override suspend fun updateMe(
         token: String,
         rating: Float?,
         confidence: Float?,
-    ): ApiResult<MeResponse> = withContext(Dispatchers.IO) {
-        try {
-            // Build a body with only the non-null fields.  Sending {}
-            // (both null) produces a 400 from the backend — preserved
-            // so a malformed call surfaces immediately rather than
-            // appearing as a no-op success.
-            val body = JSONObject().apply {
-                if (rating != null) put("rating", rating.toDouble())
-                if (confidence != null) put("confidence", confidence.toDouble())
-            }.toString()
-
-            val url = URL("$baseUrl$ME_PATH")
-            val conn = url.openConnection() as HttpURLConnection
-            // POST + X-HTTP-Method-Override: PATCH — the JDK's
-            // HttpURLConnection rejects PATCH as a request method on
-            // JDK 17 (the host JVM tests target), but Android's
-            // OkHttp-backed implementation accepts it.  Going via the
-            // override header keeps a single code path that works on
-            // both runtimes; the backend strips the header in the
-            // http_method_override middleware in server.py and routes
-            // it as a real PATCH /auth/me.
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("X-HTTP-Method-Override", "PATCH")
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.setRequestProperty("Authorization", "Bearer $token")
-            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
-            conn.doOutput = true
-            conn.connectTimeout = connectTimeoutMs
-            conn.readTimeout = readTimeoutMs
-
-            conn.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(body) }
-
-            val code = conn.responseCode
-            if (code == HttpURLConnection.HTTP_OK) {
-                val raw = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
-                consumeRefreshedToken(conn, tokenSink)
-                ApiResult.Success(parseMeResponse(raw))
-            } else {
-                ApiResult.HttpError(code)
-            }
-        } catch (_: SocketTimeoutException) {
-            ApiResult.Timeout
-        } catch (e: Exception) {
-            ApiResult.NetworkError(e)
-        }
-    }
+    ): ApiResult<MeResponse> = http.request(
+        // POST + X-HTTP-Method-Override: PATCH — the JDK's HttpURLConnection
+        // rejects PATCH as a request method on JDK 17 (the host JVM tests
+        // target), but Android's OkHttp-backed implementation accepts it.
+        // Going via the override header keeps a single code path that
+        // works on both runtimes; the backend strips the header in the
+        // http_method_override middleware in server.py and routes it
+        // as a real PATCH /auth/me.
+        path = ME_PATH,
+        method = "POST",
+        headers = bearerHeader(token) + ("X-HTTP-Method-Override" to "PATCH"),
+        // Body with only the non-null fields.  Sending {} (both null)
+        // produces a 400 from the backend — preserved so a malformed
+        // call surfaces immediately rather than appearing as a no-op
+        // success.
+        body = JSONObject().apply {
+            if (rating != null) put("rating", rating.toDouble())
+            if (confidence != null) put("confidence", confidence.toDouble())
+        }.toString(),
+        onResponse = refreshOnSuccess(),
+        parse = ::parseMeResponse,
+    )
 
     override suspend fun changePassword(
         currentPassword: String,
         newPassword: String,
         token: String,
-    ): ApiResult<Unit> = withContext(Dispatchers.IO) {
-        try {
-            val body = JSONObject().apply {
-                put("current_password", currentPassword)
-                put("new_password", newPassword)
-            }.toString()
-            val url = URL("$baseUrl$CHANGE_PASSWORD_PATH")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.setRequestProperty("Authorization", "Bearer $token")
-            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
-            conn.doOutput = true
-            conn.connectTimeout = connectTimeoutMs
-            conn.readTimeout = readTimeoutMs
-            conn.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(body) }
-            val code = conn.responseCode
-            if (code == HttpURLConnection.HTTP_OK) {
-                consumeRefreshedToken(conn, tokenSink)
-                ApiResult.Success(Unit)
-            } else {
-                ApiResult.HttpError(code)
-            }
-        } catch (_: SocketTimeoutException) {
-            ApiResult.Timeout
-        } catch (e: Exception) {
-            ApiResult.NetworkError(e)
-        }
-    }
+    ): ApiResult<Unit> = http.requestNoBody(
+        path = CHANGE_PASSWORD_PATH,
+        method = "POST",
+        headers = bearerHeader(token),
+        body = JSONObject().apply {
+            put("current_password", currentPassword)
+            put("new_password", newPassword)
+        }.toString(),
+        onResponse = refreshOnSuccess(),
+    )
+
+    override suspend fun register(
+        email: String,
+        password: String,
+    ): ApiResult<LoginResponse> = http.request(
+        path = REGISTER_PATH,
+        method = "POST",
+        body = JSONObject().apply {
+            put("email", email)
+            put("password", password)
+            put("device_info", "android")
+        }.toString(),
+        // Register is the only endpoint that returns 201 Created in
+        // addition to 200 OK; widen the success set accordingly.
+        successCodes = setOf(HttpURLConnection.HTTP_OK, HttpURLConnection.HTTP_CREATED),
+        parse = ::parseLoginResponse,
+    )
 
     // -----------------------------------------------------------------------
     // Private helpers
@@ -333,42 +250,6 @@ class HttpAuthApiClient(
             playerId = root.optString("player_id", ""),
             tokenType = root.optString("token_type", "bearer"),
         )
-    }
-
-    override suspend fun register(
-        email: String,
-        password: String,
-    ): ApiResult<LoginResponse> = withContext(Dispatchers.IO) {
-        try {
-            val body = JSONObject().apply {
-                put("email", email)
-                put("password", password)
-                put("device_info", "android")
-            }.toString()
-
-            val url = URL("$baseUrl$REGISTER_PATH")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
-            conn.doOutput = true
-            conn.connectTimeout = connectTimeoutMs
-            conn.readTimeout = readTimeoutMs
-
-            conn.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(body) }
-
-            val code = conn.responseCode
-            if (code == HttpURLConnection.HTTP_OK || code == HttpURLConnection.HTTP_CREATED) {
-                val raw = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
-                ApiResult.Success(parseLoginResponse(raw))
-            } else {
-                ApiResult.HttpError(code)
-            }
-        } catch (_: SocketTimeoutException) {
-            ApiResult.Timeout
-        } catch (e: Exception) {
-            ApiResult.NetworkError(e)
-        }
     }
 
     private fun parseMeResponse(body: String): MeResponse {

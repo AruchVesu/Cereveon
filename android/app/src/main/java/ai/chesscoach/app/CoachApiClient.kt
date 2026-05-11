@@ -132,12 +132,24 @@ class HttpCoachApiClient(
 ) : CoachApiClient {
 
     companion object {
-        const val DEFAULT_CONNECT_TIMEOUT_MS = 8_000
-        const val DEFAULT_READ_TIMEOUT_MS = 15_000
+        const val DEFAULT_CONNECT_TIMEOUT_MS = BaseHttpClient.DEFAULT_CONNECT_TIMEOUT_MS
+        const val DEFAULT_READ_TIMEOUT_MS = BaseHttpClient.DEFAULT_READ_TIMEOUT_MS
         private const val CHAT_PATH = "/chat"
         private const val CHAT_STREAM_PATH = "/chat/stream"
         private const val FEEDBACK_PATH = "/game/coach-feedback"
     }
+
+    private val http = BaseHttpClient(baseUrl, connectTimeoutMs, readTimeoutMs)
+
+    /** Build the standard auth header set (X-Api-Key plus optional Bearer token). */
+    private fun authHeaders(extraToken: String? = null): Map<String, String> = buildMap {
+        put("X-Api-Key", apiKey)
+        val bearer = extraToken ?: tokenProvider?.invoke()
+        if (bearer != null) put("Authorization", "Bearer $bearer")
+    }
+
+    private fun refreshOnSuccess(): (HttpURLConnection) -> Unit =
+        { conn -> consumeRefreshedToken(conn, tokenSink) }
 
     override suspend fun chat(
         fen: String,
@@ -147,40 +159,14 @@ class HttpCoachApiClient(
         moveCount: Int?,
         coachVoice: String?,
     ): ApiResult<ChatResponseBody> = withRetry(maxAttempts = 2) {
-        withContext(Dispatchers.IO) {
-            try {
-                val url = URL("$baseUrl$CHAT_PATH")
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.setRequestProperty("X-Api-Key", apiKey)
-                conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
-                // Inject JWT Bearer token when the caller has a logged-in session.
-                tokenProvider?.invoke()?.let { token ->
-                    conn.setRequestProperty("Authorization", "Bearer $token")
-                }
-                conn.doOutput = true
-                conn.connectTimeout = connectTimeoutMs
-                conn.readTimeout = readTimeoutMs
-
-                conn.outputStream.bufferedWriter(Charsets.UTF_8).use {
-                    it.write(buildJson(fen, messages, playerProfile, pastMistakes, moveCount, coachVoice))
-                }
-
-                val code = conn.responseCode
-                if (code == HttpURLConnection.HTTP_OK) {
-                    val body = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
-                    consumeRefreshedToken(conn, tokenSink)
-                    ApiResult.Success(parseResponse(body))
-                } else {
-                    ApiResult.HttpError(code)
-                }
-            } catch (_: SocketTimeoutException) {
-                ApiResult.Timeout
-            } catch (e: Exception) {
-                ApiResult.NetworkError(e)
-            }
-        }
+        http.request(
+            path = CHAT_PATH,
+            method = "POST",
+            headers = authHeaders(),
+            body = buildJson(fen, messages, playerProfile, pastMistakes, moveCount, coachVoice),
+            onResponse = refreshOnSuccess(),
+            parse = ::parseResponse,
+        )
     }
 
     override fun chatStream(
@@ -273,36 +259,16 @@ class HttpCoachApiClient(
         fen: String,
         isHelpful: Boolean,
         token: String?,
-    ): ApiResult<Unit> = withContext(Dispatchers.IO) {
-        try {
-            val body = JSONObject().apply {
-                put("session_fen", fen)
-                put("is_helpful", isHelpful)
-            }.toString()
-            val url = URL("$baseUrl$FEEDBACK_PATH")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.setRequestProperty("X-Api-Key", apiKey)
-            conn.setRequestProperty(COACH_API_VERSION_HEADER, COACH_API_VERSION)
-            token?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
-            conn.doOutput = true
-            conn.connectTimeout = connectTimeoutMs
-            conn.readTimeout = readTimeoutMs
-            conn.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(body) }
-            val code = conn.responseCode
-            if (code == HttpURLConnection.HTTP_OK) {
-                consumeRefreshedToken(conn, tokenSink)
-                ApiResult.Success(Unit)
-            } else {
-                ApiResult.HttpError(code)
-            }
-        } catch (_: SocketTimeoutException) {
-            ApiResult.Timeout
-        } catch (e: Exception) {
-            ApiResult.NetworkError(e)
-        }
-    }
+    ): ApiResult<Unit> = http.requestNoBody(
+        path = FEEDBACK_PATH,
+        method = "POST",
+        headers = authHeaders(extraToken = token),
+        body = JSONObject().apply {
+            put("session_fen", fen)
+            put("is_helpful", isHelpful)
+        }.toString(),
+        onResponse = refreshOnSuccess(),
+    )
 
     // -----------------------------------------------------------------------
     // JSON serialisation / deserialisation (private — not unit tested directly)
