@@ -170,37 +170,74 @@ class TestApiServiceHardening(unittest.TestCase):
 
 
 class TestRedisServiceHardening(unittest.TestCase):
+    """CH_06..CH_09 carve-out: Redis alpine uses the same ``gosu``-based
+    entrypoint as Postgres alpine.  Every flag in the original aggressive
+    tier broke startup independently:
+
+      - ``no-new-privileges:true``  → blocks setuid, gosu cannot drop to
+                                       the redis user, container exits.
+      - ``cap_drop: [ALL]``         → strips CAP_CHOWN, entrypoint's
+                                       ``chown`` calls fail under set -e.
+      - ``read_only: true``         → writable layer at /data becomes
+                                       read-only, even the silenced
+                                       ``chown ... || :`` line can't
+                                       repair ownership.
+      - ``tmpfs: [/tmp]``           → harmless in isolation but bundled
+                                       with the rest and pointless if the
+                                       container exits before it's used.
+
+    Until a ``user: "999:999"`` (alpine redis UID) + ``/data`` volume
+    ownership migration is validated in staging, the safest posture is
+    NO hardening on redis (mirroring the Postgres CH_11 carve-out).
+    Asserting equality with ``False`` (rather than skipping) makes the
+    carve-out observable: any future contributor who re-adds the
+    options without doing the user/volume migration will trip these
+    tests immediately and see the documented reason.
+    """
+
     def setUp(self):
         self.svc = _service(_load_compose(), "redis")
 
     def test_ch_06_redis_no_new_privileges(self):
-        self.assertTrue(_has_no_new_privileges(self.svc), "CH_06")
+        self.assertFalse(
+            _has_no_new_privileges(self.svc),
+            "CH_06 carve-out: redis must NOT carry security_opt: no-new-privileges:true "
+            "until the user:'999:999' + /data ownership migration lands.  Redis alpine's "
+            "gosu-based entrypoint cannot drop privileges under no-new-privileges, "
+            "container exits within ~0.5s of Started.  See docker-compose.prod.yml "
+            "comment block on the redis service.",
+        )
 
     def test_ch_07_redis_drops_all_caps(self):
-        self.assertTrue(
+        self.assertFalse(
             _drops_all_caps(self.svc),
-            "CH_07: redis service must declare cap_drop: [ALL].  As an in-"
-            "memory data plane it needs no Linux capabilities; persistence "
-            "is disabled (--save '' --appendonly no) so dropping caps does "
-            "not interfere with normal operation.",
+            "CH_07 carve-out: redis must NOT declare cap_drop: [ALL] until the "
+            "user/volume migration lands.  The entrypoint's "
+            "``find ... -exec chown redis '{}' +`` step needs CAP_CHOWN; under "
+            "cap_drop ALL + set -e the entrypoint exits before redis-server starts.",
         )
 
     def test_ch_08_redis_is_read_only(self):
-        self.assertIs(
+        self.assertIsNot(
             self.svc.get("read_only"),
             True,
-            "CH_08: redis service must declare read_only: true.  With "
-            "persistence disabled there is no need for a writable /data, "
-            "and locking the rootfs prevents tampering even if redis-cli "
-            "is exposed by a future misconfiguration.",
+            "CH_08 carve-out: redis must NOT declare read_only: true until the "
+            "user/volume migration lands.  The entrypoint chowns the working "
+            "directory at startup; locking the rootfs makes that fail.",
         )
 
     def test_ch_09_redis_has_tmpfs_tmp(self):
-        self.assertTrue(
+        # tmpfs in isolation is harmless, but the original CH_09 paired it
+        # with read_only + cap_drop + no-new-privileges as the "aggressive
+        # tier" recipe.  The carve-out reverts the whole tier; tmpfs on
+        # /tmp is unnecessary without it (the entrypoint never reaches
+        # the redis-cli scratch use case if the upstream chown fails).
+        self.assertFalse(
             _has_tmpfs(self.svc, "/tmp"),
-            "CH_09: redis service must mount a tmpfs at /tmp for redis-cli "
-            "and short-lived scratch operations that even an in-memory "
-            "redis-server occasionally performs.",
+            "CH_09 carve-out: redis must NOT mount a tmpfs at /tmp while the "
+            "rest of the aggressive tier is carved out.  Re-introducing tmpfs "
+            "alone without the read_only/cap_drop/no-new-privileges siblings "
+            "is misleading — adopt the full tier or none.",
         )
 
 
@@ -275,7 +312,7 @@ class TestUniversalSecurityFloor(unittest.TestCase):
     # specific failing test (e.g. CH_11) for the same service is a review
     # red flag — the floor should only carve out services with a real
     # upstream-image incompatibility, not as a convenience.
-    _CH_13_CARVE_OUTS = frozenset({"db"})
+    _CH_13_CARVE_OUTS = frozenset({"db", "redis"})
 
     def test_ch_13_every_service_has_no_new_privileges(self):
         compose = _load_compose()
