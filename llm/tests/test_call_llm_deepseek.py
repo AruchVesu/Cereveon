@@ -23,7 +23,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from llm.explain_pipeline import LLMConfigError, call_llm
+from llm.seca.coach.explain_pipeline import LLMConfigError, call_llm
 
 
 def _fake_response(status_code: int, json_body: dict) -> httpx.Response:
@@ -41,7 +41,7 @@ class TestCallLLM:
         monkeypatch.delenv("COACH_DEEPSEEK_API_KEY", raising=False)
 
         # If httpx.post is somehow still called, fail loudly.
-        with patch("llm.explain_pipeline.httpx.post") as mock_post:
+        with patch("llm.seca.coach.explain_pipeline.httpx.post") as mock_post:
             mock_post.side_effect = AssertionError("call_llm must not POST when API key is unset")
             with pytest.raises(LLMConfigError, match="COACH_DEEPSEEK_API_KEY"):
                 call_llm("ignored")
@@ -53,7 +53,7 @@ class TestCallLLM:
         extracted and stripped."""
         monkeypatch.setenv("COACH_DEEPSEEK_API_KEY", "sk-test")
 
-        with patch("llm.explain_pipeline.httpx.post") as mock_post:
+        with patch("llm.seca.coach.explain_pipeline.httpx.post") as mock_post:
             mock_post.return_value = _fake_response(
                 200,
                 {"choices": [{"message": {"content": "  Hello, world.  "}}]},
@@ -67,7 +67,7 @@ class TestCallLLM:
         OpenAI-compatible without us noticing."""
         monkeypatch.setenv("COACH_DEEPSEEK_API_KEY", "sk-test")
 
-        with patch("llm.explain_pipeline.httpx.post") as mock_post:
+        with patch("llm.seca.coach.explain_pipeline.httpx.post") as mock_post:
             mock_post.return_value = _fake_response(200, {"unexpected": "shape"})
             with pytest.raises(httpx.HTTPError, match="missing expected"):
                 call_llm("ignored")
@@ -78,7 +78,7 @@ class TestCallLLM:
         which would otherwise silently return None or raise IndexError."""
         monkeypatch.setenv("COACH_DEEPSEEK_API_KEY", "sk-test")
 
-        with patch("llm.explain_pipeline.httpx.post") as mock_post:
+        with patch("llm.seca.coach.explain_pipeline.httpx.post") as mock_post:
             mock_post.return_value = _fake_response(200, {"choices": []})
             with pytest.raises(httpx.HTTPError):
                 call_llm("ignored")
@@ -90,7 +90,7 @@ class TestCallLLM:
         back to the deterministic template."""
         monkeypatch.setenv("COACH_DEEPSEEK_API_KEY", "sk-test")
 
-        with patch("llm.explain_pipeline.httpx.post") as mock_post:
+        with patch("llm.seca.coach.explain_pipeline.httpx.post") as mock_post:
             mock_post.return_value = _fake_response(
                 401,
                 {"error": {"message": "Invalid API key"}},

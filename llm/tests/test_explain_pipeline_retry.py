@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-from llm.explain_pipeline import (
+from llm.seca.coach.explain_pipeline import (
     MAX_RETRIES,
     _RETRY_DELAY_SECONDS,
     generate_validated_explanation,
@@ -40,9 +40,9 @@ class TestExplainPipelineRetryBehaviour:
             return "dummy"
 
         with (
-            patch("llm.explain_pipeline.call_llm", side_effect=_count_and_return),
+            patch("llm.seca.coach.explain_pipeline.call_llm", side_effect=_count_and_return),
             patch(
-                "llm.explain_pipeline.validate_mode_2_negative",
+                "llm.seca.coach.explain_pipeline.validate_mode_2_negative",
                 side_effect=AssertionError("violation"),
             ),
         ):
@@ -67,9 +67,9 @@ class TestExplainPipelineRetryBehaviour:
             return "dummy"
 
         with (
-            patch("llm.explain_pipeline.call_llm", side_effect=_record_time),
+            patch("llm.seca.coach.explain_pipeline.call_llm", side_effect=_record_time),
             patch(
-                "llm.explain_pipeline.validate_mode_2_negative",
+                "llm.seca.coach.explain_pipeline.validate_mode_2_negative",
                 side_effect=AssertionError("violation"),
             ),
         ):
@@ -92,9 +92,9 @@ class TestExplainPipelineRetryBehaviour:
         """RETRY_FALLBACK_SAFE: safe string returned when all retries exhausted;
         no exception propagates to the caller."""
         with (
-            patch("llm.explain_pipeline.call_llm", return_value="dummy"),
+            patch("llm.seca.coach.explain_pipeline.call_llm", return_value="dummy"),
             patch(
-                "llm.explain_pipeline.validate_mode_2_negative",
+                "llm.seca.coach.explain_pipeline.validate_mode_2_negative",
                 side_effect=AssertionError("violation"),
             ),
         ):

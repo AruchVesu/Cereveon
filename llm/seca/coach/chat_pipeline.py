@@ -52,12 +52,12 @@ _safe_explainer = SafeExplainer()
 # ---------------------------------------------------------------------------
 
 try:
-    from llm.explain_pipeline import call_llm as _call_llm  # type: ignore[import]
+    from llm.seca.coach.explain_pipeline import call_llm as _call_llm  # type: ignore[import]
     from llm.rag.prompts.system_v2_mode_2 import SYSTEM_PROMPT as _SYSTEM_PROMPT  # type: ignore[import]
     from llm.rag.prompts.mode_2.render import render_mode_2_prompt as _render  # type: ignore[import]
     from llm.rag.retriever.retriever import retrieve as _retrieve  # type: ignore[import]
     from llm.rag.documents import ALL_RAG_DOCUMENTS as _DOCS  # type: ignore[import]
-    from llm.confidence_language_controller import build_language_controller_block as _build_clc  # type: ignore[import]
+    from llm.seca.coach.confidence_language_controller import build_language_controller_block as _build_clc  # type: ignore[import]
     from llm.rag.validators.mode_2_negative import validate_mode_2_negative as _validate_neg  # type: ignore[import]
     from llm.rag.prompts.input_sanitizer import sanitize_user_query as _sanitize  # type: ignore[import]
     from llm.rag.safety.output_firewall import (  # type: ignore[import]

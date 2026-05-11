@@ -10,7 +10,7 @@ from llm.rag.prompts.mode_2.render import render_mode_2_prompt
 from llm.rag.prompts.system_v2_mode_2 import SYSTEM_PROMPT
 from llm.rag.validators.mode_2_negative import validate_mode_2_negative
 from llm.rag.validators.explain_response_schema import EngineSignalSchema, ExplainSchemaError
-from llm.confidence_language_controller import build_language_controller_block
+from llm.seca.coach.confidence_language_controller import build_language_controller_block
 from llm.rag.prompts.input_sanitizer import sanitize_user_query
 from llm.rag.safety.output_firewall import check_output, OutputFirewallError
 

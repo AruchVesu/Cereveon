@@ -202,15 +202,23 @@ COVERAGE_TARGETS = [
     "llm.seca.analytics.router",
     "llm.seca.curriculum.reward",
     "llm.seca.curriculum.spacing",
-    # llm.seca.coach.live_controller and llm.seca.coach.executor are excluded from
-    # --cov targets: llm.seca.coach.__init__ imports engine.py which loads numpy via
-    # a C extension; coverage pre-loading the package for instrumentation triggers
-    # "cannot load module more than once per process" when the tests later re-import.
-    # Their logic is fully exercised by TestPostGameCoachRegressionSuite and
-    # TestCoachExecutorStability (22 tests).
+    # llm.seca.coach.live_controller, llm.seca.coach.executor,
+    # llm.seca.coach.confidence_language_controller, and
+    # llm.seca.coach.explain_pipeline are excluded from --cov targets:
+    # llm.seca.coach.__init__ imports engine.py which loads numpy via
+    # a C extension; coverage pre-loading the package for instrumentation
+    # triggers "cannot load module more than once per process" when the
+    # tests later re-import.
+    #
+    # confidence_language_controller and explain_pipeline were moved
+    # into llm.seca.coach.* in the Sprint 4.2 loose-files reorg PR; they
+    # were directly covered as top-level modules before the move.  Their
+    # logic is fully exercised by test_call_llm_deepseek (5 tests),
+    # test_explain_pipeline_retry (3 tests), test_coaching_pipeline_regression
+    # (the compute_confidence / compute_urgency / compute_tone /
+    # build_language_controller_block suite), test_llm_quality (30 tests),
+    # and the firewall integration tests.
     "llm.rag.meta.case_classifier",
-    "llm.confidence_language_controller",
-    "llm.explain_pipeline",
     "llm.seca.explainer.safe_explainer",
     # llm.seca.engines.stockfish.pool is intentionally excluded from coverage targets:
     # the majority of its lines require a live Stockfish process and Redis, which are

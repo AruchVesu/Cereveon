@@ -23,7 +23,7 @@ from llm.rag.contracts.validate_output import validate_output
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _LLM_ROOT = _REPO_ROOT / "llm"
-_EXPLAIN_PIPELINE = _LLM_ROOT / "explain_pipeline.py"
+_EXPLAIN_PIPELINE = _LLM_ROOT / "seca" / "coach" / "explain_pipeline.py"
 
 # ---------------------------------------------------------------------------
 # INV-01 — LLM output never contains algebraic move notation
@@ -193,8 +193,9 @@ class TestInv03StockfishIsolationFromEngine:
             assert "from llm.rag" not in source, (
                 f"{path.name} must not import from llm.rag (LLM explanation layer)"
             )
-            assert "from llm.explain_pipeline" not in source, (
-                f"{path.name} must not import explain_pipeline (LLM layer)"
+            assert "explain_pipeline" not in source, (
+                f"{path.name} must not import explain_pipeline (LLM layer; "
+                f"lives at llm.seca.coach.explain_pipeline)"
             )
             assert "FakeLLM" not in source, (
                 f"{path.name} must not reference FakeLLM"
@@ -229,7 +230,7 @@ class TestInv04LlmCallSequence:
         Verified by reading the source and confirming call order.
         """
         import inspect
-        from llm.explain_pipeline import generate_once
+        from llm.seca.coach.explain_pipeline import generate_once
 
         src = inspect.getsource(generate_once)
         esv_pos = src.find("extract_engine_signal")
@@ -245,7 +246,7 @@ class TestInv04LlmCallSequence:
     def test_generate_once_retrieves_rag_before_calling_llm(self):
         """RAG retrieval must also occur before the LLM is invoked."""
         import inspect
-        from llm.explain_pipeline import generate_once
+        from llm.seca.coach.explain_pipeline import generate_once
 
         src = inspect.getsource(generate_once)
         rag_pos = src.find("retrieve(")
@@ -260,7 +261,7 @@ class TestInv04LlmCallSequence:
     def test_generate_once_renders_prompt_before_calling_llm(self):
         """The prompt must be rendered before the LLM is called."""
         import inspect
-        from llm.explain_pipeline import generate_once
+        from llm.seca.coach.explain_pipeline import generate_once
 
         src = inspect.getsource(generate_once)
         render_pos = src.find("render_mode_2_prompt")
