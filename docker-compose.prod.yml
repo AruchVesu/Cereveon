@@ -176,18 +176,29 @@ services:
       start_period: 5s
       retries: 3
     restart: unless-stopped
-    # Aggressive-tier hardening (CH_06..CH_09).  Persistence is disabled
-    # (--save '' --appendonly no) so /data is never written; read_only
-    # locks the rootfs and the tmpfs at /tmp covers redis-cli scratch.
-    # cap_drop ALL is safe — the in-memory data plane needs no Linux
-    # capabilities at all.
-    read_only: true
-    tmpfs:
-      - /tmp
-    cap_drop:
-      - ALL
-    security_opt:
-      - "no-new-privileges:true"
+    # CH_06..CH_09 carve-out: Redis alpine ships the SAME ``gosu``-based
+    # entrypoint as Postgres alpine — root user runs the entrypoint,
+    # which does ``chown -R redis .`` and then ``exec gosu redis
+    # redis-server "$@"`` to drop privileges.  The original Sprint 1
+    # hardening (read_only + tmpfs + cap_drop ALL + no-new-privileges)
+    # broke this on three independent counts:
+    #   1. ``no-new-privileges:true`` blocks setuid, so gosu cannot drop
+    #      to the redis user — container exits with the gosu error.
+    #   2. ``cap_drop: [ALL]`` strips CAP_CHOWN, so the entrypoint's
+    #      ``find ... -exec chown redis '{}' +`` step fails; with
+    #      ``set -e`` in the entrypoint, this exits the script before
+    #      redis-server ever starts.
+    #   3. ``read_only: true`` makes the writable layer at /data read-
+    #      only, so even if the chown line is bypassed, the entrypoint's
+    #      ``chown -R redis . 2>/dev/null || :`` runs against the
+    #      working directory and (silently) fails.
+    # Combined symptom: container reports Started, then Exited within
+    # ~0.5s, then compose declares ``dependency redis failed to start``.
+    # Matches the Postgres CH_11 incident exactly — same root cause
+    # (gosu + no-new-privileges), same fix (strip the hardening until
+    # a ``user: "999:999"`` + volume-ownership migration is staging-
+    # validated).  CH_06..CH_09 + CH_13 in
+    # ``llm/tests/test_container_hardening.py`` carry matching carve-outs.
     logging:
       driver: "json-file"
       options:
