@@ -29,12 +29,12 @@ ELO_ASSESSMENT_START: int = 1200  # neutral starting point when no base supplied
 # moves reward so the estimate converges toward true skill rather than
 # inflating toward the ceiling.
 _QUALITY_DELTA: dict[str, int] = {
-    "best":       +40,
-    "excellent":  +25,
-    "good":       +10,
+    "best": +40,
+    "excellent": +25,
+    "good": +10,
     "inaccuracy": -10,
-    "mistake":    -25,
-    "blunder":    -40,
+    "mistake": -25,
+    "blunder": -40,
 }
 
 

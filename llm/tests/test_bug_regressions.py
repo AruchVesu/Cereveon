@@ -117,6 +117,37 @@ class TestNextIntervalZeroPreviousInterval:
         assert result == pytest.approx(expected)
 
 
+class TestSpacingUrgency:
+    """Companion coverage for ``spacing.urgency``.  Lives alongside
+    BUG-2 because both functions ship together and an unused-import
+    cleanup in 6.B brought the file under its 70% floor — urgency had
+    no direct tests, so its 3 lines were dead-weight in coverage."""
+
+    def test_zero_interval_returns_one(self):
+        """``interval == 0`` is the sentinel for "no prior schedule
+        recorded"; urgency must report 1.0 so the scheduler treats it
+        as overdue rather than dividing by zero."""
+        from llm.seca.curriculum.spacing import urgency
+
+        assert urgency(days_since_last=3.0, interval=0.0) == 1.0
+
+    def test_overdue_interval_clamps_to_one(self):
+        """``days_since_last > interval`` saturates at 1.0 — a topic
+        that was due 5 days ago shouldn't be 5x more urgent than one
+        due yesterday in the policy layer's ranking."""
+        from llm.seca.curriculum.spacing import urgency
+
+        assert urgency(days_since_last=10.0, interval=2.0) == 1.0
+
+    def test_proportional_urgency_below_interval(self):
+        """Within the interval, urgency is proportional — half the
+        review window gives 0.5 urgency, etc."""
+        from llm.seca.curriculum.spacing import urgency
+
+        assert urgency(days_since_last=1.0, interval=2.0) == 0.5
+        assert urgency(days_since_last=2.5, interval=10.0) == 0.25
+
+
 # ---------------------------------------------------------------------------
 # BUG-3  trainer.py — ZeroDivisionError on empty events list
 # ---------------------------------------------------------------------------

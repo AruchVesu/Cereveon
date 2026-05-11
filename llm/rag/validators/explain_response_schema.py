@@ -268,18 +268,12 @@ def validate_chat_response(response: dict) -> ChatResponse:
     try:
         validate_mode_2_structure(validated.reply)
     except AssertionError as exc:
-        raise ExplainSchemaError(
-            f"Chat reply failed Mode-2 structure validation: {exc}"
-        ) from exc
+        raise ExplainSchemaError(f"Chat reply failed Mode-2 structure validation: {exc}") from exc
 
     try:
-        validate_mode_2_semantic(
-            validated.reply, validated.engine_signal.model_dump()
-        )
+        validate_mode_2_semantic(validated.reply, validated.engine_signal.model_dump())
     except (Mode2Violation, AssertionError) as exc:
-        raise ExplainSchemaError(
-            f"Chat reply failed Mode-2 semantic validation: {exc}"
-        ) from exc
+        raise ExplainSchemaError(f"Chat reply failed Mode-2 semantic validation: {exc}") from exc
 
     return validated
 
@@ -341,9 +335,7 @@ def validate_live_move_response(response: dict) -> LiveMoveResponse:
             ) from exc
 
         try:
-            validate_mode_2_semantic(
-                validated.hint, validated.engine_signal.model_dump()
-            )
+            validate_mode_2_semantic(validated.hint, validated.engine_signal.model_dump())
         except (Mode2Violation, AssertionError) as exc:
             raise ExplainSchemaError(
                 f"Live-move hint failed Mode-2 semantic validation: {exc}"

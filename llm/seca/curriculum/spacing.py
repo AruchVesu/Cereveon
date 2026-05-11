@@ -1,6 +1,3 @@
-import math
-
-
 def next_interval(success_rate: float, previous_interval: float) -> float:
     """
     SM-2 inspired spacing.

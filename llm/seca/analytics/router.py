@@ -64,9 +64,7 @@ def get_player_progress(
 
     history = []
     for ev in events:
-        rating_update = (
-            db.query(RatingUpdate).filter(RatingUpdate.event_id == str(ev.id)).first()
-        )
+        rating_update = db.query(RatingUpdate).filter(RatingUpdate.event_id == str(ev.id)).first()
         confidence_update = (
             db.query(ConfidenceUpdate).filter(ConfidenceUpdate.event_id == str(ev.id)).first()
         )

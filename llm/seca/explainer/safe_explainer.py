@@ -67,7 +67,11 @@ class SafeExplainer:
     }
 
     def explain(self, engine_signal: Dict, skill_level: str = "intermediate") -> str:
-        level = skill_level if skill_level in ("beginner", "intermediate", "advanced") else "intermediate"
+        level = (
+            skill_level
+            if skill_level in ("beginner", "intermediate", "advanced")
+            else "intermediate"
+        )
         parts: list[str] = []
 
         eval_info = engine_signal.get("evaluation", {})

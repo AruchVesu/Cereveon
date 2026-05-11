@@ -28,6 +28,18 @@ commits on success, and closes the session.  This mirrors the prior
 self-contained without forcing the call site to manage a session.
 """
 
+# Two narrowly-scoped pylint disables:
+#   - ``redefined-builtin``: the ``Move`` model preserves the legacy SQL
+#     column name ``eval`` (matching the raw-sqlite3 schema before the
+#     SQLAlchemy migration); shadowing the Python builtin is a known
+#     trade-off documented in storage/models.py:Move.
+#   - ``invalid-name``: SQL-side identifiers like ``A_json`` keep their
+#     UPPER_LETTER variant because the LinUCB sufficient-stats convention
+#     uses capital A / b for the matrix / vector, and matching the
+#     column name verbatim is clearer than re-spelling them at the
+#     function-signature layer.
+# pylint: disable=redefined-builtin,invalid-name
+
 from __future__ import annotations
 
 import uuid

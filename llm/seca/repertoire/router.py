@@ -23,6 +23,12 @@ Owned data:
 
 from __future__ import annotations
 
+# Slowapi reads ``request: Request`` from each rate-limited handler's
+# signature even when the handler body doesn't reference it.  Pylint
+# flags every such parameter as unused; disabling the rule file-wide
+# rather than per-handler keeps the diff stable as new endpoints land.
+# pylint: disable=unused-argument
+
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -134,7 +140,7 @@ class RepertoireEntryRequest(BaseModel):
     @field_validator("mastery")
     @classmethod
     def validate_mastery(cls, v: float) -> float:
-        if not (0.0 <= v <= 1.0):
+        if not 0.0 <= v <= 1.0:
             raise ValueError("mastery must be in [0.0, 1.0]")
         return float(v)
 
@@ -153,7 +159,7 @@ class DrillResultRequest(BaseModel):
     @field_validator("outcome")
     @classmethod
     def validate_outcome(cls, v: float) -> float:
-        if not (0.0 <= v <= 1.0):
+        if not 0.0 <= v <= 1.0:
             raise ValueError("outcome must be in [0.0, 1.0]")
         return float(v)
 

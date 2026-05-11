@@ -3,7 +3,7 @@ import sqlite3
 import json
 from pathlib import Path
 from typing import Any, Dict, List
-from types import SimpleNamespace
+from types import SimpleNamespace  # pylint: disable=no-name-in-module
 
 
 class EventStorage:

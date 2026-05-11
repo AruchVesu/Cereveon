@@ -20,9 +20,7 @@ class Base(DeclarativeBase):
 class Player(Base):
     __tablename__ = "players"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
 
@@ -39,12 +37,8 @@ class Player(Base):
 class Session(Base):
     __tablename__ = "sessions"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-    player_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("players.id"), index=True
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    player_id: Mapped[str | None] = mapped_column(String, ForeignKey("players.id"), index=True)
 
     # sha256 of the LATEST JWT issued for this session.  Rotated on
     # every successful authenticated call (router.get_current_player ->

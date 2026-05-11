@@ -233,9 +233,9 @@ class AuthService:
             raise ValueError("Password too long (max 1000 chars)")
         player.password_hash = hash_password(new_password)
         # Revoke all sessions so stolen tokens can't be reused after a password change (H2)
-        self.db.query(Session).filter(
-            Session.player_id == player.id
-        ).delete(synchronize_session=False)
+        self.db.query(Session).filter(Session.player_id == player.id).delete(
+            synchronize_session=False
+        )
         self.db.commit()
 
     # ---------------------------

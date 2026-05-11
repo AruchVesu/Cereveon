@@ -1,3 +1,9 @@
+# Slowapi reads ``request: Request`` from each rate-limited handler's
+# signature even when the handler body doesn't reference it.  Pylint
+# flags every such parameter as unused; disabling the rule file-wide
+# rather than per-handler keeps the diff stable as new endpoints land.
+# pylint: disable=unused-argument
+
 import json
 import os
 from fastapi import APIRouter, Depends, HTTPException, Header, Request, Response
@@ -8,11 +14,20 @@ from llm.seca.shared_limiter import limiter
 from .models import Base
 
 # --- ensure ALL models are registered ---
+# pylint: disable=wildcard-import,unused-wildcard-import
+# These wildcard imports are LOAD-BEARING, not lazy: every model class
+# under llm.seca.* must be imported before ``Base.metadata.create_all`` runs
+# at lifespan startup so SQLAlchemy knows about every table.  Refactoring
+# to explicit imports would force a manual maintenance burden every time
+# a model is added.  Pylint correctly flags the pattern; we silence it
+# for this single import block.
 from llm.seca.auth.models import *  # noqa: F401,F403
 from llm.seca.events.models import *  # noqa: F401,F403
 from llm.seca.brain.models import *  # noqa: F401,F403
 from llm.seca.analytics.models import *  # noqa: F401,F403
 from llm.seca.storage.models import *  # noqa: F401,F403
+
+# pylint: enable=wildcard-import,unused-wildcard-import
 from .service import AuthService
 from .tokens import create_access_token, decode_token
 

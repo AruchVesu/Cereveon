@@ -1,7 +1,3 @@
-import json
-from statistics import mean
-
-
 class CurriculumPolicy:
     """
     Chooses WHAT to train next.

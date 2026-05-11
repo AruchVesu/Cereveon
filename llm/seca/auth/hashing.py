@@ -4,8 +4,8 @@ import hashlib
 import hmac
 import os
 
-_SCHEME_V1 = "pbkdf2-sha256"       # legacy: normalisation = raw SHA-256 digest
-_SCHEME = "pbkdf2-sha256-v2"        # current: normalisation = 1-iter PBKDF2
+_SCHEME_V1 = "pbkdf2-sha256"  # legacy: normalisation = raw SHA-256 digest
+_SCHEME = "pbkdf2-sha256-v2"  # current: normalisation = 1-iter PBKDF2
 _ITERATIONS = 600000
 _SALT_BYTES = 16
 _NORM_SALT = b"auth.normalization.static.salt"

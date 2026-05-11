@@ -36,7 +36,9 @@ def next_training(
                 for r in generate_training_recommendations(stats)
             ]
         except Exception:
-            logger.exception("HistoricalAnalysisPipeline failed in curriculum/next; using skill vector")
+            logger.exception(
+                "HistoricalAnalysisPipeline failed in curriculum/next; using skill vector"
+            )
 
     plan = CurriculumGenerator(db).generate(str(player.id), dominant_topic=dominant_topic)
 

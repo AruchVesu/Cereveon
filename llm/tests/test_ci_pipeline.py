@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
+from types import SimpleNamespace  # pylint: disable=no-name-in-module
 
 import pytest
 import yaml  # type: ignore[import-untyped]
