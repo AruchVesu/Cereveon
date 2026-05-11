@@ -7,12 +7,12 @@ class CurriculumPolicy:
     Chooses WHAT to train next.
     """
 
-    def choose_topic(self, skill_vector: dict) -> str:
+    def choose_topic(self, skill_vector: dict[str, float]) -> str:
         if not skill_vector:
             return "opening_principles"
 
         # weakest skill = lowest value
-        return min(skill_vector, key=skill_vector.get)
+        return min(skill_vector, key=lambda k: skill_vector[k])
 
     # ---------------------------------
 

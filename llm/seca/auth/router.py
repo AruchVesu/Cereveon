@@ -2,7 +2,7 @@ import json
 import os
 from fastapi import APIRouter, Depends, HTTPException, Header, Request, Response
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, Session, Session as DBSession
+from sqlalchemy.orm import sessionmaker, Session as DBSession
 from llm.seca.shared_limiter import limiter
 
 from .models import Base
@@ -297,7 +297,7 @@ def register(request: Request, req: RegisterRequest, db: DBSession = Depends(get
 
 @router.post("/login")
 @limiter.limit("10/minute")
-def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
+def login(request: Request, req: LoginRequest, db: DBSession = Depends(get_db)):
     service = AuthService(db)
     try:
         token, player = service.login(req.email, req.password, req.device_info)

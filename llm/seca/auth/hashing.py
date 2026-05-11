@@ -1,4 +1,5 @@
 import base64
+import binascii
 import hashlib
 import hmac
 import os
@@ -61,7 +62,7 @@ def verify_password(password: str, password_hash: str) -> bool:
         iterations = int(parts[2])
         salt = base64.b64decode(parts[3])
         expected = base64.b64decode(parts[4])
-    except (ValueError, IndexError, base64.binascii.Error):
+    except (ValueError, IndexError, binascii.Error):
         return False
 
     if scheme == _SCHEME:
