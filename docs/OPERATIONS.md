@@ -73,7 +73,7 @@ surfaces the live LLM status so degraded mode is detectable in monitoring.
 
 From project root:
 
-python host_app.py
+python -m uvicorn llm.server:app --host 0.0.0.0 --port 8000
 
 
 Expected behavior:

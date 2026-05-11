@@ -1,15 +1,16 @@
-"""Shared X-Api-Key verifier for the two FastAPI apps in this repo.
+"""Shared X-Api-Key verifier for the FastAPI app.
 
-Both ``llm/server.py`` (the production coaching API) and
-``llm/host_app.py`` (the host-side debug/inspection API) used to ship
-their own copy of ``verify_api_key`` with identical logic.  Drift was
-held back only by SN_01 / SN_01b AST-pinning tests in
-``test_security_new_findings.py``; the implementations themselves had
-to be edited in lock-step.
+``llm/server.py`` (the production coaching API) imports
+``verify_api_key`` from this module as the single source of truth for
+X-Api-Key authentication; the env-var resolution lives here too so
+the dev/prod gating is identical across every protected route.
 
-This module is the single source of truth.  ``server.py`` and
-``host_app.py`` import the function — and the env-var resolution that
-backs it — directly.
+Originally this module existed to deduplicate the verifier between
+``server.py`` and the standalone ``host_app.py`` debug server.  The
+debug server was retired in 2026-05-12 (host_app retirement pass);
+the SN_01 / SN_01b AST-pinning tests in
+``test_security_new_findings.py`` that prevented drift between the
+two copies are now structural pins on the single remaining caller.
 
 Behaviour
 ---------

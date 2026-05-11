@@ -780,6 +780,27 @@ class AnalyzeRequest(BaseModel):
         return sanitize_user_query(v) if v else v
 
 
+class EngineEvalRequest(BaseModel):
+    """Body of POST /engine/eval — Android's HttpEngineEvalClient sends
+    only a FEN.  Previously hosted by the standalone host_app.py debug
+    server (never deployed to production, so the Android calls 404'd
+    silently and the eval-after-AI-move badge in MainActivity rendered
+    "⚠ Eval N/A" until this route was migrated to server.py).
+
+    Contract intentionally narrower than host_app's: drops the unused
+    GET variant + ``moves``/``movetime_ms``/``nodes`` fields that no
+    in-tree caller sends.  Adding them back is a contract widening
+    that requires an Android client update in the same release.
+    """
+
+    fen: str
+
+    @field_validator("fen")
+    @classmethod
+    def validate_fen(cls, v: str) -> str:
+        return _validate_fen_field(v)
+
+
 class LiveMoveRequest(BaseModel):
     fen: str
     uci: str
@@ -1502,6 +1523,96 @@ async def live_move(
 @limiter.limit("30/minute")
 def analyze(req: AnalyzeRequest, request: Request, _: None = Depends(verify_api_key)):
     return {"engine_signal": build_engine_signal(req)}
+
+
+# ``/engine/eval`` — Android's per-move Stockfish score + best-move
+# endpoint.  Returns ``{"score": <centipawns>, "best_move": <uci>,
+# "source": "engine"}``, matching ``HttpEngineEvalClient.parseResponse``.
+#
+# Migrated from the standalone ``host_app.py`` debug server in the
+# host_app retirement pass.  ``host_app:app`` was wired up by an old
+# ``llm/Dockerfile`` (orphaned for months — the production
+# ``llm/Dockerfile.api`` runs ``llm.server:app``), so this endpoint
+# 404'd in production for an unknown stretch and the Android
+# MainActivity rendered "⚠ Eval N/A" on the per-AI-move eval badge.
+#
+# Contract is narrower than host_app's:
+#   - POST only (no GET variant; nothing in-tree sends GET).
+#   - Body is just ``{"fen": str}``; ``moves`` / ``movetime_ms`` /
+#     ``nodes`` were never used by Android's HttpEngineEvalClient.
+#   - X-Api-Key gated (host_app's variant was unauthenticated; tightened
+#     here because Android already sends the key via BuildConfig and
+#     the heavy compute endpoint shouldn't be a public DoS surface).
+@app.post("/engine/eval")
+@limiter.limit("30/minute")
+def engine_eval(
+    req: EngineEvalRequest,
+    request: Request,
+    _: None = Depends(verify_api_key),
+):
+    if engine_pool is None:
+        # Engine pool failed to boot — return a degraded shape rather
+        # than 500 so the Android client's ``engineAvailable=false``
+        # fallback path fires cleanly instead of treating it as a
+        # network error.
+        return {"score": None, "best_move": None, "source": "unavailable"}
+
+    fen = req.fen
+    try:
+        board = chess.Board(fen)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid FEN") from exc
+
+    # 200 ms matches the per-move budget used by /live/move (server.py
+    # line 1462 in the existing live_move handler).  Long enough for
+    # Stockfish to find depth-12-ish moves at default skill; short
+    # enough that the 30/minute rate limit doesn't compound into a
+    # noticeable per-request wait when the pool is busy.
+    movetime_ms = 200
+
+    # Acquire an engine directly and run analyse — engine_pool's
+    # evaluate_position() only returns the score (used by /live/move
+    # for engine_signal); we need both score + best_move.  Bypassing
+    # evaluate_position keeps both fields in one analyse() round-trip.
+    engine = None
+    try:
+        engine = engine_pool._engines.get(  # noqa: SLF001
+            timeout=max(0.001, engine_pool.settings.queue_timeout_ms / 1000.0)
+        )
+    except Exception as exc:  # queue.Empty or pool not started
+        logger.warning("engine_pool acquire failed for /engine/eval: %s", exc)
+        return {"score": None, "best_move": None, "source": "unavailable"}
+
+    try:
+        info = engine.analyse(board, chess.engine.Limit(time=movetime_ms / 1000.0))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Stockfish analyse failed for /engine/eval: %s", exc)
+        return {"score": None, "best_move": None, "source": "unavailable"}
+    finally:
+        engine_pool._release_engine(engine)  # noqa: SLF001
+
+    score_obj = info.get("score") if isinstance(info, dict) else None
+    pv = info.get("pv") if isinstance(info, dict) else None
+
+    score_cp: int | None = None
+    if score_obj is not None:
+        white_score = score_obj.white()
+        if white_score.is_mate():
+            mate_in = white_score.mate() or 0
+            # Convention matches the rest of the codebase: ±10000 for
+            # mate, signed by side (positive = White mates).
+            score_cp = 10000 if mate_in > 0 else -10000
+        else:
+            score_cp = int(white_score.score(mate_score=10000) or 0)
+
+    best_move: str | None = None
+    if pv:
+        try:
+            best_move = pv[0].uci()
+        except (IndexError, AttributeError):
+            best_move = None
+
+    return {"score": score_cp, "best_move": best_move, "source": "engine"}
 
 
 @app.get("/next-training/{player_id}")

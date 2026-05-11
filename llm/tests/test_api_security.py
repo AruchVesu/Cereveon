@@ -77,7 +77,6 @@ from pydantic import ValidationError
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _SERVER_PY = _REPO_ROOT / "llm" / "server.py"
-_HOST_APP_PY = _REPO_ROOT / "llm" / "host_app.py"
 _AUTH_ROUTER = _REPO_ROOT / "llm" / "seca" / "auth" / "router.py"
 
 
@@ -657,17 +656,7 @@ class TestVerifyApiKeyLogic:
 
 
 # ===========================================================================
-# Tier 1 — AST Inspection: host_app.py debug endpoint protection
-# ===========================================================================
-#
-# Pinned invariants:
-# 31. SEC_HOST_DEBUG_REDIS_AUTH      /debug/redis has verify_api_key dependency.
-# 32. SEC_HOST_DEBUG_BOOK_AUTH       /debug/book has verify_api_key dependency.
-# 33. SEC_HOST_DEBUG_ENGINE_AUTH     /debug/engine (host_app) has verify_api_key.
-# 34. SEC_HOST_ENGINE_RAW_AUTH       /debug/engine-raw has verify_api_key dependency.
-# 35. SEC_HOST_CACHE_AUTH            /debug/cache has verify_api_key dependency.
-# 36. SEC_HOST_CACHE_VALUE_AUTH      /debug/cache/value has verify_api_key dependency.
-# 37. SEC_HOST_MISS_METRICS_AUTH     /debug/miss-metrics has verify_api_key dependency.
+# Pinned invariants (continued):
 # 38. SEC_SERVER_NO_PRINT_STMTS      server.py uses logger not print() for diagnostics.
 # 39. SEC_PROD_SECRET_KEY_GUARD      tokens.py raises RuntimeError at startup when SECRET_KEY
 #                                    is absent in prod — prevents ephemeral key from
@@ -675,57 +664,11 @@ class TestVerifyApiKeyLogic:
 # 40. SEC_PROD_API_KEY_GUARD         server.py raises RuntimeError at module level when
 #                                    SECA_API_KEY is absent in prod — fail-fast at startup
 #                                    instead of deferring failure to the first request.
-
-
-class TestAstHostAppDebugProtection:
-    """AST inspection: every debug endpoint in host_app.py must require verify_api_key."""
-
-    def setup_method(self):
-        self._host_tree = _parse(_HOST_APP_PY)
-        self._host_funcs = _get_decorated_functions(self._host_tree)
-
-    def _assert_protected(self, func_name: str, route: str) -> None:
-        func = self._host_funcs.get(func_name)
-        assert func is not None, f"{func_name}() not found in host_app.py"
-        assert _depends_on(func, "verify_api_key"), (
-            f"{route} in host_app.py must have Depends(verify_api_key) — "
-            "unauthenticated access exposes internal service state"
-        )
-
-    def test_debug_redis_has_verify_api_key(self):
-        """SEC_HOST_DEBUG_REDIS_AUTH: /debug/redis must require verify_api_key."""
-        self._assert_protected("debug_redis", "/debug/redis")
-
-    def test_debug_book_has_verify_api_key(self):
-        """SEC_HOST_DEBUG_BOOK_AUTH: /debug/book must require verify_api_key."""
-        self._assert_protected("debug_book", "/debug/book")
-
-    def test_debug_engine_has_verify_api_key(self):
-        """SEC_HOST_DEBUG_ENGINE_AUTH: /debug/engine (host_app) must require verify_api_key."""
-        self._assert_protected("debug_engine", "/debug/engine")
-
-    def test_engine_raw_has_verify_api_key(self):
-        """SEC_HOST_ENGINE_RAW_AUTH: /debug/engine-raw must require verify_api_key.
-
-        This endpoint bypasses the caching layer and acquires an engine directly —
-        an unauthenticated caller could exhaust the engine pool.
-        """
-        self._assert_protected("engine_raw", "/debug/engine-raw")
-
-    def test_debug_cache_has_verify_api_key(self):
-        """SEC_HOST_CACHE_AUTH: /debug/cache must require verify_api_key.
-
-        Accepts a Redis SCAN pattern — without auth, callers can enumerate all keys.
-        """
-        self._assert_protected("debug_cache", "/debug/cache")
-
-    def test_debug_cache_value_has_verify_api_key(self):
-        """SEC_HOST_CACHE_VALUE_AUTH: /debug/cache/value must require verify_api_key."""
-        self._assert_protected("debug_cache_value", "/debug/cache/value")
-
-    def test_debug_miss_metrics_has_verify_api_key(self):
-        """SEC_HOST_MISS_METRICS_AUTH: /debug/miss-metrics must require verify_api_key."""
-        self._assert_protected("debug_miss_metrics", "/debug/miss-metrics")
+#
+# SEC_HOST_DEBUG_* invariants (31–37) were retired with host_app.py in the
+# host_app retirement pass (2026-05-12).  The /debug/* endpoints they pinned
+# never reached production (host_app was not deployed; see the 2026-05-12 PR
+# notes) and the route handlers themselves were deleted.
 
 
 class TestServerNoPrintStatements:
@@ -926,37 +869,36 @@ class TestNetworkSecurityConfig:
         )
 
 
-class TestHostAppEvalRateLimited:
-    """SEC_HOST_EVAL_RATE_LIMITED (44): /engine/eval must have @limiter.limit decorator."""
+class TestEngineEvalRateLimited:
+    """SEC_HOST_EVAL_RATE_LIMITED (44): /engine/eval on server.py must
+    have @limiter.limit decorator.  Migrated from host_app.py in the
+    host_app retirement pass (2026-05-12); the rate limit is the same
+    30/minute that host_app had.  GET variant was dropped during the
+    migration (Android never used it) so only the POST is pinned."""
 
     def setup_method(self):
-        self._host_tree = _parse(_HOST_APP_PY)
-        self._host_funcs = _get_decorated_functions(self._host_tree)
+        self._tree = _parse(_SERVER_PY)
+        self._funcs = _get_decorated_functions(self._tree)
 
     def _has_limiter_decorator(self, func_name: str) -> bool:
-        func = self._host_funcs.get(func_name)
+        func = self._funcs.get(func_name)
         if func is None:
             return False
         for dec in func.decorator_list:
-            # Match `_limiter.limit(...)` or `limiter.limit(...)`
             if isinstance(dec, ast.Call):
                 f = dec.func
                 if isinstance(f, ast.Attribute) and f.attr == "limit":
                     return True
         return False
 
-    def test_eval_position_post_is_rate_limited(self):
-        """POST /engine/eval must have a @_limiter.limit() decorator."""
-        assert self._has_limiter_decorator("eval_position"), (
-            "eval_position() (POST /engine/eval) in host_app.py has no @limiter.limit decorator. "
-            "Unauthenticated callers can exhaust the engine pool."
-        )
-
-    def test_eval_position_query_get_is_rate_limited(self):
-        """GET /engine/eval must have a @_limiter.limit() decorator."""
-        assert self._has_limiter_decorator("eval_position_query"), (
-            "eval_position_query() (GET /engine/eval) in host_app.py has no @limiter.limit "
-            "decorator. Unauthenticated callers can exhaust the engine pool."
+    def test_engine_eval_post_is_rate_limited(self):
+        """POST /engine/eval must have a @limiter.limit() decorator.
+        Without it, an attacker with a valid SECA_API_KEY could exhaust
+        the Stockfish pool by spamming the endpoint."""
+        assert self._has_limiter_decorator("engine_eval"), (
+            "engine_eval() (POST /engine/eval) in server.py has no @limiter.limit "
+            "decorator.  Add @limiter.limit('30/minute') to match the host_app "
+            "pre-retirement rate limit."
         )
 
 

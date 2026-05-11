@@ -358,12 +358,11 @@ def test_container_images_keep_health_checks_and_non_root_runtime():
     assert "HEALTHCHECK" in llm_api_dockerfile
     assert "127.0.0.1:8000/health" in llm_api_dockerfile
 
-    llm_dockerfile = (ROOT / "llm" / "Dockerfile").read_text(encoding="utf-8")
-    assert "rm -rf /app/tests /app/rag/tests /app/.github /app/redis-win" in llm_dockerfile
-    assert "rm -f /app/package.json /app/package-lock.json /app/server.js" in llm_dockerfile
-    assert "USER appuser" in llm_dockerfile
-    assert "HEALTHCHECK" in llm_dockerfile
-    assert "127.0.0.1:8000/health" in llm_dockerfile
+    # ``llm/Dockerfile`` was deleted in the host_app retirement pass
+    # (2026-05-12) — it was the orphaned Dockerfile that ran the
+    # standalone ``host_app:app`` debug server.  Production has always
+    # used ``llm/Dockerfile.api`` (running ``llm.server:app``); the
+    # invariants for that file are pinned above.
 
     node_server = (ROOT / "llm" / "server.js").read_text(encoding="utf-8")
     assert 'app.get("/health"' in node_server

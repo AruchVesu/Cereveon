@@ -17,19 +17,20 @@ Derived from the production implementation; any deviation constitutes a
 
 ---
 
-## 1. `POST /engine/eval`  /  `GET /engine/eval`
+## 1. `POST /engine/eval`
 
-**Host:** `host_app.py`
-**Auth:** none
+**Host:** `server.py`
+**Auth:** `X-Api-Key` required
+**Rate limit:** 30 / minute
 
-### Request (POST body or GET query params)
+Migrated from `host_app.py` in the host_app retirement pass.  Contract narrowed
+during the migration — see "Removed in 2026-05-12" below.
+
+### Request body
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `fen` | `string \| null` | no | FEN string or `"startpos"` |
-| `moves` | `string[]` | no | UCI move list (alternative to FEN) |
-| `movetime_ms` | `int \| null` | no | Alias: `movetime`. Max engine think time (ms) |
-| `nodes` | `int \| null` | no | Max engine nodes to search |
+| `fen` | `string` | yes | Full 6-field FEN.  Validated server-side via `chess.Board(...)`; invalid input returns 400. |
 
 ### Response
 
@@ -37,21 +38,26 @@ Derived from the production implementation; any deviation constitutes a
 {
   "score":     <int | null>,
   "best_move": <string | null>,
-  "source":    <"engine" | "cache" | "book">,
-  "_metrics":  <object>
+  "source":    <"engine" | "unavailable">
 }
 ```
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `score` | `int \| null` | Centipawns from White's perspective. Positive = White better. `null` when engine unavailable (fallback path). |
+| `score` | `int \| null` | Centipawns from White's perspective. Positive = White better. Mate is reported as `±10000`. `null` when the engine pool is unavailable. |
 | `best_move` | `string \| null` | Best move in UCI notation (e.g. `"e2e4"`). `null` when no legal moves or engine unavailable. |
-| `source` | `string` | One of `"engine"`, `"cache"`, `"book"`. |
-| `_metrics` | `object` | Internal diagnostics. Always present. Structure varies by source. |
+| `source` | `string` | `"engine"` on the happy path; `"unavailable"` when the Stockfish pool is down or saturated (the route degrades to a 200-with-nulls rather than 500 to match the Android client's `engineAvailable=false` fallback in `ChessViewModel.dispatchEngineEval`). |
 
-### Known mismatches / gaps
-- `_metrics` has no stable schema contract; shape depends on `source`.
-- `score` semantics (centipawns from White) are not enforced by schema validation.
+### Removed in 2026-05-12 (host_app retirement)
+
+The pre-migration contract supported a `GET /engine/eval` variant and
+`moves` / `movetime_ms` / `nodes` body fields.  None of these were used by
+any in-tree caller (the Android `HttpEngineEvalClient` only POSTs `{"fen": ...}`),
+and `host_app.py` was never actually deployed to production (the legacy
+`llm/Dockerfile` that ran it was orphaned years before the
+`llm/Dockerfile.api` split).  The simpler contract above matches what the
+Android client actually sends; adding any of the removed fields back is a
+contract widening that requires an Android client update in the same release.
 
 ---
 
