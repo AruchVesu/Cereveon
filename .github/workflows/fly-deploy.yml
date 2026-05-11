@@ -882,10 +882,16 @@ jobs:
     # Both gated additionally on the COACH_DEEPSEEK_API_KEY secret being
     # set: without it the job no-ops with a clear log line, so a fork or
     # a repo without DeepSeek billing wired up doesn't spuriously fail
-    # the release path.
+    # the release path.  The secret-presence check is surfaced via a
+    # job-level ``env:`` because GitHub Actions disallows
+    # ``secrets.X`` directly in step-level ``if:`` expressions (it
+    # would create a side-channel oracle for whether a secret exists);
+    # using ``env:`` is the documented workaround.
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
+    env:
+      HAS_DEEPSEEK_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY != '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -908,20 +914,20 @@ jobs:
           pip install -r llm/requirements-ci.txt
 
       - name: Skip if COACH_DEEPSEEK_API_KEY is unset
-        if: ${{ secrets.COACH_DEEPSEEK_API_KEY == '' }}
+        if: env.HAS_DEEPSEEK_KEY != 'true'
         run: |
           echo "::warning::COACH_DEEPSEEK_API_KEY secret is not set; skipping LLM regression and smoke tests."
           echo "To enable them, set COACH_DEEPSEEK_API_KEY in repo secrets (Settings → Secrets and variables → Actions)."
 
       - name: Run LLM regression tests (RELEASE.md Step 3)
-        if: ${{ secrets.COACH_DEEPSEEK_API_KEY != '' }}
+        if: env.HAS_DEEPSEEK_KEY == 'true'
         env:
           RUN_DEEPSEEK_TESTS: "1"
           COACH_DEEPSEEK_API_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY }}
         run: python -m pytest -q llm/rag/tests/llm/test_llm_regression.py
 
       - name: Run DeepSeek smoke test (RELEASE.md Step 4)
-        if: ${{ secrets.COACH_DEEPSEEK_API_KEY != '' }}
+        if: env.HAS_DEEPSEEK_KEY == 'true'
         env:
           RUN_DEEPSEEK_TESTS: "1"
           COACH_DEEPSEEK_API_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY }}

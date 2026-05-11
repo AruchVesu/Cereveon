@@ -993,6 +993,31 @@ def test_llm_regression_cron_workflow_pins_topology():
     assert smoke_step["env"]["RUN_DEEPSEEK_TESTS"] == "1"
     assert "test_deepseek_smoke.py" in smoke_step["run"]
 
+    # Regression guard: the secret-presence check must be surfaced through
+    # the job-level ``env:`` (not directly in a step ``if:``).  GitHub
+    # Actions rejects ``${{ secrets.X }}`` in step-level ``if:`` and the
+    # workflow fails at PARSE time — every push silently red, zero jobs
+    # run, deploy never happens.  We failed this once (Sprint 3) — pin
+    # the working pattern so any future regression trips here instead
+    # of in production.
+    job_env = job.get("env") or {}
+    assert "HAS_DEEPSEEK_KEY" in job_env, (
+        "Cron workflow must surface the COACH_DEEPSEEK_API_KEY secret presence "
+        "via a job-level env (e.g. ``HAS_DEEPSEEK_KEY: ${{ secrets.X != '' }}``) "
+        "so step-level ``if:`` can read it without referencing the secret "
+        "directly (GitHub Actions rejects ``secrets.X`` inside step ``if:``)."
+    )
+    for step in (regression_step, smoke_step):
+        step_if = step.get("if", "")
+        assert "secrets." not in step_if, (
+            f"Step {step.get('name')!r} references secrets.X in its ``if:`` — "
+            f"GitHub Actions rejects this at workflow-parse time. "
+            f"Use env.HAS_DEEPSEEK_KEY instead."
+        )
+        assert (
+            "env.HAS_DEEPSEEK_KEY" in step_if
+        ), f"Step {step.get('name')!r} must gate on env.HAS_DEEPSEEK_KEY."
+
     # Telemetry artifact: must run on success AND failure (if: always()) so a
     # failed nightly is debuggable without needing to re-run the suite.
     artifact_step = _step_named(job, "Upload quality_scores.jsonl telemetry")

@@ -33,6 +33,14 @@ jobs:
     name: Real-LLM regression (DeepSeek)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # GitHub Actions disallows ``secrets.X`` directly in step-level
+    # ``if:`` expressions (it would create a side-channel oracle for
+    # whether a secret exists), so the secret-presence check is
+    # surfaced via a job-level ``env:`` and read as ``env.HAS_*`` in
+    # the steps below.  Same pattern as the tag-only counterpart in
+    # ``.github/workflows/fly-deploy.yml``.
+    env:
+      HAS_DEEPSEEK_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY != '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -55,20 +63,20 @@ jobs:
           pip install -r llm/requirements-ci.txt
 
       - name: Skip if COACH_DEEPSEEK_API_KEY is unset
-        if: ${{ secrets.COACH_DEEPSEEK_API_KEY == '' }}
+        if: env.HAS_DEEPSEEK_KEY != 'true'
         run: |
           echo "::warning::COACH_DEEPSEEK_API_KEY secret is not set; skipping weekly LLM regression."
           echo "Set the secret in repo Settings → Secrets and variables → Actions to enable."
 
       - name: Run LLM regression tests (Category D)
-        if: ${{ secrets.COACH_DEEPSEEK_API_KEY != '' }}
+        if: env.HAS_DEEPSEEK_KEY == 'true'
         env:
           RUN_DEEPSEEK_TESTS: "1"
           COACH_DEEPSEEK_API_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY }}
         run: python -m pytest -q llm/rag/tests/llm/test_llm_regression.py
 
       - name: Run DeepSeek smoke test (Category C)
-        if: ${{ secrets.COACH_DEEPSEEK_API_KEY != '' }}
+        if: env.HAS_DEEPSEEK_KEY == 'true'
         env:
           RUN_DEEPSEEK_TESTS: "1"
           COACH_DEEPSEEK_API_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY }}

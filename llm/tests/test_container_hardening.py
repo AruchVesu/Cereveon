@@ -223,7 +223,25 @@ class TestConservativeTierHardening(unittest.TestCase):
         self.assertTrue(_has_no_new_privileges(_service(self.compose, "caddy")), "CH_10")
 
     def test_ch_11_db_no_new_privileges(self):
-        self.assertTrue(_has_no_new_privileges(_service(self.compose, "db")), "CH_11")
+        # CH_11 carve-out: Postgres alpine's docker-entrypoint.sh uses
+        # ``gosu`` (setuid) to drop from root to the postgres user.
+        # ``no-new-privileges:true`` blocks setuid → entrypoint cannot
+        # drop → postgres refuses to run as root → container exits ~1s
+        # after Started, failing the Hetzner rolling deploy.  The fix
+        # is to add ``user: "70:70"`` (alpine postgres UID) plus migrate
+        # the pg_data volume ownership — a staging-validation task,
+        # not a runtime workaround.  Until that lands, the conservative
+        # tier carves db out of the universal floor.  Asserting equality
+        # with False (rather than skipping) makes the carve-out
+        # observable: any future contributor who re-adds the option
+        # without doing the user/volume migration will trip this test
+        # immediately and see the documented reason.
+        self.assertFalse(
+            _has_no_new_privileges(_service(self.compose, "db")),
+            "CH_11 carve-out: db must NOT carry security_opt: no-new-privileges:true "
+            "until the user:'70:70' + pg_data ownership migration lands. "
+            "See docker-compose.prod.yml comment block on the db service.",
+        )
 
     def test_ch_12_ollama_no_new_privileges(self):
         # CH_12 is a forward-looking contract: IF a local Ollama (or any
@@ -252,18 +270,31 @@ class TestConservativeTierHardening(unittest.TestCase):
 
 
 class TestUniversalSecurityFloor(unittest.TestCase):
+    # Documented carve-outs from the universal floor.  Adding a name here
+    # without a corresponding rationale in docker-compose.prod.yml AND a
+    # specific failing test (e.g. CH_11) for the same service is a review
+    # red flag — the floor should only carve out services with a real
+    # upstream-image incompatibility, not as a convenience.
+    _CH_13_CARVE_OUTS = frozenset({"db"})
+
     def test_ch_13_every_service_has_no_new_privileges(self):
         compose = _load_compose()
         services = compose.get("services") or {}
         self.assertTrue(services, "no services parsed from docker-compose.prod.yml")
-        missing = [name for name, svc in services.items() if not _has_no_new_privileges(svc)]
+        missing = [
+            name
+            for name, svc in services.items()
+            if not _has_no_new_privileges(svc) and name not in self._CH_13_CARVE_OUTS
+        ]
         self.assertEqual(
             missing,
             [],
             f"CH_13: services missing security_opt: no-new-privileges:true: "
             f"{missing}.  This flag is the universal hardening floor — "
-            f"every prod service must carry it.  Add it on the same commit "
-            f"that introduces the new service.",
+            f"every prod service must carry it unless it is in the documented "
+            f"carve-out set ({sorted(self._CH_13_CARVE_OUTS)}). Add the option "
+            f"on the same commit that introduces the new service, or extend "
+            f"the carve-out set here with the rationale comment.",
         )
 
 

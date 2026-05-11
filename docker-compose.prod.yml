@@ -144,13 +144,18 @@ services:
       start_period: 20s
       retries: 5
     restart: unless-stopped
-    # Conservative-tier hardening (CH_11).  Postgres writes to
-    # /var/lib/postgresql/data (volume-mounted), /var/run/postgresql,
-    # and /tmp; the deeper read_only + cap_drop recipe needs an
-    # explicit tmpfs list and staging validation per Postgres minor.
-    # no-new-privileges is the universal floor.
-    security_opt:
-      - "no-new-privileges:true"
+    # CH_11 carve-out: Postgres alpine ships a ``gosu``-based entrypoint
+    # that runs as root and setuid-drops to the postgres user on first
+    # start.  ``no-new-privileges:true`` blocks setuid, the entrypoint
+    # cannot drop privileges, postgres refuses to run as root, and the
+    # container exits ~1 second after Started — failing the Hetzner
+    # rolling deploy with ``dependency db failed to start: container
+    # chesscoach-db-1 is unhealthy``.  Restoring the conservative tier
+    # to *no* hardening here is the correct posture until the
+    # ``user: "70:70"`` (alpine postgres UID) + ``pg_data`` volume
+    # ownership migration is validated in staging.  CH_11 + CH_13 in
+    # ``llm/tests/test_container_hardening.py`` carry matching
+    # carve-outs that document the exception.
     logging:
       driver: "json-file"
       options:
