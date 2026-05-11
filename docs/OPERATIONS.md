@@ -379,4 +379,116 @@ No output is always better than unsafe output.
 
 If the system refuses to respond, that is a success condition, not a failure.
 
+---
+
+## 13. Observability Shipping to Grafana Cloud (Sprint 5.D.3)
+
+The Hetzner backend emits JSON structured logs (Sprint 5.D.2) and a
+Prometheus `/metrics` endpoint (Sprint 5.D.1).  Sprint 5.D.3 wires
+**Grafana Alloy** as a sidecar to ship both to Grafana Cloud's free
+tier — single vendor for logs + metrics, no inbound port exposure,
+no ongoing cost.
+
+The shipper is **opt-in** behind the `monitoring` compose profile.
+The default deploy never starts the `alloy` container, so an operator
+who hasn't yet set up Grafana Cloud sees zero impact.
+
+### 13.1 First-time setup
+
+1. **Create a Grafana Cloud account** at
+   <https://grafana.com/products/cloud/>.  The free tier covers
+   50 GB logs + Prometheus metrics + 14-day retention; no credit
+   card required.
+
+2. **Get the push endpoints + instance IDs.**  In Grafana Cloud,
+   open **Connections → Data Sources** and find the pre-provisioned
+   `grafanacloud-<stack>-logs` (Loki) and `grafanacloud-<stack>-prom`
+   (Prometheus).  Each data source page shows:
+
+   - The push URL under "Send data" (looks like
+     `https://logs-prod-006.grafana.net/loki/api/v1/push` for Loki
+     or `https://prometheus-prod-37-prod-eu-west-2.grafana.net/api/prom/push`
+     for Prometheus).
+   - A numeric **User** field — the per-data-source instance ID.
+     Note these are **different** for Loki and Prometheus on the
+     multi-tenant stack; copy each one separately.
+
+3. **Generate ONE API key** at **Account → API Keys** with both
+   `logs:write` AND `metrics:write` scopes.  Save the value;
+   Grafana doesn't show it again.
+
+4. **Set the env vars on the Hetzner host** by appending to
+   `/opt/chesscoach/.env.prod`:
+
+   ```
+   GRAFANA_CLOUD_LOKI_URL=https://logs-prod-006.grafana.net/loki/api/v1/push
+   GRAFANA_CLOUD_LOKI_USER=123456
+   GRAFANA_CLOUD_PROM_URL=https://prometheus-prod-37-prod-eu-west-2.grafana.net/api/prom/push
+   GRAFANA_CLOUD_PROM_USER=234567
+   GRAFANA_CLOUD_API_KEY=glc_eyJ...long_token...
+   ```
+
+   See `.env.example` for the full block of inline comments.
+
+5. **Start the alloy service**:
+
+   ```bash
+   cd /opt/chesscoach
+   docker compose --profile monitoring up -d alloy
+   ```
+
+   The `monitoring` profile is required — without it, `docker compose up`
+   skips the alloy service entirely.
+
+### 13.2 Verify ingestion
+
+1. **Logs**: in Grafana Cloud → **Explore → Loki**, run
+   ```
+   {job="cereveon-backend"} | json | level="INFO"
+   ```
+   Expect to see request-completion lines from `llm.server` within
+   ~30 seconds of starting Alloy.
+
+2. **Metrics**: in Grafana Cloud → **Explore → Prometheus**, query
+   ```
+   chesscoach_http_requests_total{job="cereveon-backend"}
+   ```
+   Expect non-zero counters keyed by `method`, `path_template`,
+   `status`.  Add `request_id` filtering in Loki to cross-reference
+   a specific request's log lines with its corresponding metric
+   labels.
+
+### 13.3 Stopping the shipper
+
+```bash
+docker compose --profile monitoring stop alloy
+```
+
+Logs continue to land in Docker's local `json-file` driver
+(50 MB × 5 file rotation per service) — only the outbound shipping
+pauses.  No data is lost on the host; restarting Alloy resumes from
+the last tail position via the persisted `alloy_data` volume.
+
+### 13.4 Disabling permanently
+
+Remove the five Grafana Cloud env vars from `.env.prod`.  The next
+`docker compose up` without the `monitoring` profile leaves the
+alloy service stopped.  The named volume `alloy_data` can be safely
+removed: `docker volume rm chesscoach_alloy_data` once the service
+is down.
+
+### 13.5 Cost-control notes
+
+- Free-tier ceiling is 50 GB logs/month.  At the current request
+  volume (request-completion INFO log per call + the discovery
+  routes) we're nowhere near it.  Watch `chesscoach_http_requests_total`
+  in Grafana for budget pressure.
+- The `request_id` label is high-cardinality (one per request).  If
+  retention pressure becomes a problem, drop the label by editing
+  the `stage.labels` block in `monitoring/alloy.alloy` — the
+  field remains queryable as a JSON line filter (`| json | request_id="..."`),
+  it just stops being indexed.
+- `/metrics` is scraped at a fixed 30-second interval; this is the
+  Prometheus default and matches Grafana Cloud's free-tier minimum.
+
 End of OPERATIONS.md

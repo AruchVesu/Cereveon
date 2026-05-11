@@ -205,7 +205,76 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ----------------------------------------------------------------
+  # Observability shipper — Sprint 5.D.3
+  # ----------------------------------------------------------------
+  # Grafana Alloy ships logs + metrics to Grafana Cloud free tier.
+  # Single binary (since Alloy 1.0; replaces Promtail + Grafana Agent).
+  #
+  # Behind the ``monitoring`` compose profile so the default
+  # ``docker compose up`` deploy does NOT require Grafana Cloud env
+  # vars.  Operator opts in once the credentials are set in
+  # ``.env.prod``:
+  #
+  #     docker compose --profile monitoring up -d alloy
+  #
+  # Reads:
+  #   1. ``api`` container's stdout via the host Docker socket — the
+  #      JSON structured logs from Sprint 5.D.2 (``SECA_ENV=prod``
+  #      enables the JsonLogFormatter).  Parses ``level``, ``logger``,
+  #      and ``request_id`` into Loki labels for query-side filtering.
+  #   2. ``api:8000/metrics`` (Prometheus exposition, Sprint 5.D.1).
+  #      Authenticates with the same ``SECA_API_KEY`` the Android client
+  #      uses; Alloy attaches ``X-Api-Key`` on each scrape.
+  #
+  # Writes to Grafana Cloud via HTTPS:
+  #   - Loki        push:  ``GRAFANA_CLOUD_LOKI_URL`` + LOKI_USER + API_KEY
+  #   - Prometheus  push:  ``GRAFANA_CLOUD_PROM_URL`` + PROM_USER + API_KEY
+  #
+  # Outbound-only — no inbound port exposure.  Image is the upstream
+  # ``grafana/alloy:v1.6.0`` (Alpine variant).  Pinned to the minor
+  # version so config-syntax breakage in a future major release
+  # cannot land via ``:latest`` on an unattended deploy.
+  alloy:
+    profiles: ["monitoring"]
+    image: grafana/alloy:v1.6.0
+    # Read-only access to the Docker socket so Alloy can discover and
+    # tail the ``api`` container's logs.  This is the standard pattern
+    # for sidecar log shippers and matches Grafana's own docs.
+    volumes:
+      - ./monitoring/alloy.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    command:
+      - "run"
+      - "/etc/alloy/config.alloy"
+      - "--storage.path=/var/lib/alloy/data"
+      - "--disable-reporting"
+    env_file: .env.prod
+    environment:
+      # Forward the same SECA_API_KEY that authenticates the Android
+      # client so Alloy's ``/metrics`` scrape passes the
+      # ``Depends(verify_metrics_auth)`` check on the API.
+      SECA_API_KEY: ${SECA_API_KEY:?SECA_API_KEY required for /metrics scrape auth}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    # CH_14 carve-out: Alloy needs the Docker socket and writes to its
+    # data dir; aggressive cap_drop + read_only would break it.  The
+    # ``no-new-privileges:true`` flag is universal-safe and applied
+    # below.  Documented alongside the other carve-outs in
+    # docs/DEPLOYMENT.md > Container Hardening.
+    security_opt:
+      - "no-new-privileges:true"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
 volumes:
+  alloy_data:
   api_data:
   caddy_data:
   caddy_config:

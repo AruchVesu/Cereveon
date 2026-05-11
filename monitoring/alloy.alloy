@@ -1,0 +1,146 @@
+// Grafana Alloy configuration — Sprint 5.D.3 log + metrics shipping.
+//
+// Lives at ``monitoring/alloy.alloy`` and is mounted read-only into
+// the alloy container at ``/etc/alloy/config.alloy``.  Loaded by the
+// container's command line ``run /etc/alloy/config.alloy``.
+//
+// Two pipelines:
+//
+//   1. LOGS  — Tail the ``api`` container's stdout via the host
+//              Docker socket.  Parse the JSON lines emitted by
+//              llm/log_config.py:JsonLogFormatter (5.D.2; active
+//              when SECA_ENV=prod).  Push to Grafana Cloud Loki
+//              with structured labels (level, logger, request_id)
+//              so LogQL queries can filter by request trace ID.
+//
+//   2. METRICS — Scrape ``api:8000/metrics`` (the Prometheus
+//                exposition added in 5.D.1).  The endpoint is
+//                authenticated against SECA_API_KEY; Alloy sends
+//                the same key via X-Api-Key on each scrape.
+//                Push to Grafana Cloud Prometheus via
+//                ``remote_write``.
+//
+// All credentials come from the environment.  ``.env.prod`` on the
+// Hetzner host sets:
+//
+//   - GRAFANA_CLOUD_LOKI_URL   e.g. https://logs-prod-006.grafana.net/loki/api/v1/push
+//   - GRAFANA_CLOUD_LOKI_USER  numeric Grafana Cloud user ID
+//   - GRAFANA_CLOUD_PROM_URL   e.g. https://prometheus-prod-37-prod-eu-west-2.grafana.net/api/prom/push
+//   - GRAFANA_CLOUD_PROM_USER  numeric Grafana Cloud user ID
+//   - GRAFANA_CLOUD_API_KEY    single token with logs:write + metrics:write scopes
+//   - SECA_API_KEY             reused from the API container's auth env
+
+// ============================================================
+// LOGS PIPELINE
+// ============================================================
+
+// Discover all containers visible to the local Docker daemon.
+discovery.docker "containers" {
+	host = "unix:///var/run/docker.sock"
+}
+
+// Filter to just the ``api`` container — the only producer of
+// JSON-formatted Cereveon backend logs.  Re-label Docker's
+// ``__meta_docker_container_name`` so we get a clean ``container``
+// label on every Loki line.
+discovery.relabel "containers" {
+	targets = discovery.docker.containers.targets
+
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/?chesscoach-api-.*"
+		action        = "keep"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/?(.*)"
+		target_label  = "container"
+		replacement   = "$1"
+	}
+
+	rule {
+		target_label = "job"
+		replacement  = "cereveon-backend"
+	}
+}
+
+// Stream the discovered containers' stdout into the JSON-extraction
+// stage.
+loki.source.docker "containers" {
+	host       = "unix:///var/run/docker.sock"
+	targets    = discovery.relabel.containers.output
+	forward_to = [loki.process.json.receiver]
+}
+
+// Parse each JSON line and promote useful keys into Loki labels.
+loki.process "json" {
+	forward_to = [loki.write.grafana_cloud.receiver]
+
+	stage.json {
+		expressions = {
+			"level"      = "level",
+			"logger"     = "logger",
+			"request_id" = "request_id",
+		}
+	}
+
+	// Promote the parsed fields to labels.  ``logger`` is bounded by
+	// the module count (~60), ``level`` is bounded to 5 values, and
+	// ``request_id`` is high-cardinality but ESSENTIAL for tracing.
+	// If retention pressure becomes a problem on the free tier, drop
+	// the request_id label and keep it as a JSON field (queryable via
+	// LogQL line filters).
+	stage.labels {
+		values = {
+			"level"      = "",
+			"logger"     = "",
+			"request_id" = "",
+		}
+	}
+}
+
+loki.write "grafana_cloud" {
+	endpoint {
+		url = sys.env("GRAFANA_CLOUD_LOKI_URL")
+		basic_auth {
+			username = sys.env("GRAFANA_CLOUD_LOKI_USER")
+			password = sys.env("GRAFANA_CLOUD_API_KEY")
+		}
+	}
+}
+
+// ============================================================
+// METRICS PIPELINE
+// ============================================================
+
+// Single-target scrape: the api container at port 8000 inside the
+// compose network.  Auth: the verify_metrics_auth dependency added
+// in 5.D.1 accepts BOTH ``X-Api-Key`` and ``Authorization: Bearer``;
+// using ``bearer_token`` here keeps the Alloy config purely
+// Prom-native rather than threading a custom header.
+prometheus.scrape "api_metrics" {
+	targets = [
+		{
+			__address__ = "api:8000",
+			job         = "cereveon-backend",
+		},
+	]
+
+	metrics_path    = "/metrics"
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	bearer_token    = sys.env("SECA_API_KEY")
+
+	forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.remote_write "grafana_cloud" {
+	endpoint {
+		url = sys.env("GRAFANA_CLOUD_PROM_URL")
+		basic_auth {
+			username = sys.env("GRAFANA_CLOUD_PROM_USER")
+			password = sys.env("GRAFANA_CLOUD_API_KEY")
+		}
+	}
+}

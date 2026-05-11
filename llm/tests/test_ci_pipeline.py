@@ -1134,3 +1134,82 @@ def test_compose_fallback_targets_real_ghcr_namespace():
         "api.image fallback image name must match the CI-published name "
         f"(env API_IMAGE_NAME in fly-deploy.yml), got: {image_segment!r}"
     )
+
+
+def test_compose_alloy_service_is_profile_gated():
+    """Sprint 5.D.3 — the Grafana Alloy observability shipper must be
+    behind the ``monitoring`` compose profile so default deploys do NOT
+    require Grafana Cloud credentials.
+
+    Without the profile gate, ``docker compose up`` on a fresh box with
+    no GRAFANA_CLOUD_* env vars would fail to start the alloy container,
+    cascading via depends_on into the api/caddy chain and breaking the
+    deploy.  Pinned here so a future refactor that drops the profile
+    declaration is caught at CI time.
+    """
+    compose = yaml.safe_load((ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8"))
+    assert "alloy" in compose["services"], (
+        "alloy service missing from docker-compose.prod.yml — Sprint 5.D.3 "
+        "shipper deleted?  Restore or update this test."
+    )
+    alloy = compose["services"]["alloy"]
+    assert alloy.get("profiles") == ["monitoring"], (
+        "alloy must be gated by the ``monitoring`` compose profile.  "
+        f"Without the profile, default ``docker compose up`` would try to "
+        f"start it and require GRAFANA_CLOUD_* env vars.  Got: {alloy.get('profiles')!r}"
+    )
+
+
+def test_compose_alloy_config_path_and_file_exist():
+    """Sprint 5.D.3 — the alloy service mounts ``monitoring/alloy.alloy``
+    as its config.  Both the mount declaration and the file must exist;
+    a missing file would crash the container at startup and the
+    monitoring profile would silently fail without affecting the rest
+    of the stack.
+    """
+    compose = yaml.safe_load((ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8"))
+    alloy = compose["services"]["alloy"]
+
+    # Compose ``volumes`` is a list of ``<host>:<container>:<flags>`` strings.
+    config_mount = next(
+        (v for v in alloy.get("volumes", []) if "alloy.alloy" in v),
+        None,
+    )
+    assert config_mount is not None, (
+        "alloy service must mount ``./monitoring/alloy.alloy`` into the container; "
+        f"got volumes={alloy.get('volumes')!r}"
+    )
+
+    config_file = ROOT / "monitoring" / "alloy.alloy"
+    assert config_file.is_file(), (
+        f"alloy config file missing at {config_file} — the docker-compose "
+        f"mount declaration would crash the container at startup."
+    )
+
+
+def test_alloy_config_references_required_env_vars():
+    """Sprint 5.D.3 — the alloy config file uses ``sys.env(...)`` to
+    pull Grafana Cloud credentials from the environment.  All five
+    Grafana Cloud env vars + SECA_API_KEY (reused for /metrics scrape
+    auth) must be referenced; a missing one would either crash the
+    config load or send unauthenticated requests to Grafana Cloud's
+    push endpoints.
+    """
+    config_text = (ROOT / "monitoring" / "alloy.alloy").read_text(encoding="utf-8")
+
+    required_env_vars = [
+        "GRAFANA_CLOUD_LOKI_URL",
+        "GRAFANA_CLOUD_LOKI_USER",
+        "GRAFANA_CLOUD_PROM_URL",
+        "GRAFANA_CLOUD_PROM_USER",
+        "GRAFANA_CLOUD_API_KEY",
+        "SECA_API_KEY",
+    ]
+    for var in required_env_vars:
+        assert var in config_text, (
+            f"alloy.alloy is missing a ``sys.env({var!r})`` reference.  "
+            "Either the variable was renamed in the config without "
+            "updating .env.example, or the corresponding pipeline "
+            "(logs vs metrics) was removed.  Re-add the reference or "
+            "delete this assertion in the same commit."
+        )
