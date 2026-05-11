@@ -17,6 +17,7 @@ FORMAT_TARGETS = [
     "llm/elite_engine_service.py",
     "llm/engine_eval.py",
     "llm/fen_hash.py",
+    "llm/log_config.py",
     "llm/metrics.py",
     "llm/observability.py",
     "llm/position_input.py",
@@ -43,6 +44,7 @@ PYLINT_TARGETS = [
     "llm/elite_engine_service.py",
     "llm/engine_eval.py",
     "llm/fen_hash.py",
+    "llm/log_config.py",
     "llm/metrics.py",
     "llm/observability.py",
     "llm/position_input.py",
@@ -64,6 +66,7 @@ PYLINT_TARGETS = [
 MYPY_TARGETS = [
     "scripts/run_all_tests.py",
     "llm/fen_hash.py",
+    "llm/log_config.py",
     "llm/metrics.py",
     "llm/observability.py",
     "llm/position_input.py",
