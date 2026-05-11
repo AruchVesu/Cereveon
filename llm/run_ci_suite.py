@@ -91,6 +91,12 @@ TEST_TARGETS = [
     # are exempt so an out-of-date client can still discover the server
     # version, and CORS allow_headers includes the custom header.
     "llm/tests/test_api_version_header.py",
+    # Prometheus /metrics endpoint + HTTP request middleware (MET_01..MET_10) —
+    # pins the auth shape (X-Api-Key OR Bearer SECA_API_KEY), exposition
+    # content-type, expected metric names, and the wire-up that
+    # increments chesscoach_http_requests_total / auth_login_total
+    # on real requests.  Closes Sprint 5.D.1 observability scope.
+    "llm/tests/test_metrics_endpoint.py",
     # Engine pool crash recovery (CR_01..CR_08) — pins that a Stockfish
     # subprocess crash is detected at release time and the dead handle
     # replaced with a fresh engine.  Without this, a crash mid-request
@@ -167,6 +173,7 @@ COVERAGE_TARGETS = [
     "llm.elite_engine_service",
     "llm.engine_eval",
     "llm.metrics",
+    "llm.observability",
     "llm.position_input",
     "llm.predictive_cache",
     "llm.rag.contracts.validate_output",
