@@ -271,6 +271,9 @@ class UpdateMeRequest(BaseModel):
         return float(v)
 
 
+from llm.observability import auth_login_total, auth_register_total
+
+
 # ---------------------------
 # Endpoints
 # ---------------------------
@@ -281,8 +284,10 @@ def register(request: Request, req: RegisterRequest, db: DBSession = Depends(get
     try:
         player = service.register(req.email, req.password)
     except ValueError:
+        auth_register_total.labels(result="duplicate_or_invalid").inc()
         raise HTTPException(status_code=400, detail="Registration failed")
     token, _ = service.login(req.email, req.password, device_info="register")
+    auth_register_total.labels(result="success").inc()
     return {
         "access_token": token,
         "player_id": str(player.id),
@@ -297,7 +302,9 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     try:
         token, player = service.login(req.email, req.password, req.device_info)
     except ValueError:
+        auth_login_total.labels(result="invalid_credentials").inc()
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    auth_login_total.labels(result="success").inc()
     return {
         "access_token": token,
         "player_id": str(player.id),

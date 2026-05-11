@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -11,9 +12,9 @@ import threading
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import Literal
-from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from llm.seca.shared_limiter import limiter
@@ -80,6 +81,7 @@ from llm.seca.storage.repo import (
     log_explanation,
     update_learning_score,
 )
+from llm import observability
 
 logger = logging.getLogger(__name__)
 logger.info("Running server from: %s", __file__)
@@ -179,6 +181,25 @@ async def lifespan(app: FastAPI):
                 ",".join(prewarm_modes),
             )
         scheduler = CurriculumScheduler()
+
+        # Register the engine pool snapshot provider for Prometheus
+        # /metrics gauges.  Callback-based so the acquire/release hot
+        # path stays free of Prom overhead; the snapshot is taken at
+        # scrape time only.  Captures pool_size + qsize at call time
+        # so the provider survives a pool restart in dev.
+        def _engine_pool_snapshot() -> dict[str, int]:
+            if engine_pool is None:
+                return {"size": 0, "available": 0, "in_use": 0}
+            size = engine_pool.settings.pool_size
+            available = engine_pool.qsize()
+            return {
+                "size": size,
+                "available": available,
+                "in_use": max(0, size - available),
+            }
+
+        observability.register_engine_pool_provider(_engine_pool_snapshot)
+
         logger.info("DB initialized")
         logger.info("Stockfish engine pool initialized (size=%d)", settings.pool_size)
     except Exception as e:
@@ -370,6 +391,43 @@ async def api_version_gate(request: Request, call_next):
 
     response = await call_next(request)
     response.headers["X-API-Version"] = API_VERSION
+    return response
+
+
+# ---- Prometheus HTTP metrics ---------------------------------------------
+# Sits OUTERMOST in the middleware stack so the timer wraps every inner
+# middleware (body-size limit, security headers, method override, version
+# gate) — what we want recorded is the wall-clock time the client sees.
+# The route template is read from ``request.scope`` AFTER call_next so
+# the cardinality of the ``path_template`` label is bounded by the
+# number of registered routes (FastAPI sets ``scope["route"]`` during
+# routing, before this middleware regains control).  Self-counting is
+# skipped for ``/metrics`` so a Prometheus scrape doesn't show up in the
+# histogram it just produced.
+_METRICS_PATH = "/metrics"
+
+
+@app.middleware("http")
+async def prometheus_http_middleware(request: Request, call_next):
+    if request.url.path == _METRICS_PATH:
+        return await call_next(request)
+
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration = time.perf_counter() - start
+
+    route = request.scope.get("route")
+    path_template = getattr(route, "path", None) or "unmatched"
+    status = str(response.status_code)
+    method = request.method
+
+    observability.http_requests_total.labels(
+        method=method, path_template=path_template, status=status
+    ).inc()
+    observability.http_request_duration_seconds.labels(
+        method=method, path_template=path_template, status=status
+    ).observe(duration)
+
     return response
 
 
@@ -895,6 +953,58 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+def verify_metrics_auth(
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+) -> None:
+    """Authenticate /metrics scrapes against ``SECA_API_KEY``.
+
+    Accepts both header shapes so a Prometheus server can scrape with
+    its native ``bearer_token`` config OR with the codebase's
+    ``X-Api-Key`` convention used by every other protected route:
+      * ``Authorization: Bearer <SECA_API_KEY>``
+      * ``X-Api-Key: <SECA_API_KEY>``
+
+    Constant-time comparison via ``hmac.compare_digest`` matches the
+    pattern in ``llm.seca.auth.api_key``.
+    """
+    if API_KEY is None:
+        # Same dev-vs-prod stance as verify_api_key: prod must be
+        # explicitly configured, dev without an API_KEY allows scrapes
+        # so operators iterating locally don't need to plumb a key.
+        if IS_PROD:
+            raise HTTPException(status_code=500, detail="Server misconfiguration")
+        return
+
+    if x_api_key and hmac.compare_digest(x_api_key, API_KEY):
+        return
+
+    if authorization:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() == "bearer" and token and hmac.compare_digest(token, API_KEY):
+            return
+
+    raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+@app.get("/metrics")
+def metrics_endpoint(_: None = Depends(verify_metrics_auth)) -> Response:
+    """Prometheus exposition endpoint.
+
+    Authenticated against ``SECA_API_KEY`` via X-Api-Key or Bearer
+    Authorization (see ``verify_metrics_auth``).  Skipped by the HTTP
+    request middleware so /metrics scrapes don't appear in the very
+    histogram they just produced.
+
+    Content-Type is the Prometheus text exposition format (with
+    version suffix), as emitted by ``prometheus_client.CONTENT_TYPE_LATEST``.
+    """
+    return Response(
+        content=observability.get_metrics_text(),
+        media_type=observability.METRICS_CONTENT_TYPE,
+    )
 
 
 @app.get("/seca/status")
