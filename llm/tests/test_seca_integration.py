@@ -173,7 +173,7 @@ class TestConfidenceLanguageControllerWiring:
         )
 
     def test_sint09_urgency_is_critical_on_blunder_signal(self):
-        from llm.confidence_language_controller import compute_urgency
+        from llm.seca.coach.confidence_language_controller import compute_urgency
         from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
 
         signal = extract_engine_signal({"errors": {"last_move_quality": "blunder"}})
@@ -182,7 +182,7 @@ class TestConfidenceLanguageControllerWiring:
         )
 
     def test_sint10_urgency_is_calm_on_neutral_signal(self):
-        from llm.confidence_language_controller import compute_urgency
+        from llm.seca.coach.confidence_language_controller import compute_urgency
         from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
 
         signal = extract_engine_signal({})

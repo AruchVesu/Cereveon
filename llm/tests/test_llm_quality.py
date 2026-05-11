@@ -50,7 +50,7 @@ from llm.seca.coach.chat_pipeline import (
 )
 from llm.seca.coach.live_move_pipeline import _build_hint, generate_live_reply
 from llm.seca.explainer.safe_explainer import SafeExplainer
-from llm.confidence_language_controller import (
+from llm.seca.coach.confidence_language_controller import (
     build_language_controller_block,
     build_style_instruction,
     compute_tone,

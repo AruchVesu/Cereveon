@@ -35,7 +35,7 @@ import logging
 import time
 from dataclasses import dataclass
 
-from llm.confidence_language_controller import compute_urgency
+from llm.seca.coach.confidence_language_controller import compute_urgency
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
 from llm.seca.explainer.safe_explainer import SafeExplainer
 
@@ -48,7 +48,7 @@ _safe_explainer = SafeExplainer()
 # ---------------------------------------------------------------------------
 
 try:
-    from llm.explain_pipeline import call_llm as _call_llm  # type: ignore[import]
+    from llm.seca.coach.explain_pipeline import call_llm as _call_llm  # type: ignore[import]
     from llm.rag.prompts.system_mode_1 import SYSTEM_PROMPT_MODE_1  # type: ignore[import]
     from llm.rag.prompts.mode_1.render import render_mode_1_prompt  # type: ignore[import]
     from llm.rag.retriever.retriever import retrieve as _retrieve  # type: ignore[import]

@@ -1,6 +1,6 @@
 """DeepSeek BaseLLM adapter.
 
-Wraps ``llm.explain_pipeline.call_llm`` (the production LLM call site) in
+Wraps ``llm.seca.coach.explain_pipeline.call_llm`` (the production LLM call site) in
 the ``BaseLLM`` interface that ``run_mode_2`` and the contract / smoke
 tests consume. This keeps the test suite's "real-LLM" path identical to
 production at the wire: same HTTP request, same retry behaviour, same
@@ -17,7 +17,7 @@ LiteLLM gateway, etc.) does not require code changes here.
 
 from __future__ import annotations
 
-from llm.explain_pipeline import call_llm
+from llm.seca.coach.explain_pipeline import call_llm
 from llm.rag.llm.base import BaseLLM
 
 

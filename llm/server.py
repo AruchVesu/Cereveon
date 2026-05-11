@@ -47,7 +47,7 @@ from llm.seca.engines.stockfish.pool import (
     engine_config_fingerprint,
 )
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
-from llm.explain_pipeline import generate_validated_explanation
+from llm.seca.coach.explain_pipeline import generate_validated_explanation
 from llm.rag.validators.explain_response_schema import (
     validate_explain_response,
     validate_chat_response,
@@ -964,7 +964,7 @@ async def llm_health(request: Request):
     doesn't stall the probe — a probe that itself times out IS a
     useful signal.
     """
-    from llm.explain_pipeline import DEEPSEEK_API_BASE, DEEPSEEK_URL, MODEL_NAME
+    from llm.seca.coach.explain_pipeline import DEEPSEEK_API_BASE, DEEPSEEK_URL, MODEL_NAME
 
     started = time.perf_counter()
     timeout_s = float(os.getenv("LLM_HEALTH_GENERATE_TIMEOUT_S", "10"))

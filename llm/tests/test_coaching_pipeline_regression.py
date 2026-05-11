@@ -284,58 +284,58 @@ class TestSeverityClassificationDeterminism:
     """Confidence, urgency, tone and the language block are all pure functions."""
 
     def test_compute_confidence_stable(self):
-        from llm.confidence_language_controller import compute_confidence
+        from llm.seca.coach.confidence_language_controller import compute_confidence
 
         esv = _esv(STOCKFISH_TACTICAL, FEN_TACTICAL)
         results = [compute_confidence(esv) for _ in range(5)]
         assert len(set(results)) == 1
 
     def test_compute_urgency_stable(self):
-        from llm.confidence_language_controller import compute_urgency
+        from llm.seca.coach.confidence_language_controller import compute_urgency
 
         esv = _esv(STOCKFISH_BLUNDER, FEN_BLUNDER)
         results = [compute_urgency(esv) for _ in range(5)]
         assert len(set(results)) == 1
 
     def test_build_language_block_stable(self):
-        from llm.confidence_language_controller import build_language_controller_block
+        from llm.seca.coach.confidence_language_controller import build_language_controller_block
 
         esv = _esv(STOCKFISH_TACTICAL, FEN_TACTICAL)
         blocks = [build_language_controller_block(esv) for _ in range(5)]
         assert len(set(blocks)) == 1
 
     def test_mate_always_produces_high_confidence(self):
-        from llm.confidence_language_controller import compute_confidence
+        from llm.seca.coach.confidence_language_controller import compute_confidence
 
         esv = _esv(STOCKFISH_MATE, FEN_MATE)
         assert compute_confidence(esv) == "high"
 
     def test_blunder_always_produces_critical_urgency(self):
-        from llm.confidence_language_controller import compute_urgency
+        from llm.seca.coach.confidence_language_controller import compute_urgency
 
         esv = _esv(STOCKFISH_BLUNDER, FEN_BLUNDER)
         assert compute_urgency(esv) == "critical"
 
     def test_forced_mate_flag_always_critical_urgency(self):
-        from llm.confidence_language_controller import compute_urgency
+        from llm.seca.coach.confidence_language_controller import compute_urgency
 
         esv = _esv(STOCKFISH_MATE, FEN_MATE)
         assert compute_urgency(esv) == "critical"
 
     def test_critical_urgency_always_produces_urgent_tone(self):
-        from llm.confidence_language_controller import compute_tone
+        from llm.seca.coach.confidence_language_controller import compute_tone
 
         tone = compute_tone(player_elo=1500, confidence="high", urgency="critical")
         assert tone == "urgent"
 
     def test_low_elo_non_critical_always_supportive(self):
-        from llm.confidence_language_controller import compute_tone
+        from llm.seca.coach.confidence_language_controller import compute_tone
 
         tone = compute_tone(player_elo=800, confidence="medium", urgency="calm")
         assert tone == "supportive"
 
     def test_language_block_contains_tone_text(self):
-        from llm.confidence_language_controller import build_language_controller_block
+        from llm.seca.coach.confidence_language_controller import build_language_controller_block
 
         esv = _esv(STOCKFISH_BLUNDER, FEN_BLUNDER)
         block = build_language_controller_block(esv)
@@ -345,7 +345,7 @@ class TestSeverityClassificationDeterminism:
 
     @pytest.mark.parametrize("stockfish_json,fen", ALL_CASES)
     def test_language_block_always_has_three_rules(self, stockfish_json, fen):
-        from llm.confidence_language_controller import build_language_controller_block
+        from llm.seca.coach.confidence_language_controller import build_language_controller_block
 
         esv = _esv(stockfish_json, fen)
         block = build_language_controller_block(esv)
