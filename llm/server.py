@@ -1385,8 +1385,15 @@ def start_game(req: StartGameRequest, request: Request, player=Depends(get_curre
 class GameCheckpointRequest(BaseModel):
     """In-progress board state pushed by the client after each move.
 
-    fen: full FEN of the current position.  Bounded at 256 chars
-        (a real FEN tops out around 90; the cap rejects abuse).
+    fen: full FEN of the current position.  Validated through the
+        canonical ``_validate_fen_field`` shared with /move, /live/move,
+        /analyze, /explain, /chat — 100-char cap, six FEN fields,
+        verified parseable by ``chess.Board()``.  Pre-Sprint-5.B
+        validation only rejected control chars + capped at 256, so a
+        256-char malformed FEN was accepted, stored, and later served
+        back to clients via /game/active (audit finding F-10).  The
+        unified validator closes that path while staying compatible
+        with every legitimate FEN length the Android client emits.
     uci_history: comma-separated UCI moves (e.g. "e2e4,e7e5,g1f3").
         Bounded at 16 KB — enough for a 2000-move game which is
         well beyond any realistic length.
@@ -1398,15 +1405,7 @@ class GameCheckpointRequest(BaseModel):
     @field_validator("fen")
     @classmethod
     def validate_fen(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("fen must not be empty")
-        if len(v) > 256:
-            raise ValueError("fen too long (max 256 chars)")
-        for ch in v:
-            if ord(ch) < 0x20 or ord(ch) == 0x7F:
-                raise ValueError("fen contains control characters")
-        return v
+        return _validate_fen_field(v)
 
     @field_validator("uci_history")
     @classmethod

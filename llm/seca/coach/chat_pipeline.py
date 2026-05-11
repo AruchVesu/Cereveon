@@ -51,6 +51,14 @@ _safe_explainer = SafeExplainer()
 # Optional LLM imports
 # ---------------------------------------------------------------------------
 
+# Pre-LLM injection sanitizer.  Pulled out of the LLM-availability guard
+# below because ``_safe_sanitize`` (used by the deterministic fallback
+# path too — F-09 fix) calls it; the deterministic path must be able to
+# drop injection-laced nested player-profile leaves whether or not the
+# rest of the LLM toolkit imports cleanly.  ``input_sanitizer`` is pure-
+# regex / Python stdlib with no external deps.
+from llm.rag.prompts.input_sanitizer import sanitize_user_query as _sanitize  # noqa: E402
+
 try:
     from llm.seca.coach.explain_pipeline import call_llm as _call_llm  # type: ignore[import]
     from llm.rag.prompts.system_v2_mode_2 import SYSTEM_PROMPT as _SYSTEM_PROMPT  # type: ignore[import]
@@ -59,7 +67,6 @@ try:
     from llm.rag.documents import ALL_RAG_DOCUMENTS as _DOCS  # type: ignore[import]
     from llm.seca.coach.confidence_language_controller import build_language_controller_block as _build_clc  # type: ignore[import]
     from llm.rag.validators.mode_2_negative import validate_mode_2_negative as _validate_neg  # type: ignore[import]
-    from llm.rag.prompts.input_sanitizer import sanitize_user_query as _sanitize  # type: ignore[import]
     from llm.rag.safety.output_firewall import (  # type: ignore[import]
         check_output as _check_output,
         OutputFirewallError as _OutputFirewallError,
@@ -267,6 +274,38 @@ def _sanitize_field(value: str, max_len: int = 200) -> str:
     return "".join(c if c >= "\x20" else " " for c in str(value).replace("\x7f", " "))[:max_len].strip()
 
 
+def _safe_sanitize(value: str, max_len: int = 60) -> str | None:
+    """Combine the structural strip (``_sanitize_field``) with the
+    injection-regex detector (``_sanitize`` / ``sanitize_user_query``).
+
+    Used for **nested** player-profile leaves — mistake tags, strengths,
+    skill estimate, past-mistake categories.  The Pydantic boundary
+    validator on ``ChatRequest.player_profile`` already runs
+    ``sanitize_user_query`` on STRING values, but a nested dict (e.g.
+    ``common_mistakes: [{"tag": "ignore previous instructions..."}]``)
+    walks past it: the leaf strings reach the prompt only through this
+    pipeline, where pre-Sprint-5.B ``_sanitize_field`` stripped control
+    chars but never ran the injection regex.  Audit finding F-09.
+
+    Returns ``None`` when the value contains an injection pattern; the
+    caller drops the field rather than substituting a placeholder, so
+    the prompt stays minimal and the LLM never sees adversarial text.
+    Clean values pass through unchanged (``sanitize_user_query`` is
+    idempotent — see ``llm/rag/prompts/input_sanitizer.py``).
+    """
+    cleaned = _sanitize_field(value, max_len=max_len)
+    if not cleaned:
+        return None
+    try:
+        return _sanitize(cleaned)
+    except ValueError:
+        logger.warning(
+            "Dropping player-profile field with injection-pattern content (orig len=%d)",
+            len(str(value)),
+        )
+        return None
+
+
 # Coach-voice tone instructions for the LLM system prompt.  Mapped
 # from the Android SettingsBottomSheet radio (formal / conversational
 # / terse).  None / unknown → no voice block (model uses default
@@ -313,25 +352,40 @@ def _build_chat_llm(
     if history_lines:
         history_block = "\n\nCONVERSATION HISTORY:\n" + "\n".join(history_lines)
 
-    # Player context block
+    # Player context block.  Every leaf that goes into the LLM prompt
+    # runs through ``_safe_sanitize`` (control-char strip + injection-
+    # regex) so adversarial text smuggled inside a nested
+    # player_profile dict (audit F-09) gets dropped before assembly.
     player_block = ""
     if player_profile:
-        skill = _sanitize_field(player_profile.get("skill_estimate", ""), max_len=80)
+        skill = _safe_sanitize(player_profile.get("skill_estimate", ""), max_len=80)
         mistakes = player_profile.get("common_mistakes", [])
         strengths = player_profile.get("strengths", [])
         if skill:
             player_block += f"\nPlayer skill level: {skill}."
         if mistakes:
-            tags = [_sanitize_field(m.get("tag", str(m)) if isinstance(m, dict) else str(m), max_len=60)
-                    for m in mistakes[:5]]
-            player_block += f"\nRecurring mistake areas: {', '.join(tags)}."
+            tags = [
+                _safe_sanitize(
+                    m.get("tag", str(m)) if isinstance(m, dict) else str(m),
+                    max_len=60,
+                )
+                for m in mistakes[:5]
+            ]
+            tags = [t for t in tags if t]
+            if tags:
+                player_block += f"\nRecurring mistake areas: {', '.join(tags)}."
         if strengths:
-            player_block += f"\nPlayer strengths: {', '.join(_sanitize_field(str(s), max_len=60) for s in strengths[:3])}."
+            safe_strengths = [_safe_sanitize(str(s), max_len=60) for s in strengths[:3]]
+            safe_strengths = [s for s in safe_strengths if s]
+            if safe_strengths:
+                player_block += f"\nPlayer strengths: {', '.join(safe_strengths)}."
         if player_block:
             player_block = "\n\nPLAYER CONTEXT:" + player_block
     if past_mistakes:
-        safe_mistakes = [_sanitize_field(m, max_len=60) for m in past_mistakes[:5]]
-        player_block += f"\nRecent training focus: {', '.join(safe_mistakes)}."
+        safe_mistakes = [_safe_sanitize(m, max_len=60) for m in past_mistakes[:5]]
+        safe_mistakes = [m for m in safe_mistakes if m]
+        if safe_mistakes:
+            player_block += f"\nRecent training focus: {', '.join(safe_mistakes)}."
 
     # RAG retrieval + style block
     rag_docs = _retrieve(engine_signal, _DOCS)
@@ -408,22 +462,38 @@ def _build_context_block(
     if move_count is not None:
         parts.append(f"This is move {move_count} of the game.")
 
+    # F-09: every nested player-profile leaf runs through ``_safe_sanitize``
+    # (control-char strip + injection-regex) so adversarial text in mistake
+    # tags / strengths / skill / past_mistakes cannot reach the deterministic
+    # context block either.  Same defence as the LLM path in ``_build_chat_llm``.
     if player_profile:
-        skill = _sanitize_field(player_profile.get("skill_estimate", ""), max_len=80)
+        skill = _safe_sanitize(player_profile.get("skill_estimate", ""), max_len=80)
         mistakes = player_profile.get("common_mistakes", [])
         strengths = player_profile.get("strengths", [])
         if skill:
             parts.append(f"Player skill level: {skill}.")
         if mistakes:
-            tags = [_sanitize_field(m.get("tag", str(m)) if isinstance(m, dict) else str(m), max_len=60)
-                    for m in mistakes[:5]]
-            parts.append(f"Recurring mistake areas: {', '.join(tags)}.")
+            tags = [
+                _safe_sanitize(
+                    m.get("tag", str(m)) if isinstance(m, dict) else str(m),
+                    max_len=60,
+                )
+                for m in mistakes[:5]
+            ]
+            tags = [t for t in tags if t]
+            if tags:
+                parts.append(f"Recurring mistake areas: {', '.join(tags)}.")
         if strengths:
-            parts.append(f"Strengths: {', '.join(_sanitize_field(str(s), max_len=60) for s in strengths[:3])}.")
+            safe_strengths = [_safe_sanitize(str(s), max_len=60) for s in strengths[:3]]
+            safe_strengths = [s for s in safe_strengths if s]
+            if safe_strengths:
+                parts.append(f"Strengths: {', '.join(safe_strengths)}.")
 
     if past_mistakes:
-        safe_mistakes = [_sanitize_field(m, max_len=60) for m in past_mistakes[:5]]
-        parts.append(f"Recent training focus: {', '.join(safe_mistakes)}.")
+        safe_mistakes = [_safe_sanitize(m, max_len=60) for m in past_mistakes[:5]]
+        safe_mistakes = [m for m in safe_mistakes if m]
+        if safe_mistakes:
+            parts.append(f"Recent training focus: {', '.join(safe_mistakes)}.")
 
     return " ".join(parts)
 

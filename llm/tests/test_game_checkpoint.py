@@ -81,6 +81,14 @@ def _fake_request() -> StarletteRequest:
 # ---------------------------------------------------------------------------
 
 
+# Shared by every test class below that constructs a real
+# ``GameCheckpointRequest``.  Post-Sprint-5.B the validator delegates
+# to the canonical ``_validate_fen_field`` (100-char cap + six fields +
+# ``chess.Board()`` parse), so placeholder values like ``"fen"`` or
+# ``"some-fen"`` are no longer accepted.
+_VALID_FEN = "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"
+
+
 class TestCheckpointRequestValidation:
     """GameCheckpointRequest enforces bounds + control-char defence."""
 
@@ -97,33 +105,61 @@ class TestCheckpointRequestValidation:
         )
         assert "e2e4" in req.uci_history
 
+    # Sprint 5.B / audit F-10: ``GameCheckpointRequest.fen`` now delegates
+    # to the canonical ``_validate_fen_field`` shared with /move,
+    # /live/move, /analyze, /explain, /chat.  That validator requires
+    # six FEN fields and a successful ``chess.Board()`` parse, and caps
+    # at 100 chars instead of 256.  Every rejection path below now
+    # produces the unified message "invalid FEN" (or — for FENs that
+    # parse cleanly — "fen must not be empty" still applies via the
+    # canonical validator's empty check); the tests are tightened to
+    # the new contract, matching the production posture rather than the
+    # pre-Sprint-5.B placeholder behaviour.  ``_VALID_FEN`` lives at
+    # module level (see above) so the endpoint-tier test class below
+    # can reuse it without re-declaring.
+
     def test_blank_fen_rejected(self):
         from llm.server import GameCheckpointRequest
         for bad in ("", "   "):
-            with pytest.raises(ValidationError, match="fen must not be empty"):
+            with pytest.raises(ValidationError, match="invalid FEN"):
                 GameCheckpointRequest(fen=bad)
 
     def test_oversized_fen_rejected(self):
         from llm.server import GameCheckpointRequest
-        with pytest.raises(ValidationError, match="fen too long"):
+        # 257-char string fails both "len > 100" AND the parse check —
+        # either way, "invalid FEN" is the canonical message.
+        with pytest.raises(ValidationError, match="invalid FEN"):
             GameCheckpointRequest(fen="x" * 257)
+
+    def test_malformed_fen_rejected(self):
+        """F-10 fix: a syntactically-malformed FEN (wrong number of
+        fields, unparseable rank string) is now rejected at the
+        validator layer instead of being stored and later served back
+        through /game/active."""
+        from llm.server import GameCheckpointRequest
+        for bad in ("not-a-fen", "8/8/8/8/8/8/8/8 w - - 0 1 99", "/" * 80):
+            with pytest.raises(ValidationError, match="invalid FEN"):
+                GameCheckpointRequest(fen=bad)
 
     def test_oversized_uci_history_rejected(self):
         from llm.server import GameCheckpointRequest
         with pytest.raises(ValidationError, match="uci_history too long"):
-            GameCheckpointRequest(fen="x", uci_history="a" * 16_385)
+            GameCheckpointRequest(fen=_VALID_FEN, uci_history="a" * 16_385)
 
     @pytest.mark.parametrize("bad", ["a\nb", "a\rb", "a\x00b", "a\x7fb"])
     def test_fen_control_chars_rejected(self, bad):
         from llm.server import GameCheckpointRequest
-        with pytest.raises(ValidationError, match="control characters"):
+        # The canonical validator rejects these via the same "invalid FEN"
+        # path — chess.Board() refuses to parse a string containing
+        # control characters.
+        with pytest.raises(ValidationError, match="invalid FEN"):
             GameCheckpointRequest(fen=bad)
 
     @pytest.mark.parametrize("bad", ["a\nb", "a\rb", "a\x00b"])
     def test_uci_history_control_chars_rejected(self, bad):
         from llm.server import GameCheckpointRequest
         with pytest.raises(ValidationError, match="control characters"):
-            GameCheckpointRequest(fen="ok", uci_history=bad)
+            GameCheckpointRequest(fen=_VALID_FEN, uci_history=bad)
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +301,7 @@ class TestCheckpointEndpoint:
         try:
             result = checkpoint_game_state(
                 game_id=game_id,
-                req=GameCheckpointRequest(fen="some-fen", uci_history="e2e4"),
+                req=GameCheckpointRequest(fen=_VALID_FEN, uci_history="e2e4"),
                 request=_fake_request(),
                 player=player,
             )
@@ -286,7 +322,7 @@ class TestCheckpointEndpoint:
             with pytest.raises(HTTPException) as exc:
                 checkpoint_game_state(
                     game_id="game-never-existed",
-                    req=GameCheckpointRequest(fen="fen"),
+                    req=GameCheckpointRequest(fen=_VALID_FEN),
                     request=_fake_request(),
                     player=player,
                 )
@@ -311,7 +347,7 @@ class TestCheckpointEndpoint:
             with pytest.raises(HTTPException) as exc:
                 checkpoint_game_state(
                     game_id=game_id,
-                    req=GameCheckpointRequest(fen="fen"),
+                    req=GameCheckpointRequest(fen=_VALID_FEN),
                     request=_fake_request(),
                     player=attacker,
                 )
@@ -336,7 +372,7 @@ class TestCheckpointEndpoint:
             with pytest.raises(HTTPException) as exc:
                 checkpoint_game_state(
                     game_id=game_id,
-                    req=GameCheckpointRequest(fen="fen"),
+                    req=GameCheckpointRequest(fen=_VALID_FEN),
                     request=_fake_request(),
                     player=player,
                 )
@@ -355,7 +391,7 @@ class TestCheckpointEndpoint:
             with pytest.raises(HTTPException) as exc:
                 checkpoint_game_state(
                     game_id="x" * 65,
-                    req=GameCheckpointRequest(fen="fen"),
+                    req=GameCheckpointRequest(fen=_VALID_FEN),
                     request=_fake_request(),
                     player=player,
                 )
