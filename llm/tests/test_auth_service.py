@@ -30,7 +30,7 @@ def _make_v1_password_hash(password: str, iterations: int = 600_000) -> str:
     intentionally only emits v2 — exposing a v1 builder there would
     invite accidental regressions.
     """
-    normalized = hashlib.sha256(password.encode("utf-8")).digest()
+    normalized = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), b"", 1)
     salt = os.urandom(16)
     dk = hashlib.pbkdf2_hmac("sha256", normalized, salt, iterations)
     return (
