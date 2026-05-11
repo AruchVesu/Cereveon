@@ -4,78 +4,69 @@ SECA SAFETY FREEZE GUARD
 Hard-disables any self-modifying or adaptive learning behaviour at runtime.
 
 The architecture (CLAUDE.md rule 3, docs/ARCHITECTURE.md "Forbidden Changes")
-prohibits autonomous reinforcement learning in this system.  Five deletion
-sweeps removed every dormant RL/ML tree from the live codebase:
-
-  - First sweep (May 2026): ``llm/seca/{closed_loop, evolution, optim,
-    opponent, policy, henm, outcome, world, coaching}/``, ``llm/seca/brain/{meta,
-    rewards, world_model, data}/``, ``llm/seca/learning/{trainer, causal_*,
-    online_learner, performance, pipeline}.py``, plus the
-    ``if not SAFE_MODE:`` blocks in ``events/router.py``.
-  - Second sweep (May 2026): orphaned modules with no live importers that
-    had been missed by the first sweep —
-    ``llm/seca/{adapt, db, models}.py`` and ``llm/seca/{api, data, models,
-    ratings, realtime, serving, skill}/``.
-  - Third sweep (May 2026): ``llm/seca/memory/`` (six dialogue-memory
-    modules with only internal cross-imports) and ``llm/seca/player/``
-    (eight files including the AUT-02 quarantine ``player_api.py``;
-    deleting the file is a stronger invariant than the prior "do not
-    import" warning since the footgun no longer exists).
-  - Fourth sweep (May 2026): the abandoned RL-curriculum substrate in
-    ``llm/seca/curriculum/`` —
-    ``{actions, curriculum_generator, curriculum_types, lesson_selector,
-    optoimizer, planner, training_tasks, weakness_detector}.py``.
-    The cluster was an alternative curriculum design built on the
-    deleted ``llm.seca.player.player_model`` (so several files were
-    already broken at import time after the third sweep); the live
-    curriculum lives in ``router → generator → models/policy/types``
-    + ``scheduler → priority_model + task_selector``.
-  - Fifth sweep (May 2026): the neural-policy substrate inside
-    ``llm/seca/engines/`` —
-    ``llm/seca/engines/hmpt/{config, dataset, infer, model, train,
-    v1encoder}.py`` (a 6-file PyTorch ``nn.Module`` cluster) plus
-    ``llm/seca/engines/adaptive/{__init__, aoci, controller}.py``
-    (its only consumer, itself with zero external importers).  Also
-    deleted: ``data/models/hmpt/v1encoder.py`` (byte-identical
-    duplicate at repo root), ``llm/data/skill_dataset.npz`` (1.28 MB
-    RL training data), and orphaned data-prep scripts
-    ``llm/bootstrap_skill_dataset.py`` + ``scripts/build_skill_dataset.py``
-    (the latter even imported deleted modules — broken since sweep one).
-    After this sweep, no live SECA module imports torch; the
-    ``import torch`` and ``nn.Module`` keywords were added to
-    ``FORBIDDEN_KEYWORDS`` as re-introduction tripwires.
-
-This guard now serves as a re-introduction tripwire: if anyone reintroduces
-a forbidden keyword, an unsafe world model, an unallowlisted ``brain.*``
-module, or flips ``SAFE_MODE`` to ``False`` in production, the process
-refuses to start.
+prohibits autonomous reinforcement learning in this system.  This module is
+the **runtime tripwire** that enforces the prohibition: if anyone
+reintroduces a forbidden keyword, an unsafe world model, an unallowlisted
+``brain.*`` module, or flips ``SAFE_MODE`` to ``False`` in production, the
+process refuses to start.
 
 ``enforce(world_model)`` is called once during FastAPI ``lifespan`` startup
 and ``sys.exit(1)``s the process if any unsafe component has been imported,
 if the wrong world model is in use, or if online learning has been
 explicitly enabled by env var.
 
+Historical context
+------------------
+Earlier revisions of this codebase carried substantial dormant RL/ML code.
+Multiple deletion sweeps progressively removed the most dangerous clusters
+(see ``git log llm/seca/`` for the per-commit detail).  The Sprint 2
+"delete-only" PR (May 2026) was the largest single sweep, removing
+``llm/seca/{optim, models, henm, closed_loop, evolution, opponent, memory,
+outcome, realtime, serving, policy, player}/`` outright; reducing
+``llm/seca/world_model/`` to ``safe_stub.py`` + ``__init__.py``; pruning
+``llm/seca/curriculum/{actions, curriculum_generator, curriculum_types,
+lesson_selector, optoimizer, planner, training_tasks, weakness_detector}.py``;
+and deleting top-level ``llm/{world_model, bootstrap_skill_dataset,
+governor}.py``.  Several test-paired dormant clusters (``brain/{meta,
+rewards, world_model, data}/``, ``engines/{hmpt, adaptive}/``, parts of
+``learning/``) remain on disk because deleting them requires retiring CI
+regression tests (BUG-3..BUG-8 in ``test_bug_regressions.py``); they are
+unreachable at runtime under ``SAFE_MODE=True`` and trip the guard if
+imported into a live process anyway.  See the audit notes in the Sprint 2
+commit message for the full inventory.
+
 Policy
 ------
 Three independent checks (defence in depth):
 
-1.  Brain-tree allowlist.  Anything under ``llm.seca.brain.*`` that is not on
-    the explicit allowlist is treated as forbidden — regardless of name or
-    contents.  The allowlist is intentionally tiny and contains only the
+1.  Brain-tree allowlist.  Anything under ``llm.seca.brain.*`` that is not
+    on the explicit allowlist is treated as forbidden — regardless of name
+    or contents.  The allowlist is intentionally tiny and contains only the
     SQLAlchemy schema modules required for ORM ``Base.metadata`` to be
-    consistent.  *New* brain modules cannot be silently loaded by appearing
+    consistent, plus the three observation-only LinUCB helpers used by the
+    live coach.  *New* brain modules cannot be silently loaded by appearing
     in ``sys.modules``; they must be deliberately added here.
 
 2.  Forbidden module-name parts.  Substring matches against module names
-    used by historical or hypothetical adaptive components elsewhere in the
-    seca tree.  This is a fallback for code paths that may move outside
-    ``brain/`` in future refactors.
+    used by historical or hypothetical adaptive components.
 
 3.  Forbidden source keywords.  Substring matches against module source
     text — covers the major training entry points used by the dormant ML
     code (PyTorch, sklearn online learners, custom bandit save loops).
-    Keywords are deliberately specific to avoid false-positives on
-    non-RL modules; the brain allowlist provides the broad coverage.
+    Keywords are deliberately specific to avoid false-positives.
+
+Scan scope
+----------
+``_scan_loaded_modules`` walks ``llm.seca.*`` only.  The audit's worry
+about top-level ``llm/<rl_thing>.py`` shapes (the original
+``llm/world_model.py``, ``llm/bootstrap_skill_dataset.py``,
+``llm/governor.py`` files) is addressed by their outright deletion in the
+Sprint 2 PR rather than by widening the scan — ``FORBIDDEN_KEYWORDS``
+contains generic substrings (``train(``, ``.update(``) that false-
+positive on legitimate production code outside the SECA tree, so widening
+without first tightening the keywords would mask real safety hits with
+false alarms.  A future revival of the top-level RL-file shape would
+re-trip the audit and warrant a keyword-tightening pass first.
 """
 
 import logging
@@ -201,7 +192,20 @@ FORBIDDEN_MODULE_PARTS = [
 
 
 def _scan_loaded_modules():
-    """Scan already imported modules for forbidden adaptive components."""
+    """Scan already imported modules for forbidden adaptive components.
+
+    Scope is ``llm.seca.*`` only.  Widening to ``llm.*`` was attempted but
+    reverted: ``FORBIDDEN_KEYWORDS`` contains generic substrings
+    (``train(``, ``.update(``) chosen to catch the historical SECA
+    trainers' entry points, and those false-positive on legitimate
+    production modules outside the SECA tree (e.g.
+    ``llm.elite_engine_service.update_*`` cache helpers).  The audit's
+    specific worry — the top-level ``llm/world_model.py`` and
+    ``llm/bootstrap_skill_dataset.py`` files sitting outside the scan —
+    is addressed by deleting those files in the Sprint 2 PR.  A future
+    revival of that shape would re-trip the audit and warrant a
+    keyword-tightening pass before re-widening the scan.
+    """
     for name, module in sys.modules.items():
         if module is None:
             continue
