@@ -359,78 +359,18 @@ class TestAdaptationLayerPure:
 
 
 # ---------------------------------------------------------------------------
-# 5. SAFE_MODE: bandit training calls stay inside the gate (AST regression)
+# 5. SAFE_MODE: bandit training calls retired
 # ---------------------------------------------------------------------------
-
-
-class TestSafeModeBanditStillGated:
-    """RL training calls must remain inside `if not SAFE_MODE` in events/router.py.
-
-    This test prevents accidental extraction of the bandit/neural training
-    loops outside their safety gate.
-    """
-
-    def _load_events_router_ast(self) -> ast.Module:
-        path = PROJECT_ROOT / "llm" / "seca" / "events" / "router.py"
-        return ast.parse(path.read_text(encoding="utf-8"))
-
-    def _all_call_names_in_node(self, node: ast.AST) -> set[str]:
-        names: set[str] = set()
-        for child in ast.walk(node):
-            if isinstance(child, ast.Call):
-                func = child.func
-                if isinstance(func, ast.Name):
-                    names.add(func.id)
-                elif isinstance(func, ast.Attribute):
-                    names.add(func.attr)
-        return names
-
-    def _find_safe_mode_if_blocks(self, tree: ast.Module) -> list[ast.If]:
-        """Return all `if not SAFE_MODE:` blocks in the module."""
-        blocks: list[ast.If] = []
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.If):
-                continue
-            test = node.test
-            # if not SAFE_MODE  →  UnaryOp(Not, Name('SAFE_MODE'))
-            if (
-                isinstance(test, ast.UnaryOp)
-                and isinstance(test.op, ast.Not)
-                and isinstance(test.operand, ast.Name)
-                and test.operand.id == "SAFE_MODE"
-            ):
-                blocks.append(node)
-        return blocks
-
-    def test_update_after_game_is_inside_safe_mode_gate(self):
-        """update_after_game must appear within an `if not SAFE_MODE:` block."""
-        tree = self._load_events_router_ast()
-        gated_blocks = self._find_safe_mode_if_blocks(tree)
-        assert gated_blocks, "No `if not SAFE_MODE:` block found in events/router.py"
-
-        gated_names: set[str] = set()
-        for block in gated_blocks:
-            gated_names |= self._all_call_names_in_node(block)
-
-        assert "update_after_game" in gated_names, (
-            "update_after_game not found inside any `if not SAFE_MODE:` block. "
-            "RL training must stay gated."
-        )
-
-    def test_train_bandit_is_inside_safe_mode_gate(self):
-        """train_bandit must appear within an `if not SAFE_MODE:` block."""
-        tree = self._load_events_router_ast()
-        gated_blocks = self._find_safe_mode_if_blocks(tree)
-        assert gated_blocks, "No `if not SAFE_MODE:` block found in events/router.py"
-
-        gated_names: set[str] = set()
-        for block in gated_blocks:
-            gated_names |= self._all_call_names_in_node(block)
-
-        assert "train_bandit" in gated_names, (
-            "train_bandit not found inside any `if not SAFE_MODE:` block. "
-            "Bandit training must stay gated."
-        )
+#
+# ``TestSafeModeBanditStillGated`` previously pinned that
+# ``update_after_game`` and ``train_bandit`` lived inside an
+# ``if not SAFE_MODE:`` block in events/router.py.  Sprint 6.A
+# follow-up (2026-05-12) deleted that block entirely — both calls
+# imported modules forbidden by the SECA freeze guard (``brain.bandit.
+# online_update``, ``brain.bandit.trainer``, ``brain.neural_policy.
+# train``, ``brain.planning.counterfactual``), so the block was
+# unreachable in any supported deployment.  The path is gone, not
+# gated; nothing to pin.
 
     def test_safe_mode_import_present(self):
         path = PROJECT_ROOT / "llm" / "seca" / "events" / "router.py"

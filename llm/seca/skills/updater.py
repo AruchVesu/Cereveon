@@ -1,5 +1,4 @@
 import json
-from statistics import mean
 from sqlalchemy.orm import Session as DBSession
 
 from llm.seca.learning.player_embedding import (
@@ -37,31 +36,43 @@ class SkillUpdater:
         rating_before = player.rating
         confidence_before = player.confidence
 
+        # ``event.accuracy`` and ``event.weaknesses_json`` are typed as
+        # ``Optional`` on the GameEvent model (column ``nullable`` is
+        # the default ``True``) but in practice are always populated by
+        # EventStorage.store_game with defaults of ``0.0`` and ``"{}"``.
+        # Coerce to the concrete types here so the downstream arithmetic
+        # / json.loads calls have float / str inputs as their signatures
+        # require.  Sprint 6.A follow-up: pinning Optional handling so
+        # events/router.py (which calls this method) can clear mypy.
+        accuracy: float = float(event.accuracy) if event.accuracy is not None else 0.0
+        weaknesses_json: str = event.weaknesses_json or "{}"
+
         # -----------------------------
         # Rating delta (simple Elo-like)
         # -----------------------------
+        delta: float
         if event.result == "win":
-            delta = 12
+            delta = 12.0
         elif event.result == "loss":
-            delta = -12
+            delta = -12.0
         else:
-            delta = 2
+            delta = 2.0
 
         # accuracy influence
-        delta += (event.accuracy - 0.5) * 10
+        delta += (accuracy - 0.5) * 10
 
         player.rating = max(100.0, player.rating + delta)
 
         # -----------------------------
         # Confidence update
         # -----------------------------
-        confidence_change = (event.accuracy - 0.5) * 0.1
+        confidence_change = (accuracy - 0.5) * 0.1
         player.confidence = min(1.0, max(0.0, player.confidence + confidence_change))
 
         # -----------------------------
         # Skill vector aggregation
         # -----------------------------
-        weaknesses = json.loads(event.weaknesses_json)
+        weaknesses = json.loads(weaknesses_json)
 
         current = json.loads(player.skill_vector_json or "{}")
 
@@ -78,7 +89,7 @@ class SkillUpdater:
         z_new = encoder.encode(
             rating=player.rating,
             confidence=player.confidence,
-            accuracy=event.accuracy,
+            accuracy=accuracy,
             weaknesses=current,
             z_prev=z_prev,
         )
@@ -90,7 +101,7 @@ class SkillUpdater:
         context = build_context_vector(
             rating_before=rating_before,
             confidence_before=confidence_before,
-            accuracy=event.accuracy,
+            accuracy=accuracy,
             weaknesses=weaknesses,
         )
 

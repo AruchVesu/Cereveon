@@ -21,12 +21,12 @@ from .storage import EventStorage
 from llm.seca.skills.updater import SkillUpdater
 from llm.seca.brain.models import RatingUpdate, ConfidenceUpdate
 from llm.seca.coach.live_controller import (
+    CoachAction,
     PostGameCoachController,
     GameSummary,
 )
 from llm.seca.events.models import GameEvent
-from llm.seca.coach.executor import CoachExecutor
-from types import SimpleNamespace
+from llm.seca.coach.executor import CoachContent, CoachExecutor
 from llm.seca.runtime.safe_mode import SAFE_MODE
 
 router = APIRouter(prefix="/game", tags=["game"])
@@ -146,7 +146,7 @@ def _apply_bandit_decision(
 
         # Reuse the deterministic action's `weakness` (it has the
         # game-specific context the bandit can't reconstruct).
-        return SimpleNamespace(
+        return CoachAction(
             type=chosen_type,
             weakness=getattr(deterministic_action, "weakness", None),
             reason=f"bandit:linucb (warm={chosen_type == deterministic_action.type})",
@@ -182,8 +182,11 @@ class CoachFeedbackRequest(BaseModel):
 def coach_feedback(
     req: CoachFeedbackRequest,
     player=Depends(get_current_player),
-    db: DBSession = Depends(get_db),
+    db: DBSession = Depends(get_db),  # pylint: disable=unused-argument
 ):
+    # ``db`` is injected for symmetry with the other authenticated routes
+    # (and so a future revision that persists feedback rows has the
+    # session ready) — pylint flags it as unused for now.
     logger.info(
         "Coach feedback: player=%s fen=%s helpful=%s",
         player.id,
@@ -239,7 +242,7 @@ class GameFinishRequest(BaseModel):
     @field_validator("accuracy")
     @classmethod
     def validate_accuracy(cls, v: float) -> float:
-        if not (0.0 <= v <= 1.0):
+        if not 0.0 <= v <= 1.0:
             raise ValueError("accuracy must be between 0.0 and 1.0")
         return v
 
@@ -350,49 +353,24 @@ def finish_game(
     db.add(confidence_update)
     db.commit()
 
-    if not SAFE_MODE:
-        from llm.seca.brain.bandit.context_builder import build_context_vector
-
-        context = build_context_vector(
-            rating_before=rating_before,
-            confidence_before=confidence_before,
-            accuracy=req.accuracy,
-            weaknesses=req.weaknesses,
-        )
-
-        try:
-            from llm.seca.brain.bandit.online_update import update_after_game
-
-            update_after_game(context, action_index=0, reward=reward)
-            from llm.seca.brain.bandit.trainer import train_bandit
-            from llm.seca.brain.neural_policy.train import train_policy
-
-            train_bandit()
-            train_policy()
-        except Exception:
-            logger.exception("Bandit update failed")
-
-        try:
-            from llm.seca.brain.planning.counterfactual import CounterfactualPlanner
-            import numpy as np
-
-            planner = CounterfactualPlanner()
-
-            state = np.array([rating_after, confidence_after, req.accuracy])
-
-            actions = [
-                np.array([1, 0, 0]),  # tactics
-                np.array([0, 1, 0]),  # openings
-                np.array([0, 0, 1]),  # endgames
-            ]
-
-            idx, future, score = planner.choose_action(state, actions)
-
-            logger.info("Chosen training: %s", idx)
-            logger.info("Predicted rating/conf delta: %s", future)
-            logger.info("Score: %s", score)
-        except Exception:
-            logger.exception("Counterfactual planner failed")
+    # Sprint 6.A follow-up (2026-05-12): the ``if not SAFE_MODE:`` block
+    # that previously lived here imported four adaptive-learning modules
+    # forbidden by the SECA freeze guard:
+    #   - llm.seca.brain.bandit.online_update     (FORBIDDEN_MODULE_PARTS)
+    #   - llm.seca.brain.bandit.trainer           (not in ALLOWED_BRAIN_MODULES)
+    #   - llm.seca.brain.neural_policy.train      (not in ALLOWED_BRAIN_MODULES)
+    #   - llm.seca.brain.planning.counterfactual  (not in ALLOWED_BRAIN_MODULES)
+    #
+    # The freeze guard crashes the process on import of any of these in
+    # the live runtime, so the block was unreachable by construction —
+    # SAFE_MODE is True in every supported deployment (prod sets
+    # SECA_ENV=prod which the guard requires; dev keeps SAFE_MODE True
+    # by default and crashes with SECA_ENABLE_ONLINE_LEARNING=1).
+    # Deleted both for hygiene (the dead-import surface was a perennial
+    # mypy/freeze tripwire) and because keeping it could mask a real
+    # safety regression: a future contributor flipping SAFE_MODE
+    # off-policy would never see the runtime crash they'd otherwise get,
+    # because the path no longer exists to fail.
 
     controller = PostGameCoachController()
 
@@ -450,8 +428,10 @@ def finish_game(
         coach_content = executor.execute(coach_action)
     except Exception:
         logger.exception("Coach pipeline failed")
-        coach_action = SimpleNamespace(type="ERROR", weakness=None, reason="coach_pipeline_error")
-        coach_content = SimpleNamespace(
+        coach_action = CoachAction(
+            type="ERROR", weakness=None, reason="coach_pipeline_error"
+        )
+        coach_content = CoachContent(
             title="Keep playing",
             description="No special training needed right now.",
             payload={},

@@ -146,6 +146,7 @@ PYLINT_TARGETS = [
     "llm/seca/curriculum/task_selector.py",
     "llm/seca/curriculum/types.py",
     "llm/seca/events/models.py",
+    "llm/seca/events/router.py",
     "llm/seca/events/storage.py",
     "llm/seca/explainer/safe_explainer.py",
     "llm/seca/inference/router.py",
@@ -155,6 +156,7 @@ PYLINT_TARGETS = [
     "llm/seca/runtime/safe_mode.py",
     "llm/seca/safety/freeze.py",
     "llm/seca/shared_limiter.py",
+    "llm/seca/skills/updater.py",
     "llm/seca/storage/db.py",
     "llm/seca/storage/event_storage.py",
     "llm/seca/storage/event_store.py",
@@ -223,17 +225,20 @@ MYPY_TARGETS = [
     "llm/seca/shared_limiter.py",
     "llm/seca/storage/models.py",
     "llm/seca/world_model/safe_stub.py",
-    # Sprint 6.A follow-up — storage models migrated to Mapped[T], unblocking
-    # repo.py + its downstream routers.  events/router.py is deliberately
-    # excluded: its transitive imports (skills/updater + brain/bandit/*) pull
-    # in dormant adaptive-learning code with ~10 type errors that are out of
-    # scope for the storage cleanup.
+    # Sprint 6.A follow-ups — storage models migrated to Mapped[T] unlocked
+    # repo.py + downstream routers; a second follow-up (2026-05-12) cleaned
+    # up events/router.py by deleting the freeze-guard-forbidden
+    # ``if not SAFE_MODE:`` adaptive block + null-guarding skills/updater
+    # for the Optional[float] event.accuracy / event.weaknesses_json types
+    # introduced in the storage Mapped[T] migration.
     "llm/seca/analytics/models.py",
     "llm/seca/analytics/router.py",
     "llm/seca/curriculum/models.py",
     "llm/seca/curriculum/router.py",
+    "llm/seca/events/router.py",
     "llm/seca/events/storage.py",
     "llm/seca/repertoire/router.py",
+    "llm/seca/skills/updater.py",
     "llm/seca/storage/db.py",
     "llm/seca/storage/event_storage.py",
     "llm/seca/storage/event_store.py",

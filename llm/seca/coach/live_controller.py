@@ -48,7 +48,12 @@ class PostGameCoachController:
 
         # --- Rule 2: big drop -> drill main weakness
         if game.learning_delta < -20 and game.weaknesses:
-            main = max(game.weaknesses, key=game.weaknesses.get)
+            # Use a lambda rather than ``dict.get`` so mypy can infer the
+            # comparable-float return type — ``dict.get`` returns
+            # ``Optional[float]`` which violates ``max``'s key=
+            # contract.  Same fix landed in curriculum/policy.py during
+            # Sprint 6.A.
+            main = max(game.weaknesses, key=lambda k: game.weaknesses[k])
             return CoachAction(
                 type="DRILL",
                 weakness=main,
