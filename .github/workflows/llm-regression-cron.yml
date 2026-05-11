@@ -4,9 +4,8 @@
 # docs/TESTING.md "LLM Regression Test Frequency" requires regression tests to
 # run before every release.  The tag-pushed CI job in fly-deploy.yml satisfies
 # the strict release rule; this scheduled run catches model drift between
-# releases by exercising real-LLM contracts on the same Q5_K_M model the
-# `llm-regression` job uses, then publishing the JSONL telemetry as an
-# artifact for review.
+# releases by exercising the real DeepSeek API against the contract validators
+# and publishing the JSONL telemetry as an artifact for review.
 #
 # Lives in its own workflow (not appended to fly-deploy.yml's `on:`) so the
 # weekly trigger doesn't redundantly run image builds, Trivy scans, or the
@@ -31,9 +30,9 @@ concurrency:
 
 jobs:
   llm-regression:
-    name: Real-LLM regression (Ollama Q5_K_M)
+    name: Real-LLM regression (DeepSeek)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -55,42 +54,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r llm/requirements-ci.txt
 
-      - name: Cache Ollama model weights
-        uses: actions/cache@v5
-        with:
-          path: ~/.ollama/models
-          key: ollama-qwen2.5-7b-instruct-q5_K_M-${{ runner.os }}
-
-      - name: Install Ollama
-        run: curl -fsSL https://ollama.com/install.sh | sh
-
-      - name: Start Ollama server and wait for ready
+      - name: Skip if COACH_DEEPSEEK_API_KEY is unset
+        if: ${{ secrets.COACH_DEEPSEEK_API_KEY == '' }}
         run: |
-          ollama serve &
-          for i in $(seq 1 30); do
-            sleep 2
-            if curl -sf http://127.0.0.1:11434/api/tags > /dev/null 2>&1; then
-              echo "Ollama ready after $((i * 2))s"
-              break
-            fi
-            if [ "$i" -eq 30 ]; then
-              echo "::error::Ollama did not start within 60s"
-              exit 1
-            fi
-          done
-
-      - name: Pull model (skipped when cache hit)
-        run: ollama pull qwen2.5:7b-instruct-q5_K_M
+          echo "::warning::COACH_DEEPSEEK_API_KEY secret is not set; skipping weekly LLM regression."
+          echo "Set the secret in repo Settings → Secrets and variables → Actions to enable."
 
       - name: Run LLM regression tests (Category D)
+        if: ${{ secrets.COACH_DEEPSEEK_API_KEY != '' }}
         env:
-          RUN_OLLAMA_TESTS: "1"
+          RUN_DEEPSEEK_TESTS: "1"
+          COACH_DEEPSEEK_API_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY }}
         run: python -m pytest -q llm/rag/tests/llm/test_llm_regression.py
 
-      - name: Run Ollama smoke test (Category C)
+      - name: Run DeepSeek smoke test (Category C)
+        if: ${{ secrets.COACH_DEEPSEEK_API_KEY != '' }}
         env:
-          RUN_OLLAMA_TESTS: "1"
-        run: python -m pytest -q llm/rag/tests/llm/test_ollama_smoke.py
+          RUN_DEEPSEEK_TESTS: "1"
+          COACH_DEEPSEEK_API_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY }}
+        run: python -m pytest -q llm/rag/tests/llm/test_deepseek_smoke.py
 
       # Always publish the JSONL telemetry — even on failure — so a regression
       # is debuggable from the Actions UI alone.  The tests append per-call

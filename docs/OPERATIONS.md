@@ -60,10 +60,14 @@ Default model:
 deepseek-chat (DeepSeek-V3, OpenAI-compatible /chat/completions)
 
 3.2 Required Environment Variables
-LLM_MODEL=qwen2.5:7b-instruct-q2_K
+COACH_DEEPSEEK_API_KEY=sk-...      # DeepSeek API key, required for live LLM
+COACH_DEEPSEEK_API_BASE=https://api.deepseek.com   # optional override
+COACH_DEEPSEEK_MODEL=deepseek-chat  # optional override (default DeepSeek-V3)
 
 
-If this variable is missing, the system must fail fast.
+If `COACH_DEEPSEEK_API_KEY` is missing, the system still serves but every
+`/chat` call falls back to the deterministic template. `GET /llm/health`
+surfaces the live LLM status so degraded mode is detectable in monitoring.
 
 3.3 Starting the System (Embedded Mode)
 

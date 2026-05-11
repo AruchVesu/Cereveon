@@ -21,7 +21,7 @@ CI_TESTS = [
 ]
 
 LOCAL_ONLY_TESTS = [
-    "llm/rag/tests/llm/test_ollama_smoke.py",
+    "llm/rag/tests/llm/test_deepseek_smoke.py",
     "llm/rag/tests/llm/test_llm_regression.py",
 ]
 

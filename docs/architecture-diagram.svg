@@ -76,7 +76,7 @@
   <!-- ─── Stage 7: LLM (untrusted) ─── -->
   <rect x="180" y="638" width="360" height="78" rx="12" class="stage-fill stage-untrust"/>
   <text x="360" y="666" class="stage-name-untrust" text-anchor="middle">LLM Generation</text>
-  <text x="360" y="685" class="stage-meta" text-anchor="middle">Ollama · stochastic · BaseLLM.generate(prompt) only</text>
+  <text x="360" y="685" class="stage-meta" text-anchor="middle">DeepSeek API · stochastic · BaseLLM.generate(prompt) only</text>
   <text x="360" y="701" class="stage-meta" text-anchor="middle">may rephrase · may not reason beyond inputs</text>
 
   <!-- ─── Trust boundary 2 (LLM → output gate) ─── -->

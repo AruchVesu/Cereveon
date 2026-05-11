@@ -105,16 +105,19 @@ Any failure blocks release
 
 4️⃣ Real LLM Smoke Test (MANDATORY)
 
-A real LLM smoke test must be executed.
+A real LLM smoke test must be executed against the production LLM provider
+(DeepSeek). Requires `COACH_DEEPSEEK_API_KEY` in the shell environment;
+the test will skip with a clear message if the key is unset.
 
 Command:
 
-python -m pytest -q llm/rag/tests/llm/test_ollama_smoke.py
+RUN_DEEPSEEK_TESTS=1 COACH_DEEPSEEK_API_KEY=sk-... \
+    python -m pytest -q llm/rag/tests/llm/test_deepseek_smoke.py
 
 
 Rules:
 
-Model must run successfully
+DeepSeek API call must complete successfully
 
 Output must pass contract validation
 

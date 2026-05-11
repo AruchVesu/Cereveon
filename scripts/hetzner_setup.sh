@@ -8,9 +8,13 @@
 #   1. Validates prerequisites (Docker Compose plugin, curl, python3)
 #   2. Generates .env.prod from .env.prod.example if it does not yet exist
 #   3. Pulls all GHCR images
-#   4. Starts Ollama and pulls the LLM model into the persistent volume
-#   5. Starts the full production stack (db, ollama, api, caddy)
-#   6. Waits for the API health check and runs smoke tests
+#   4. Starts the production stack (db, redis, api, caddy)
+#   5. Waits for the API health check and runs smoke tests
+#
+# LLM provider: the api container talks to DeepSeek's managed API directly
+# (https://api.deepseek.com), so there is no local LLM container to start.
+# COACH_DEEPSEEK_API_KEY must be set in .env.prod for coaching to work;
+# without it, /chat falls back to a deterministic template.
 #
 # For subsequent deploys CI handles everything automatically via the
 # "Deploy to Hetzner" job in .github/workflows/fly-deploy.yml.
@@ -57,10 +61,12 @@ else
     sed -i "s|SECRET_KEY=CHANGE_ME|SECRET_KEY=${SECRET_KEY}|" "$ENV_FILE"
     _yellow "    $ENV_FILE created with a generated SECRET_KEY."
     _yellow "    Open $ENV_FILE and set the following before continuing:"
-    _yellow "      SECA_API_KEY     — must match COACH_API_KEY in the Android APK"
+    _yellow "      SECA_API_KEY              — must match COACH_API_KEY in the Android APK"
+    _yellow "      COACH_DEEPSEEK_API_KEY    — DeepSeek API key (https://platform.deepseek.com)."
+    _yellow "                                  Without it /chat falls back to deterministic templates."
     _yellow "      POSTGRES_PASSWORD / DATABASE_URL — use the same password in both"
-    _yellow "      DOMAIN           — your public domain for Caddy TLS (e.g. api.example.com)"
-    _yellow "      GHCR_IMAGE       — full GHCR image ref (e.g. ghcr.io/owner/cereveon-llm-api:latest)"
+    _yellow "      DOMAIN                    — your public domain for Caddy TLS (e.g. api.example.com)"
+    _yellow "      GHCR_IMAGE                — full GHCR image ref (e.g. ghcr.io/owner/cereveon-llm-api:latest)"
     echo ""
     read -r -p "  Press Enter after editing $ENV_FILE, or Ctrl-C to abort: "
 fi
@@ -77,49 +83,31 @@ set +o allexport
 [[ "${POSTGRES_PASSWORD:-}" != *CHANGE_ME* ]] || _die "POSTGRES_PASSWORD is still a placeholder — edit $ENV_FILE."
 [[ -n "${DOMAIN:-}"         ]]                || _die "DOMAIN is not set in $ENV_FILE."
 [[ -n "${GHCR_IMAGE:-}"     ]]                || _die "GHCR_IMAGE is not set in $ENV_FILE."
+# COACH_DEEPSEEK_API_KEY is optional — coaching degrades to deterministic
+# templates without it, but the api still serves.  Warn rather than die.
+if [[ -z "${COACH_DEEPSEEK_API_KEY:-}" || "${COACH_DEEPSEEK_API_KEY}" == *CHANGE_ME* ]]; then
+    _yellow "    Warning: COACH_DEEPSEEK_API_KEY is unset/placeholder — /chat will fall"
+    _yellow "    back to deterministic templates.  Set the key in $ENV_FILE for live LLM."
+fi
 _green "    $ENV_FILE validated."
 echo ""
 
 # ── Pull images ────────────────────────────────────────────────────────────────
-_bold "==> 3/6  Pulling Docker images from GHCR"
+_bold "==> 3/5  Pulling Docker images from GHCR"
 DOMAIN="${DOMAIN}" GHCR_IMAGE="${GHCR_IMAGE}" \
     docker compose -f "$COMPOSE_FILE" pull
 _green "    Images pulled."
 echo ""
 
-# ── Ollama model ───────────────────────────────────────────────────────────────
-MODEL="${COACH_OLLAMA_MODEL:-qwen2.5:7b-instruct-q2_K}"
-_bold "==> 4/6  Pulling Ollama model '${MODEL}'"
-
-# Start Ollama only; leave other services down until the model is ready.
-DOMAIN="${DOMAIN}" GHCR_IMAGE="${GHCR_IMAGE}" \
-    docker compose -f "$COMPOSE_FILE" up -d ollama
-
-_yellow "    Waiting for Ollama to be ready..."
-for i in $(seq 1 30); do
-    if docker compose -f "$COMPOSE_FILE" exec -T ollama \
-           curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
-        _green "    Ollama is ready."
-        break
-    fi
-    [ "$i" -lt 30 ] || _die "Ollama did not become ready after 150 s. Check: docker compose -f $COMPOSE_FILE logs ollama"
-    sleep 5
-done
-
-_yellow "    Pulling model '${MODEL}' — this may take several minutes on first run..."
-docker compose -f "$COMPOSE_FILE" exec -T ollama ollama pull "${MODEL}"
-_green "    Model '${MODEL}' ready."
-echo ""
-
 # ── Start full stack ───────────────────────────────────────────────────────────
-_bold "==> 5/6  Starting full production stack"
+_bold "==> 4/5  Starting full production stack"
 DOMAIN="${DOMAIN}" GHCR_IMAGE="${GHCR_IMAGE}" \
     docker compose -f "$COMPOSE_FILE" up -d
 _green "    Stack started."
 echo ""
 
 # ── API health check ───────────────────────────────────────────────────────────
-_bold "==> 6/6  Waiting for API health check"
+_bold "==> 5/5  Waiting for API health check"
 for i in $(seq 1 24); do
     if curl -sf "${API_URL}/health" >/dev/null 2>&1; then
         _green "    API is healthy."

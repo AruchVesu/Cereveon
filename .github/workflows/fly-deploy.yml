@@ -358,7 +358,7 @@ jobs:
             'SECRET_KEY=stub' \
             'CORS_ALLOWED_ORIGINS=https://test.example.com' \
             'DATABASE_URL=sqlite:///data/seca.db' \
-            'COACH_OLLAMA_MODEL=qwen2.5:7b-instruct-q2_K' \
+            'COACH_DEEPSEEK_API_KEY=stub' \
             > .env.prod
           docker compose -f docker-compose.prod.yml config --quiet
 
@@ -874,9 +874,15 @@ jobs:
           flyctl deploy --image "$DEPLOY_IMAGE" --app chesscoach
 
   llm-regression:
-    name: LLM regression and smoke tests (Ollama)
+    name: LLM regression and smoke tests (DeepSeek)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
+    # Tag pushes only — never on per-push CI per TESTING.md Category D/C.
+    # Also runs on workflow_dispatch for ad-hoc pre-release verification.
+    # Both gated additionally on the COACH_DEEPSEEK_API_KEY secret being
+    # set: without it the job no-ops with a clear log line, so a fork or
+    # a repo without DeepSeek billing wired up doesn't spuriously fail
+    # the release path.
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
@@ -901,42 +907,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r llm/requirements-ci.txt
 
-      - name: Cache Ollama model weights
-        uses: actions/cache@v5
-        with:
-          path: ~/.ollama/models
-          key: ollama-qwen2.5-7b-instruct-q2_K-${{ runner.os }}
-
-      - name: Install Ollama
-        run: curl -fsSL https://ollama.com/install.sh | sh
-
-      - name: Start Ollama server and wait for ready
+      - name: Skip if COACH_DEEPSEEK_API_KEY is unset
+        if: ${{ secrets.COACH_DEEPSEEK_API_KEY == '' }}
         run: |
-          ollama serve &
-          for i in $(seq 1 30); do
-            sleep 2
-            if curl -sf http://127.0.0.1:11434/api/tags > /dev/null 2>&1; then
-              echo "Ollama ready after $((i * 2))s"
-              break
-            fi
-            if [ "$i" -eq 30 ]; then
-              echo "::error::Ollama did not start within 60s"
-              exit 1
-            fi
-          done
-
-      - name: Pull model (skipped when cache hit)
-        run: ollama pull qwen2.5:7b-instruct-q2_K
+          echo "::warning::COACH_DEEPSEEK_API_KEY secret is not set; skipping LLM regression and smoke tests."
+          echo "To enable them, set COACH_DEEPSEEK_API_KEY in repo secrets (Settings → Secrets and variables → Actions)."
 
       - name: Run LLM regression tests (RELEASE.md Step 3)
+        if: ${{ secrets.COACH_DEEPSEEK_API_KEY != '' }}
         env:
-          RUN_OLLAMA_TESTS: "1"
+          RUN_DEEPSEEK_TESTS: "1"
+          COACH_DEEPSEEK_API_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY }}
         run: python -m pytest -q llm/rag/tests/llm/test_llm_regression.py
 
-      - name: Run Ollama smoke test (RELEASE.md Step 4)
+      - name: Run DeepSeek smoke test (RELEASE.md Step 4)
+        if: ${{ secrets.COACH_DEEPSEEK_API_KEY != '' }}
         env:
-          RUN_OLLAMA_TESTS: "1"
-        run: python -m pytest -q llm/rag/tests/llm/test_ollama_smoke.py
+          RUN_DEEPSEEK_TESTS: "1"
+          COACH_DEEPSEEK_API_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY }}
+        run: python -m pytest -q llm/rag/tests/llm/test_deepseek_smoke.py
 
   release:
     name: Create GitHub release

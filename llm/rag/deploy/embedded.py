@@ -9,7 +9,7 @@ from llm.rag.prompts.render_mode_2 import render_mode_2_prompt
 from llm.rag.prompts.system_v2_mode_2 import SYSTEM_PROMPT
 from llm.rag.prompts.input_sanitizer import sanitize_user_query
 from llm.rag.safety.output_firewall import check_output, OutputFirewallError
-from llm.rag.llm.ollama import OllamaLLM
+from llm.rag.llm.deepseek import DeepseekLLM
 from llm.rag.llm.run_mode_2 import run_mode_2
 from llm.rag.meta.case_classifier import infer_case_type
 from llm.rag.telemetry.event import Mode2TelemetryEvent
@@ -39,7 +39,13 @@ if LLM_MODEL and LLM_MODEL.startswith("fake"):
     mode = parts[1] if len(parts) > 1 else "compliant"
     _REAL_LLM = FakeLLM(mode=mode)
 else:
-    _REAL_LLM = OllamaLLM(
+    # The DeepseekLLM adapter reads its provider config (base URL, model,
+    # API key) from env via ``call_llm`` — the ``model`` and
+    # ``temperature`` args are accepted for parity with the legacy
+    # ``OllamaLLM`` signature but the env vars are the live source of
+    # truth.  See ``llm/rag/llm/deepseek.py`` and
+    # ``llm/explain_pipeline.py`` for the wire path.
+    _REAL_LLM = DeepseekLLM(
         model=LLM_MODEL,
         temperature=LLM_TEMPERATURE,
     )

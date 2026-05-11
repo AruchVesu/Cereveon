@@ -977,21 +977,21 @@ def test_llm_regression_cron_workflow_pins_topology():
     assert workflow["concurrency"]["cancel-in-progress"] is False
 
     job = workflow["jobs"]["llm-regression"]
-    assert job["timeout-minutes"] >= 30, "Ollama install + model pull + tests need ample time"
+    assert job["timeout-minutes"] >= 15, "DeepSeek calls + REPEATS over the corpus need ample time"
 
     checkout = _step_named(job, "Checkout repository")
     assert checkout["uses"] == "actions/checkout@v4"
     assert checkout["with"]["persist-credentials"] is False
 
-    # Both Category D (regression) AND C (smoke) must run with RUN_OLLAMA_TESTS=1
+    # Both Category D (regression) AND C (smoke) must run with RUN_DEEPSEEK_TESTS=1
     # — the tests skip themselves at module load otherwise.
     regression_step = _step_named(job, "Run LLM regression tests (Category D)")
-    assert regression_step["env"]["RUN_OLLAMA_TESTS"] == "1"
+    assert regression_step["env"]["RUN_DEEPSEEK_TESTS"] == "1"
     assert "test_llm_regression.py" in regression_step["run"]
 
-    smoke_step = _step_named(job, "Run Ollama smoke test (Category C)")
-    assert smoke_step["env"]["RUN_OLLAMA_TESTS"] == "1"
-    assert "test_ollama_smoke.py" in smoke_step["run"]
+    smoke_step = _step_named(job, "Run DeepSeek smoke test (Category C)")
+    assert smoke_step["env"]["RUN_DEEPSEEK_TESTS"] == "1"
+    assert "test_deepseek_smoke.py" in smoke_step["run"]
 
     # Telemetry artifact: must run on success AND failure (if: always()) so a
     # failed nightly is debuggable without needing to re-run the suite.

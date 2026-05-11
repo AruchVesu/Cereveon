@@ -253,51 +253,20 @@ class TestDep06SafetyVerification:
 
 
 # ---------------------------------------------------------------------------
-# HTZ-28 — Ollama model version is pinned (not floating to 'latest')
+# HTZ-28 retired: removed in the Ollama→DeepSeek migration close-out.
+#
+# The HTZ-28 contract pinned ``COACH_OLLAMA_MODEL`` to a specific Ollama
+# tag (e.g. ``qwen2.5:7b-instruct-q2_K``) to prevent silent model drift
+# from a ``latest``-style alias.  After the migration the LLM is the
+# managed DeepSeek API — versioning is provider-side, the model name
+# is a string like ``deepseek-chat`` / ``deepseek-reasoner``, and there
+# is no ``latest`` alias surface to defend against.  The closest current
+# equivalent is the explicit ``COACH_DEEPSEEK_MODEL`` env var documented
+# in ``.env.example`` and ``docs/OPERATIONS.md``; any future bump to
+# ``deepseek-reasoner`` (or another provider) requires running the
+# Category D regression suite per ``docs/TESTING.md``, which is the
+# real drift-detection mechanism.
 # ---------------------------------------------------------------------------
-
-
-class TestHtz28OllamaModelPinned:
-    """HTZ-28: Ollama model must be pinned to a specific version tag, not 'latest'."""
-
-    def _find_model_config_files(self) -> list[Path]:
-        candidates = []
-        for pattern in ["docker-compose.yml", "docker-compose.yaml", ".env.example"]:
-            p = _REPO_ROOT / pattern
-            if p.exists():
-                candidates.append(p)
-        return candidates
-
-    def test_env_example_does_not_set_ollama_model_to_latest(self):
-        """The .env.example must not set COACH_OLLAMA_MODEL=latest."""
-        env_example = _REPO_ROOT / ".env.example"
-        if not env_example.exists():
-            pytest.skip(".env.example not found")
-        text = env_example.read_text(encoding="utf-8")
-        assert "COACH_OLLAMA_MODEL=latest" not in text, (
-            ".env.example must not set COACH_OLLAMA_MODEL=latest. "
-            "Pin the model to a specific version tag (e.g., qwen2.5:7b-instruct-q2_K)."
-        )
-
-    def test_ollama_model_name_contains_version_info(self):
-        """The default Ollama model name must contain a version qualifier (not just a base name)."""
-        env_example = _REPO_ROOT / ".env.example"
-        if not env_example.exists():
-            pytest.skip(".env.example not found")
-        text = env_example.read_text(encoding="utf-8")
-        # Find the model name
-        match = re.search(r'COACH_OLLAMA_MODEL\s*=\s*(\S+)', text)
-        if not match:
-            pytest.skip("COACH_OLLAMA_MODEL not found in .env.example")
-        model_name = match.group(1).strip().strip('"\'')
-        assert ":" in model_name, (
-            f"COACH_OLLAMA_MODEL='{model_name}' has no version tag. "
-            "Ollama model must be pinned with a ':version' suffix to prevent drift."
-        )
-        assert model_name.split(":")[1] != "latest", (
-            f"COACH_OLLAMA_MODEL='{model_name}' uses 'latest'. "
-            "Pin to a specific version to prevent automatic model drift."
-        )
 
 
 # ---------------------------------------------------------------------------

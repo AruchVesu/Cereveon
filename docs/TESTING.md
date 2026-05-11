@@ -113,13 +113,14 @@ Verify validators accept real output
 
 Scope
 
-Ollama model execution
+DeepSeek API call against the live coaching endpoint
 
 Output passes contract validators
 
 Command
 
-python -m pytest -q llm/rag/tests/llm/test_ollama_smoke.py
+RUN_DEEPSEEK_TESTS=1 COACH_DEEPSEEK_API_KEY=sk-... \
+    python -m pytest -q llm/rag/tests/llm/test_deepseek_smoke.py
 
 
 Rules
@@ -259,9 +260,9 @@ python -m pytest -q llm/rag/tests/test_output_firewall.py
 python -m pytest -q llm/tests/test_api_contract_validation.py
 python -m pytest -q llm/tests/test_coaching_pipeline_regression.py
 
-Before release (local)
-python -m pytest -q llm/rag/tests/llm/test_ollama_smoke.py
-python -m pytest -q llm/rag/tests/llm/test_llm_regression.py
+Before release (local; both require COACH_DEEPSEEK_API_KEY in env)
+RUN_DEEPSEEK_TESTS=1 python -m pytest -q llm/rag/tests/llm/test_deepseek_smoke.py
+RUN_DEEPSEEK_TESTS=1 python -m pytest -q llm/rag/tests/llm/test_llm_regression.py
 
 CI Policy
 
@@ -401,8 +402,8 @@ After any system prompt change
 After any RAG document content change
 
 After updating or replacing the LLM model
-
-After updating Ollama or model weights
+(e.g., bumping `COACH_DEEPSEEK_MODEL` from `deepseek-chat` to `deepseek-reasoner`,
+or switching to a different OpenAI-compatible provider)
 
 Command:
 

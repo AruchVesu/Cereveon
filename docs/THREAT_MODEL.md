@@ -20,9 +20,10 @@ JWT-authenticated player model, and the telemetry sink.
 
 **Out of scope.** Physical access to the Hetzner host, supply-chain
 compromise of pinned dependencies (covered by pip-audit + Trivy in CI),
-attacks on the Ollama process beyond what the validator gates catch,
-Android-side reverse-engineering of the APK (`COACH_API_KEY` is treated as
-a rate-limit shield, not a secret — see `docs/DEPLOYMENT.md`).
+compromise of the managed DeepSeek API beyond what the validator gates
+catch (the LLM is treated as untrusted by the architecture — see A4
+below), Android-side reverse-engineering of the APK (`COACH_API_KEY` is
+treated as a rate-limit shield, not a secret — see `docs/DEPLOYMENT.md`).
 
 ## 2. Adversaries
 
@@ -31,7 +32,7 @@ a rate-limit shield, not a secret — see `docs/DEPLOYMENT.md`).
 | A1 | **Authenticated player** | Holds a valid JWT; can call protected endpoints; controls FEN, move history, chat content. The most common attacker. |
 | A2 | **Anonymous internet caller** | No JWT, no API key. Limited to public endpoints (`/health`, `/seca/status`, `/`). |
 | A3 | **Player-with-stolen-token** | Replays a captured JWT or `X-Api-Key`. Capability identical to A1 until rotation. |
-| A4 | **Compromised LLM output** | The Ollama process is treated as untrusted by the architecture; hostile output is a normal operating condition, not an attack. |
+| A4 | **Compromised LLM output** | The managed DeepSeek API is treated as untrusted by the architecture; hostile output is a normal operating condition, not an attack. The trust boundary holds for any LLM provider — only the validator gates determine what reaches the client. |
 | A5 | **Operator misconfiguration** | A deploy that flips `SECA_ENV` or omits a required secret. Not malicious, but the failure mode is identical to a successful bypass. |
 
 ## 3. Threats and mitigations

@@ -470,8 +470,8 @@ Pre-release checklist (non-negotiable):
 
 1. Clean working tree (`git status`)
 2. CI-safe tests pass (golden, contract, API contract, pipeline regression)
-3. LLM regression tests pass (`test_llm_regression.py` — currently disabled; needs follow-up to wire against DeepSeek)
-4. Real LLM smoke test passes (`test_ollama_smoke.py` — currently disabled; needs follow-up to wire against DeepSeek)
+3. LLM regression tests pass: `RUN_DEEPSEEK_TESTS=1 COACH_DEEPSEEK_API_KEY=... pytest llm/rag/tests/llm/test_llm_regression.py`
+4. Real-LLM smoke test passes: `RUN_DEEPSEEK_TESTS=1 COACH_DEEPSEEK_API_KEY=... pytest llm/rag/tests/llm/test_deepseek_smoke.py`
 5. Manual output sanity review (no engine mentions, no move suggestions)
 
 Pushing a `vX.Y.Z` tag publishes the GitHub Release and GHCR images for
@@ -487,8 +487,8 @@ The project uses six test categories. No layer is unprotected.
 |---|---|---|---|
 | **A — Golden** | ESV mapping, RAG retrieval, prompt snapshots | ✅ | `pytest llm/rag/tests/golden/` |
 | **B — Contract** | Forbidden patterns, mate handling, missing data (Fake LLM) | ✅ | `pytest llm/rag/tests/contracts/` |
-| **C — Smoke** | Real LLM connectivity, output passes validators | local only | `pytest llm/rag/tests/llm/test_ollama_smoke.py` *(legacy name; needs follow-up rewrite to hit DeepSeek)* |
-| **D — Regression** | Repeated real LLM runs, contract compliance over time | tag pushes only | `pytest llm/rag/tests/llm/test_llm_regression.py` |
+| **C — Smoke** | DeepSeek API connectivity, output passes validators | local + tag pushes (gated on `COACH_DEEPSEEK_API_KEY`) | `RUN_DEEPSEEK_TESTS=1 pytest llm/rag/tests/llm/test_deepseek_smoke.py` |
+| **D — Regression** | Repeated real-LLM runs, contract compliance over time | tag pushes + weekly cron (gated on `COACH_DEEPSEEK_API_KEY`) | `RUN_DEEPSEEK_TESTS=1 pytest llm/rag/tests/llm/test_llm_regression.py` |
 | **E — Quality** | Length, sentence structure, non-triviality | advisory | `pytest llm/rag/tests/quality/` |
 | **F — Mutation** | mutmut against `llm/rag/validators/`: does the test fail when the validator is logically wrong? | local, on-demand | `bash scripts/run_mutation_tests.sh` |
 
