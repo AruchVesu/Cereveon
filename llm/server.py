@@ -113,6 +113,17 @@ if IS_PROD and API_KEY is None:
 async def lifespan(app: FastAPI):
     global engine_pool, move_cache, scheduler
     global world_model, async_predict_enabled, async_predict_plies, async_predict_movetime_ms
+
+    # Install JSON log formatter when SECA_ENV=prod or COACH_LOG_JSON=1.
+    # Must run AFTER uvicorn has set up its loggers (which uvicorn does
+    # during lifespan startup, not at module import), so a uvicorn
+    # reload doesn't clobber the formatter.  No-op in dev unless the
+    # explicit override is set.
+    from llm import log_config as _log_config  # noqa: PLC0415
+
+    if _log_config.configure_logging():
+        logger.info("JSON structured logging enabled")
+
     try:
         init_db()
         # SQLAlchemy schema + small SQLite-only migrations.  Moved out of
@@ -394,6 +405,42 @@ async def api_version_gate(request: Request, call_next):
     return response
 
 
+# ---- request_id + structured request-end log ----------------------------
+# request_id is generated per request (or read from a client-supplied
+# X-Request-ID), bound to a contextvar so any logger.info() emitted by
+# downstream handlers picks it up, and echoed back via the response
+# header so the client / load balancer can correlate.  The same id is
+# included in the request-end INFO line below, which is the structured
+# log row a Loki/Datadog dashboard would group by.
+import uuid as _uuid  # noqa: E402
+
+from llm import log_config  # noqa: E402
+
+_X_REQUEST_ID = "X-Request-ID"
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    # Trust a client-supplied X-Request-ID only as a hint — never use
+    # it as a security identifier — and gate it through the
+    # is_valid_client_request_id helper (length cap + ASCII).  Fresh
+    # UUID otherwise so log correlation still works.
+    raw = request.headers.get(_X_REQUEST_ID, "").strip()
+    if log_config.is_valid_client_request_id(raw):
+        request_id = raw
+    else:
+        request_id = _uuid.uuid4().hex
+
+    token = log_config.set_request_id(request_id)
+    try:
+        response = await call_next(request)
+    finally:
+        log_config.request_id_var.reset(token)
+
+    response.headers[_X_REQUEST_ID] = request_id
+    return response
+
+
 # ---- Prometheus HTTP metrics ---------------------------------------------
 # Sits OUTERMOST in the middleware stack so the timer wraps every inner
 # middleware (body-size limit, security headers, method override, version
@@ -427,6 +474,22 @@ async def prometheus_http_middleware(request: Request, call_next):
     observability.http_request_duration_seconds.labels(
         method=method, path_template=path_template, status=status
     ).observe(duration)
+
+    # Structured request-end log line.  Picked up by the JSON formatter
+    # in prod (SECA_ENV=prod) and rendered as the readable default in
+    # dev — same call site either way.  ``extra={...}`` fields are
+    # copied verbatim into the JSON payload by JsonLogFormatter.
+    logger.info(
+        "request completed",
+        extra={
+            "method": method,
+            "path": request.url.path,
+            "path_template": path_template,
+            "status": response.status_code,
+            "latency_ms": round(duration * 1000, 3),
+            "client_ip": request.client.host if request.client else None,
+        },
+    )
 
     return response
 

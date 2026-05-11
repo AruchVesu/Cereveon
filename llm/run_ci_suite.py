@@ -97,6 +97,13 @@ TEST_TARGETS = [
     # increments chesscoach_http_requests_total / auth_login_total
     # on real requests.  Closes Sprint 5.D.1 observability scope.
     "llm/tests/test_metrics_endpoint.py",
+    # Structured JSON logging + request_id contextvar propagation
+    # (LOG_01..LOG_12) — pins the JSON schema, the SECA_ENV /
+    # COACH_LOG_JSON gating, the X-Request-ID echo + validation
+    # (length cap, ASCII), the contextvar wiring into LogRecord, and
+    # the request-end log line carrying method/path/status/latency_ms.
+    # Closes Sprint 5.D.2 observability scope.
+    "llm/tests/test_log_config.py",
     # Engine pool crash recovery (CR_01..CR_08) — pins that a Stockfish
     # subprocess crash is detected at release time and the dead handle
     # replaced with a fresh engine.  Without this, a crash mid-request
@@ -172,6 +179,7 @@ COVERAGE_TARGETS = [
     "llm.cache_keys",
     "llm.elite_engine_service",
     "llm.engine_eval",
+    "llm.log_config",
     "llm.metrics",
     "llm.observability",
     "llm.position_input",
