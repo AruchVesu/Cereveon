@@ -44,18 +44,33 @@ cd "$REPO_ROOT"
 # Test runner used for each mutation. Kept narrow so the run is feasible:
 # only validator-direct tests participate.  Adding more tests increases
 # detection rate at linear cost in wall-clock time.
+#
+# test_api_contract_validation.py is included because Sprint 5.A wired the
+# Mode-2 structure + semantic validators into the live boundary on
+# /chat and /live/move responses (validate_chat_response and
+# validate_live_move_response in explain_response_schema.py); the
+# boundary tests are what kill mutants in those new delegation branches.
 RUNNER="python -m pytest -q --no-header -x \
   llm/rag/tests/contracts/test_fake_llm.py \
   llm/rag/tests/contracts/test_violations_corpus.py \
   llm/rag/tests/contracts/test_mode_2_output.py \
-  llm/rag/tests/test_output_firewall.py"
+  llm/rag/tests/test_output_firewall.py \
+  llm/tests/test_api_contract_validation.py"
 
 # Validators in scope. Order matches docs/TESTING.md Validator Coverage Matrix.
+#
+# explain_response_schema.py was added in the Sprint 6.D refresh
+# (2026-05-12): its validate_chat_response / validate_live_move_response
+# functions are the boundary that gates every coaching response on the
+# Mode-2 structure + semantic checks, and Sprint 5.A added significant
+# new logic to that file (the structure + semantic delegation calls).
+# Treating it as a validator-grade trust boundary, not a routing helper.
 ALL_TARGETS=(
     "llm/rag/validators/mode_2_negative.py"
     "llm/rag/validators/mode_2_structure.py"
     "llm/rag/validators/mode_2_semantic.py"
     "llm/rag/validators/sanitize.py"
+    "llm/rag/validators/explain_response_schema.py"
     "llm/rag/contracts/validate_output.py"
     "llm/rag/safety/output_firewall.py"
 )

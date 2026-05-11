@@ -1,0 +1,166 @@
+# Mutation-testing baseline for the Mode-2 validator surface.
+# Most recent refresh: 2026-05-12 Sprint 6.D pass.
+#
+# Why this file exists
+# --------------------
+# Line coverage answers "did the test execute the validator?" — mutation
+# testing answers the harder question: "would the test fail if the
+# validator were wrong?"  A surviving mutant is a test gap: mutmut
+# changed a constant or operator in the validator and *no test failed*.
+#
+# This file pins the baseline so a future change to validator-side code
+# or tests can be compared against it.  A regression (more survivors
+# than this baseline) is a real coverage loss, not just numerical drift.
+# An improvement (fewer survivors) means a test was added that closed
+# a gap — bump the file in the same commit.
+#
+# How to refresh
+# --------------
+#   bash scripts/run_mutation_tests.sh
+#   python scripts/_mutation_baseline_query.py > scripts/mutation_baseline.txt.new
+#
+# Wall-clock cost: ~10–25 minutes for the whole baseline depending on
+# disk + CPU.  Out-of-CI by design.
+#
+# Platform note
+# -------------
+# mutmut 3.x dropped native Windows support (https://github.com/boxed/mutmut/issues/397).
+# Pin `mutmut<3` (currently 2.5.1) on Windows + WSL machines, OR run on
+# Linux directly.  Set `PYTHONIOENCODING=utf-8` to work around a pytest
+# stdout decoding issue on cp1252 locales.
+#
+# ============================================================
+# Per-validator counts
+# ============================================================
+#
+# Format: <killed> killed / <survived> survived / <total> total / <kill_rate>%
+#
+# A higher kill rate is better.  100% means every operator and constant
+# in that validator is exercised by a test that fails when the validator
+# is wrong.
+
+llm/rag/safety/output_firewall.py            50 /  0 /  50 / 100%  (2026-05-07)
+llm/rag/validators/mode_2_negative.py        24 /  0 /  24 / 100%  (2026-05-07)
+llm/rag/validators/mode_2_semantic.py        44 /  0 /  44 / 100%  (2026-05-07)*
+llm/rag/validators/mode_2_structure.py       10 /  0 /  10 / 100%  (2026-05-07)
+llm/rag/validators/sanitize.py                3 /  0 /   3 / 100%  (2026-05-07)
+llm/rag/validators/explain_response_schema.py 22 /  3 /  25 /  88%  (2026-05-12)
+llm/rag/contracts/validate_output.py         24 /  3 /  27 /  88%  (2026-05-07)
+                                             ----------------------
+TOTAL                                       177 /  6 / 183 /  96%
+
+# *  mode_2_semantic.py had an unused ``import re`` line removed in
+#    Sprint 6.B (2026-05-11).  The 100% kill rate from the 2026-05-07
+#    pass is carried forward by inspection: the removed line was a
+#    no-op import that produced no behavioural mutants, so the surface
+#    shrank without changing the kill set.  Schedule a re-run on the
+#    next quarterly refresh.
+#
+# ============================================================
+# Sprint 6.D closure pass (2026-05-12)
+# ============================================================
+#
+#   2026-05-07 baseline (5 validators):        155 /   3 / 158 /  98%
+#   2026-05-12 baseline (6 validators):        177 /   6 / 183 /  96%
+#
+# Net: +22 killed, +3 new survivors (explain_response_schema.py), one
+# new validator added to scope (explain_response_schema.py — Sprint 5.A
+# extended this file with structure + semantic boundary calls and it
+# was not previously a mutmut target).  Initial kill rate on the new
+# file was 22% (8 of 36 mutants killed); the closure pass brought it
+# to 88%.
+#
+# What the closure pass changed
+# -----------------------------
+#
+# 1. ``scripts/run_mutation_tests.sh`` — added
+#    ``llm/rag/validators/explain_response_schema.py`` to ALL_TARGETS
+#    and ``llm/tests/test_api_contract_validation.py`` to the runner.
+#    That file holds the boundary-level coaching tests added in 5.A
+#    that kill most of the new mutation surface.
+#
+# 2. Dead-code removal in ``llm/rag/validators/explain_response_schema.py``:
+#    Two ``@field_validator``-decorated methods were unreachable because
+#    Pydantic v2 enforces ``list[str]`` element typing at the schema
+#    layer BEFORE field validators run.  Mutations on those methods
+#    were unkillable regardless of test shape — surfaced by mutmut as
+#    an 11-mutant cluster.
+#
+#      - ``EngineSignalSchema.validate_string_lists`` (deleted)
+#      - ``EmbeddedExplainResponse.tags_must_be_strings`` (deleted)
+#
+#    The contracts those validators claimed to enforce now live at the
+#    Pydantic schema layer.  New tests assert the resulting
+#    ``schema validation failed`` error message names the offending
+#    field, so a future regression that loosens ``list[str]`` to
+#    plain ``list`` fails loudly.
+#
+# 3. New test file ``llm/tests/test_explain_schema_mutation_killers.py``
+#    (19 tests) pins each Mode-2 branch of validate_chat_response and
+#    validate_live_move_response with a prefix-anchored regex match —
+#    a former ``match="Mode-2"`` would survive a mutation that swapped
+#    "content" → "structure" because both branches mentioned "Mode-2";
+#    the anchored ``match=r"^Chat reply failed Mode-2 content
+#    validation"`` kills any per-word mutation of that prefix.
+#
+# ============================================================
+# The 6 remaining survivors
+# ============================================================
+#
+# 1. validate_output.py — 3 survivors on `]` lines inside list literals.
+#    Documented at the 2026-05-07 pass as structural no-op mutations
+#    that have no test-observable effect (Python's list grammar treats
+#    `[a, b]` and `[a, b,]` as semantically identical).  Accepted as
+#    known unkillable.
+#
+# 2. explain_response_schema.py — 3 survivors on the
+#    ``EmbeddedExplainResponse.explanation_not_empty`` field validator
+#    (lines 108, 109, 112):
+#
+#      [1] @field_validator("explanation")  → decorator field-name mutation
+#      [3] @classmethod                      → decorator removal mutation
+#      [5] raise ValueError("explanation must be non-empty")  → string wrap
+#
+#    The first two mutations cause Pydantic to raise PydanticUserError
+#    at model-definition time (decorator references a non-existent
+#    field, or @classmethod is missing).  Pytest's collection fails
+#    with exit code 4, which mutmut classifies as "survived" rather
+#    than "killed" — a known mutmut limitation, not a real coverage
+#    gap.  The actual semantic check would catch these mutations in
+#    any reasonable test setup (the validator is dead code → empty
+#    explanation accepted → test that asserts rejection fails).
+#
+#    The third mutation wraps the inner ``ValueError`` string with
+#    ``XX...XX``; the outer ``Embedded explain response schema
+#    validation failed: …`` wraps that ValidationError verbatim, so
+#    the inner substring still appears in the outer message.  The
+#    test asserts the inner phrase is in the outer message via
+#    ``in str(exc_info.value)`` — substring match, not anchored —
+#    which passes for the wrapped form too.
+#
+# ============================================================
+# Test maintenance contract
+# ============================================================
+#
+# When a forbidden pattern is added/removed in any validator:
+#
+#   1. Edit the validator source (validator-side change).
+#   2. Add or remove the corresponding (pattern, sample) row in
+#      `llm/rag/tests/unit/test_validator_pattern_coverage.py`.
+#      The "list_is_complete" guard tests will fail loudly if you
+#      forget step 2.
+#   3. If the change actually moves the kill rate, refresh this
+#      baseline file in the same commit.
+#
+# When a new branch is added to a Mode-2 validator delegation in
+# explain_response_schema.py (validate_chat_response /
+# validate_live_move_response / validate_explain_response):
+#
+#   1. Add a parametrised test row in
+#      ``llm/tests/test_explain_schema_mutation_killers.py`` with a
+#      prefix-anchored ``match=r"^..."`` for the new branch's error
+#      message.  Choose an input that triggers ONLY that branch.
+#   2. Re-run ``bash scripts/run_mutation_tests.sh
+#      explain_response_schema`` and confirm the new mutants are
+#      killed.
+#   3. Refresh this baseline in the same commit.
