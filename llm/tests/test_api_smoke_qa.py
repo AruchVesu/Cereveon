@@ -30,40 +30,23 @@ _LLM_ROOT = _REPO_ROOT / "llm"
 
 
 class TestApi01HealthEndpoint:
-    """API-01: /health must return 200 with a parseable JSON body."""
+    """API-01: /health must return 200 with a parseable JSON body.
 
-    def _call_health(self, app_module_path: str):
-        """Call /health on the given app module via TestClient."""
+    Originally pinned this on both ``server.py`` and ``host_app.py``;
+    host_app was retired in 2026-05-12 (host_app retirement pass) and
+    its /health stanza was deleted along with the rest of the debug
+    surface.  Only server.py remains.
+    """
+
+    def _call_health(self):
         from fastapi.testclient import TestClient
-
-        if app_module_path == "host_app":
-            from llm import host_app
-            client = TestClient(host_app.app, raise_server_exceptions=False)
-        else:
-            from llm import server as server_module
-            client = TestClient(server_module.app, raise_server_exceptions=False)
+        from llm import server as server_module
+        client = TestClient(server_module.app, raise_server_exceptions=False)
         return client.get("/health")
-
-    def test_host_app_health_returns_200(self):
-        """host_app.py /health must return HTTP 200."""
-        response = self._call_health("host_app")
-        assert response.status_code == 200, (
-            f"/health returned {response.status_code}, expected 200. "
-            f"Body: {response.text[:200]}"
-        )
-
-    def test_host_app_health_body_is_json(self):
-        """host_app.py /health response body must be parseable JSON."""
-        response = self._call_health("host_app")
-        try:
-            body = response.json()
-            assert isinstance(body, dict), f"/health must return a JSON object; got {type(body)}"
-        except Exception as exc:
-            pytest.fail(f"/health response is not valid JSON: {exc}. Body: {response.text[:200]}")
 
     def test_server_health_returns_200(self):
         """server.py /health must return HTTP 200."""
-        response = self._call_health("server")
+        response = self._call_health()
         assert response.status_code == 200, (
             f"server.py /health returned {response.status_code}, expected 200. "
             f"Body: {response.text[:200]}"
@@ -71,18 +54,12 @@ class TestApi01HealthEndpoint:
 
     def test_server_health_body_is_json(self):
         """server.py /health response body must be parseable JSON."""
-        response = self._call_health("server")
+        response = self._call_health()
         try:
             body = response.json()
             assert isinstance(body, dict)
         except Exception as exc:
             pytest.fail(f"server.py /health is not valid JSON: {exc}")
-
-    def test_health_endpoint_registered_on_host_app(self):
-        """host_app.py must have a /health route registered."""
-        from llm import host_app
-        paths = [getattr(r, "path", None) for r in host_app.app.routes]
-        assert "/health" in paths, "host_app.app must have a /health route"
 
     def test_health_endpoint_registered_on_server(self):
         """server.py must have a /health route registered."""
@@ -110,80 +87,27 @@ _VALID_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 class TestApi03InvalidFenReturns400:
     """API-03: Invalid FEN must return a 4xx response with an error message (no stack trace)."""
 
-    def test_engine_eval_endpoint_rejects_completely_invalid_fen(self, monkeypatch):
-        """POST /engine/eval with a non-FEN string must not return 200."""
-        from fastapi.testclient import TestClient
-        from llm import host_app
+    # Post-host_app retirement (2026-05-12): /engine/eval lives on
+    # server.py and is X-Api-Key-gated.  Direct HTTP probes here would
+    # surface the auth dependency before the FEN validator runs, so
+    # invalid-FEN behaviour is exercised at the validator-call layer
+    # in test_api_contract_validation.py (the chess.Board parse +
+    # _validate_fen_field tests).  The pre-retirement HTTP-shape
+    # checks here were redundant once auth landed.
 
-        monkeypatch.setattr(host_app._limiter, "enabled", False)
-
-        client = TestClient(host_app.app, raise_server_exceptions=False)
-        resp = client.post("/engine/eval", json={"fen": "not-a-fen"})
-
-        # Should not be 200; 422 (validation) or 400 are acceptable
-        assert resp.status_code != 200, (
-            "Invalid FEN 'not-a-fen' must not return HTTP 200"
-        )
-
-    def test_engine_eval_rejects_empty_fen(self, monkeypatch):
-        """POST /engine/eval with empty string FEN must not return 200."""
-        from fastapi.testclient import TestClient
-        from llm import host_app
-
-        monkeypatch.setattr(host_app._limiter, "enabled", False)
-
-        client = TestClient(host_app.app, raise_server_exceptions=False)
-        resp = client.post("/engine/eval", json={"fen": ""})
-        assert resp.status_code != 200
-
-    def test_error_response_does_not_expose_stack_trace(self, monkeypatch):
+    def test_engine_eval_rejects_invalid_fen_via_validator(self):
+        """API-03: ``_validate_fen_field`` (the EngineEvalRequest field
+        validator on server.py) must reject non-FEN strings — this is
+        what surfaces as an HTTP 422 to the caller.
         """
-        Error responses for invalid inputs must not expose Python stack traces
-        (no 'Traceback', 'File "...', or 'line N').
-        """
-        from fastapi.testclient import TestClient
-        from llm import host_app
+        from llm.server import _validate_fen_field
 
-        monkeypatch.setattr(host_app._limiter, "enabled", False)
-
-        client = TestClient(host_app.app, raise_server_exceptions=False)
-        resp = client.post("/engine/eval", json={"fen": "not-a-fen"})
-
-        body_text = resp.text
-        assert "Traceback" not in body_text, (
-            "Error response must not expose 'Traceback' to the client"
-        )
-        assert 'File "' not in body_text, (
-            "Error response must not expose Python file paths to the client"
-        )
-
-    def test_valid_startpos_fen_is_accepted(self, monkeypatch):
-        """POST /engine/eval with the standard starting FEN must not be rejected as invalid."""
-        from fastapi.testclient import TestClient
-        from llm import host_app
-
-        class _FakeEvaluator:
-            default_nodes = 5000
-
-            def resolve_limits(self, *, movetime, nodes):
-                return None, self.default_nodes
-
-        async def _fake_evaluate(*, fen, moves, movetime, nodes):
-            return (
-                {"score": 0, "best_move": "e2e4", "source": "engine"},
-                {"cache_hit": False, "source": "engine", "engine_wait_ms": 1.0,
-                 "engine_eval_ms": 5.0, "total_ms": 6.0},
-            )
-
-        monkeypatch.setattr(host_app._limiter, "enabled", False)
-        monkeypatch.setattr(host_app, "engine_eval", _FakeEvaluator())
-        monkeypatch.setattr(host_app.engine_service, "evaluate_with_metrics", _fake_evaluate)
-
-        client = TestClient(host_app.app, raise_server_exceptions=False)
-        resp = client.post("/engine/eval", json={"fen": _VALID_FEN})
-        assert resp.status_code == 200, (
-            f"Valid starting FEN must return 200; got {resp.status_code}: {resp.text[:200]}"
-        )
+        for bogus in ("not-a-fen", "", "   "):
+            try:
+                _validate_fen_field(bogus)
+            except ValueError:
+                continue
+            pytest.fail(f"_validate_fen_field accepted invalid FEN: {bogus!r}")
 
 
 # ---------------------------------------------------------------------------

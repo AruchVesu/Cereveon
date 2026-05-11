@@ -7,8 +7,7 @@ live engine or database, and fail CI if any field is missing or has the wrong
 type.
 
 Covered endpoints:
-  - POST /engine/eval  (host_app.py)
-  - GET  /engine/eval  (host_app.py)
+  - POST /engine/eval  (server.py — migrated from host_app.py in 2026-05-12)
   - GET  /next-training/{player_id}  (server.py)
   - POST /game/finish  (llm/seca/events/router.py)
 
@@ -60,202 +59,178 @@ def _assert_dict(value, field: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 1. /engine/eval — POST + GET (host_app.py)
+# 1. /engine/eval — POST (server.py)
 # ---------------------------------------------------------------------------
+#
+# Migrated from host_app.py in the host_app retirement pass.  The server.py
+# contract is intentionally narrower than host_app's was:
+#   - POST only (no GET variant — nothing in-tree calls GET).
+#   - Body is just ``{"fen": str}``; the historical ``moves`` /
+#     ``movetime_ms`` / ``nodes`` fields are gone.
+#   - Response is ``{"score": int|None, "best_move": str|None, "source": str}``.
+#     No ``_metrics`` field, no ``cache``/``book`` source values — the new
+#     route doesn't go through EliteEngineService.  ``source`` is
+#     "engine" on the happy path, "unavailable" when the engine pool is
+#     down (matches the Android client's ``engineAvailable=false`` branch).
 
-_ENGINE_EVAL_SOURCES = {"engine", "cache", "book"}
+
+class _FakeEngine:
+    """Minimal stand-in for ``chess.engine.SimpleEngine`` — enough surface
+    for ``engine.analyse(board, limit)`` to return the shape the
+    /engine/eval handler reads."""
+
+    def __init__(self, score_cp: int | None, best_move_uci: str | None):
+        self._score_cp = score_cp
+        self._best_move_uci = best_move_uci
+
+    def analyse(self, _board, _limit):
+        import chess.engine  # noqa: PLC0415
+
+        info: dict = {}
+        if self._score_cp is not None:
+            info["score"] = chess.engine.PovScore(
+                chess.engine.Cp(self._score_cp), chess.WHITE
+            )
+        if self._best_move_uci is not None:
+            info["pv"] = [chess.Move.from_uci(self._best_move_uci)]
+        return info
 
 
-def _make_engine_service_mock(
-    *,
-    score: int | None = 42,
-    best_move: str | None = "e2e4",
-    source: str = "engine",
-    cache_hit: bool = False,
-):
-    """Return a minimal evaluate_with_metrics mock for host_app tests."""
+class _FakeEnginePool:
+    """Stand-in for ``StockfishEnginePool`` exposing the two private
+    attributes the /engine/eval handler reaches into: ``_engines``
+    (Queue-like with ``.get``) and ``_release_engine`` (no-op on
+    release)."""
 
-    async def _evaluate_with_metrics(*, fen, moves, movetime, nodes):
-        result = {"score": score, "best_move": best_move, "source": source}
-        metrics = {
-            "cache_hit": cache_hit,
-            "source": source,
-            "engine_wait_ms": 1.0,
-            "engine_eval_ms": 5.0,
-            "total_ms": 6.0,
-        }
-        return result, metrics
+    def __init__(self, engine: _FakeEngine | None):
+        self._engine = engine
 
-    return _evaluate_with_metrics
+        class _Settings:
+            queue_timeout_ms = 1000
+
+        self.settings = _Settings()
+
+        class _Queue:
+            def __init__(self, eng):
+                self._eng = eng
+
+            def get(self, timeout=None):  # noqa: ARG002
+                if self._eng is None:
+                    import queue as _q  # noqa: PLC0415
+
+                    raise _q.Empty()
+                return self._eng
+
+        self._engines = _Queue(engine)
+
+    def _release_engine(self, _engine):
+        pass
 
 
 class TestEngineEvalContractSchema:
-    """POST /engine/eval and GET /engine/eval response schema validation."""
+    """POST /engine/eval response schema validation.
 
-    def _run_eval_position(self, monkeypatch, *, score=42, best_move="e2e4", source="engine"):
-        from llm import host_app
+    Calls the handler function directly (rather than via TestClient) so
+    the test stays in-process and doesn't depend on the FastAPI lifespan
+    booting a real Stockfish pool.  The rate limiter is bypassed by
+    flipping ``limiter.enabled`` to False inside the fixture; the
+    real handler decorator is preserved so production behaviour is
+    unchanged.
+    """
 
-        class _FakeEvaluator:
-            default_nodes = 5000
+    def _run_engine_eval(self, monkeypatch, *, score=42, best_move="e2e4"):
+        import llm.server as server_module
 
-            def resolve_limits(self, *, movetime, nodes):
-                if movetime is None and nodes is None:
-                    return None, self.default_nodes
-                return movetime, nodes
+        fake_pool = _FakeEnginePool(_FakeEngine(score, best_move))
+        monkeypatch.setattr(server_module, "engine_pool", fake_pool)
+        monkeypatch.setattr(server_module.limiter, "enabled", False)
 
-        # Disable the rate limiter so direct function calls don't need a real Request.
-        monkeypatch.setattr(host_app._limiter, "enabled", False)
-        monkeypatch.setattr(host_app, "engine_eval", _FakeEvaluator())
-        monkeypatch.setattr(
-            host_app.engine_service,
-            "evaluate_with_metrics",
-            _make_engine_service_mock(score=score, best_move=best_move, source=source),
+        # Direct call — bypasses the Depends() chain.  X-Api-Key
+        # verification is server.py:verify_api_key (separately tested);
+        # we pass _=None to skip the dependency injection.
+        return server_module.engine_eval(
+            req=server_module.EngineEvalRequest(
+                fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+            ),
+            request=MagicMock(),
+            _=None,
         )
 
-        async def _run():
-            return await host_app.eval_position(
-                MagicMock(), host_app.EngineEvalRequest(fen="startpos")
-            )
-
-        return asyncio.run(_run())
-
     def test_response_has_score_field(self, monkeypatch):
-        result = self._run_eval_position(monkeypatch)
+        result = self._run_engine_eval(monkeypatch)
         assert "score" in result, "Response missing required field 'score'"
 
     def test_response_has_best_move_field(self, monkeypatch):
-        result = self._run_eval_position(monkeypatch)
+        result = self._run_engine_eval(monkeypatch)
         assert "best_move" in result, "Response missing required field 'best_move'"
 
     def test_response_has_source_field(self, monkeypatch):
-        result = self._run_eval_position(monkeypatch)
+        result = self._run_engine_eval(monkeypatch)
         assert "source" in result, "Response missing required field 'source'"
-
-    def test_response_has_metrics_field(self, monkeypatch):
-        result = self._run_eval_position(monkeypatch)
-        assert "_metrics" in result, "Response missing required field '_metrics'"
 
     def test_score_is_int_or_none(self, monkeypatch):
         """score must be int | None (centipawns from White perspective)."""
-        result = self._run_eval_position(monkeypatch, score=42)
+        result = self._run_engine_eval(monkeypatch, score=42)
         _assert_int_or_none(result["score"], "score")
 
-    def test_score_can_be_null(self, monkeypatch):
-        """Fallback path returns score=None when engine unavailable."""
-        result = self._run_eval_position(monkeypatch, score=None)
-        assert result["score"] is None
-
     def test_best_move_is_str_or_none(self, monkeypatch):
-        """best_move must be a UCI string or None."""
-        result = self._run_eval_position(monkeypatch, best_move="e2e4")
+        result = self._run_engine_eval(monkeypatch, best_move="e2e4")
         _assert_str_or_none(result["best_move"], "best_move")
 
-    def test_best_move_can_be_null(self, monkeypatch):
-        result = self._run_eval_position(monkeypatch, best_move=None)
-        assert result["best_move"] is None
-
-    def test_source_is_valid_enum_value(self, monkeypatch):
-        """source must be one of the three documented values."""
-        for source in ("engine", "cache", "book"):
-            result = self._run_eval_position(monkeypatch, source=source)
-            assert (
-                result["source"] in _ENGINE_EVAL_SOURCES
-            ), f"source={result['source']!r} not in {_ENGINE_EVAL_SOURCES}"
-
-    def test_metrics_is_dict(self, monkeypatch):
-        result = self._run_eval_position(monkeypatch)
-        _assert_dict(result["_metrics"], "_metrics")
-
-    def test_metrics_has_cache_hit_bool(self, monkeypatch):
-        result = self._run_eval_position(monkeypatch)
-        assert "cache_hit" in result["_metrics"], "_metrics missing 'cache_hit'"
-        assert isinstance(result["_metrics"]["cache_hit"], bool), "cache_hit must be bool"
-
     def test_score_sign_convention_positive_means_white_better(self, monkeypatch):
-        """Positive score → White has the advantage (documented convention)."""
-        result = self._run_eval_position(monkeypatch, score=100)
+        result = self._run_engine_eval(monkeypatch, score=100)
         assert result["score"] == 100
-        assert result["score"] > 0, "Positive score should indicate White advantage"
+        assert result["score"] > 0
 
     def test_score_sign_convention_negative_means_black_better(self, monkeypatch):
-        result = self._run_eval_position(monkeypatch, score=-80)
+        result = self._run_engine_eval(monkeypatch, score=-80)
         assert result["score"] == -80
-        assert result["score"] < 0, "Negative score should indicate Black advantage"
+        assert result["score"] < 0
 
-    def test_engine_source_response_has_full_metrics(self, monkeypatch):
-        """Engine-sourced responses include timing metrics."""
-        result = self._run_eval_position(monkeypatch, source="engine")
-        metrics = result["_metrics"]
-        for key in ("engine_wait_ms", "engine_eval_ms", "total_ms"):
-            assert key in metrics, f"_metrics missing '{key}' for source=engine"
+    def test_source_engine_on_happy_path(self, monkeypatch):
+        """``source`` is "engine" when the pool returned a real eval."""
+        result = self._run_engine_eval(monkeypatch)
+        assert result["source"] == "engine"
 
-    def test_no_extra_required_fields_beyond_contract(self, monkeypatch):
-        """No undocumented mandatory fields sneaked into the response."""
-        result = self._run_eval_position(monkeypatch)
-        documented = {"score", "best_move", "source", "_metrics"}
-        actual = set(result.keys())
-        assert documented.issubset(
-            actual
-        ), f"Contract fields missing from response: {documented - actual}"
+    def test_engine_pool_unavailable_returns_unavailable_source(self, monkeypatch):
+        """When ``engine_pool`` is None (boot failure), the handler
+        returns a degraded shape with ``source="unavailable"`` rather
+        than 500 — matches the Android client's ``engineAvailable=false``
+        fallback branch in ChessViewModel.dispatchEngineEval."""
+        import llm.server as server_module
 
+        monkeypatch.setattr(server_module, "engine_pool", None)
+        monkeypatch.setattr(server_module.limiter, "enabled", False)
 
-class TestEngineEvalGetContractSchema:
-    """GET /engine/eval (query-param variant) has the same response schema."""
-
-    def test_get_variant_returns_same_schema(self, monkeypatch):
-        from llm import host_app
-
-        class _FakeEvaluator:
-            default_nodes = 5000
-
-            def resolve_limits(self, *, movetime, nodes):
-                return movetime, nodes
-
-        monkeypatch.setattr(host_app, "engine_eval", _FakeEvaluator())
-        monkeypatch.setattr(host_app._limiter, "enabled", False)
-        monkeypatch.setattr(
-            host_app.engine_service,
-            "evaluate_with_metrics",
-            _make_engine_service_mock(score=15, best_move="d2d4"),
+        result = server_module.engine_eval(
+            req=server_module.EngineEvalRequest(
+                fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+            ),
+            request=MagicMock(),
+            _=None,
         )
+        assert result == {"score": None, "best_move": None, "source": "unavailable"}
 
-        async def _run():
-            return await host_app.eval_position_query(MagicMock(), fen="startpos")
+    def test_queue_timeout_returns_unavailable_source(self, monkeypatch):
+        """A queue.Empty from ``engine_pool._engines.get(timeout=...)``
+        (pool exhausted under load) surfaces as ``source="unavailable"``
+        with null score+best_move, same as the pool-is-None branch."""
+        import llm.server as server_module
 
-        result = asyncio.run(_run())
-        for field in ("score", "best_move", "source", "_metrics"):
-            assert field in result, f"GET variant missing '{field}'"
+        empty_pool = _FakeEnginePool(engine=None)  # raises queue.Empty
+        monkeypatch.setattr(server_module, "engine_pool", empty_pool)
+        monkeypatch.setattr(server_module.limiter, "enabled", False)
 
-    def test_get_variant_movetime_aliases(self, monkeypatch):
-        """GET endpoint accepts both movetime_ms= and movetime= aliases."""
-        from llm import host_app
-
-        received_movetime = {}
-
-        async def _fake_evaluate(*, fen, moves, movetime, nodes):
-            received_movetime["mt"] = movetime
-            return (
-                {"score": 0, "best_move": None, "source": "engine"},
-                {"cache_hit": False, "total_ms": 1.0},
-            )
-
-        class _FakeEvaluator:
-            default_nodes = 5000
-
-            def resolve_limits(self, *, movetime, nodes):
-                return movetime, nodes
-
-        monkeypatch.setattr(host_app._limiter, "enabled", False)
-        monkeypatch.setattr(host_app, "engine_eval", _FakeEvaluator())
-        monkeypatch.setattr(host_app.engine_service, "evaluate_with_metrics", _fake_evaluate)
-
-        async def _run():
-            return await host_app.eval_position_query(
-                MagicMock(), fen="startpos", movetime_ms=30, movetime=None
-            )
-
-        asyncio.run(_run())
-        assert received_movetime["mt"] == 30
+        result = server_module.engine_eval(
+            req=server_module.EngineEvalRequest(
+                fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+            ),
+            request=MagicMock(),
+            _=None,
+        )
+        assert result["source"] == "unavailable"
+        assert result["score"] is None
+        assert result["best_move"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -634,17 +609,6 @@ class TestCoachEndpointMissing:
             "/coach route unexpectedly found in server.py. "
             "Update docs/API_CONTRACTS.md to document the new endpoint."
         )
-
-    def test_host_app_has_no_coach_route(self):
-        """host_app.py must have no route registered at /coach."""
-        from llm import host_app
-
-        routes = [getattr(r, "path", None) for r in host_app.app.routes]
-        assert "/coach" not in routes, (
-            "/coach route unexpectedly found in host_app.py. "
-            "Update docs/API_CONTRACTS.md to document the new endpoint."
-        )
-
 
 class TestNextTrainingSchemaConflict:
     """

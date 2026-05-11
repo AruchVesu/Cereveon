@@ -152,22 +152,10 @@ class TestTimingSafeApiKeyComparison:
             "implementation in llm/seca/auth/api_key.py to avoid drift."
         )
 
-    def test_sn01c_host_app_imports_shared_verify_api_key(self):
-        """SN_01c: host_app.py must import verify_api_key from the shared module.
-
-        Same reasoning as SN_01b — no local verify_api_key permitted.
-        """
-        source = _read("host_app.py")
-        assert "from llm.seca.auth.api_key import verify_api_key" in source, (
-            "host_app.py does not import verify_api_key from the shared "
-            "llm.seca.auth.api_key module."
-        )
-        tree = _parse("host_app.py")
-        local_def = _find_func(tree, "verify_api_key")
-        assert local_def is None, (
-            "host_app.py defines a local verify_api_key() — must use the shared "
-            "implementation in llm/seca/auth/api_key.py to avoid drift."
-        )
+    # SN_01c (host_app.py shared-verify_api_key import) retired in the
+    # host_app retirement pass (2026-05-12).  host_app.py was deleted;
+    # server.py is the only remaining caller of verify_api_key, pinned
+    # by SN_01b above.
 
     def test_sn01d_hmac_imported_in_shared_module(self):
         """SN_01d: the shared module must import hmac for compare_digest."""
@@ -179,28 +167,12 @@ class TestTimingSafeApiKeyComparison:
 
 
 # ===========================================================================
-# SN_02 — /engine/predictions rate limiting
+# SN_02 — /engine/predictions rate limiting (retired)
 # ===========================================================================
-
-
-class TestEnginePredictionsRateLimited:
-    """
-    /engine/predictions in host_app.py must be rate-limited.
-
-    The endpoint calls get_predictions() which hits the engine pool. Without a
-    rate limit any unauthenticated caller can exhaust the pool continuously.
-    """
-
-    def test_sn02_engine_predictions_has_limiter_decorator(self):
-        """SN_02: engine_predictions() must have @_limiter.limit() decorator."""
-        tree = _parse("host_app.py")
-        func = _find_func(tree, "engine_predictions")
-        assert func is not None, "engine_predictions() not found in host_app.py"
-        assert _has_limiter_decorator(func), (
-            "engine_predictions() (GET /engine/predictions) in host_app.py has no "
-            "@_limiter.limit() decorator. Unauthenticated callers can exhaust the "
-            "engine pool at will. Add @_limiter.limit('30/minute')."
-        )
+#
+# /engine/predictions lived only in host_app.py, which was retired in the
+# host_app retirement pass (2026-05-12).  The endpoint was deleted along
+# with the rest of the debug-server surface; no server.py equivalent.
 
 
 # ===========================================================================
@@ -607,98 +579,11 @@ class TestChatRequestPlayerProfileSize:
 
 
 # ===========================================================================
-# SN_10 — host_app.py body size limit middleware
+# SN_10 — body size limit middleware (retired)
 # ===========================================================================
-
-
-class TestHostAppBodySizeLimit:
-    """
-    SN_10: host_app.py must enforce a request body size limit.
-
-    server.py has a _LimitBodySize middleware capping at 512 KB. host_app.py
-    had no equivalent — large POST requests to /engine/eval or /debug/engine-raw
-    were unbounded.
-    """
-
-    def test_sn10_host_app_source_has_body_limit_middleware(self):
-        """SN_10: host_app.py must add a body-size-limit middleware."""
-        source = _read("host_app.py")
-        has_limit = (
-            "_LimitBodySize" in source
-            or "content-length" in source.lower()
-            or "413" in source
-            or "BaseHTTPMiddleware" in source
-        )
-        assert has_limit, (
-            "host_app.py has no body size limit middleware. "
-            "server.py caps requests at 512 KB via _LimitBodySize; host_app.py does not. "
-            "Large POST bodies to /engine/eval or /debug/engine-raw are unbounded."
-        )
-
-    def test_sn10b_host_app_stub_413_on_large_body(self):
-        """SN_10b: host_app.py-style middleware must return 413 for Content-Length > 512 KB.
-
-        The stub mirrors host_app.py's current ``_LimitBodySize`` shape
-        — including the SN_10c chunked-encoding rejection (mirrors the
-        server.py SVD_01 fix).  Both the oversized-body and the
-        missing-Content-Length-on-POST cases are exercised below.
-        """
-        from fastapi import FastAPI, Request
-        from fastapi.responses import JSONResponse
-        from fastapi.testclient import TestClient
-        from starlette.middleware.base import BaseHTTPMiddleware
-
-        stub = FastAPI()
-        _MAX_BODY = 512 * 1024
-        _BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
-
-        class _LimitBodySize(BaseHTTPMiddleware):
-            async def dispatch(self, request: Request, call_next):
-                cl = request.headers.get("content-length")
-                if cl is None:
-                    if request.method in _BODY_METHODS:
-                        return JSONResponse(
-                            status_code=411,
-                            content={"error": "Content-Length header required"},
-                        )
-                else:
-                    try:
-                        if int(cl) > _MAX_BODY:
-                            return JSONResponse(
-                                status_code=413,
-                                content={"error": "Request body too large"},
-                            )
-                    except ValueError:
-                        return JSONResponse(
-                            status_code=400, content={"error": "Invalid Content-Length"}
-                        )
-                return await call_next(request)
-
-        stub.add_middleware(_LimitBodySize)
-
-        @stub.get("/health")
-        def health():
-            return {"ok": True}
-
-        client = TestClient(stub, raise_server_exceptions=False)
-        oversized = str(512 * 1024 + 1)
-        resp = client.get("/health", headers={"Content-Length": oversized})
-        assert resp.status_code == 413, (
-            f"Expected 413 for Content-Length={oversized}, got {resp.status_code}"
-        )
-
-    def test_sn10c_host_app_rejects_post_without_content_length(self):
-        """SN_10c: host_app.py must reject POST/PUT/PATCH with no Content-Length.
-
-        Mirrors the SVD_01 fix on server.py.  A body-size guard that
-        only inspects the Content-Length header is bypassed entirely by
-        chunked-transfer-encoded requests (or any HTTP/1.1 request that
-        omits the header).  Source-inspection check that host_app.py's
-        middleware enforces the contract.
-        """
-        source = _read("host_app.py")
-        assert "_BODY_METHODS" in source and "Content-Length header required" in source, (
-            "host_app.py's _LimitBodySize does not reject body-bearing methods "
-            "without a Content-Length header.  Same SVD_01-class bypass that "
-            "server.py closed."
-        )
+#
+# SN_10/SN_10b/SN_10c pinned host_app.py's _LimitBodySize middleware
+# against the same SVD_01-class chunked-encoding bypass that
+# server.py closed.  host_app.py was retired in the host_app
+# retirement pass (2026-05-12); server.py's _LimitBodySize is still
+# pinned by SVD_01 in test_security_depth.py.

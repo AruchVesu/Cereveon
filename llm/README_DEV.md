@@ -37,22 +37,14 @@ Docker runtime for low-latency Stockfish
 
 - A pooled Stockfish runtime is available via `docker-compose.yml` and `Dockerfile.api`.
 - It pre-spawns engine workers, keeps them alive, and uses Redis FEN caching.
-- The lightweight `/engine/eval` runtime in `host_app.py` now defaults to `ORJSONResponse`, supports both `POST /engine/eval` and `GET /engine/eval?fen=...`, and is intended to be started with multiple uvicorn workers.
+- `POST /engine/eval` lives on `server.py` (migrated from the retired `host_app.py` debug server in 2026-05-12 — see `docs/API_CONTRACTS.md` § 1).
+  Body is `{"fen": "..."}`, response is `{"score": int|None, "best_move": uci|None, "source": "engine"|"unavailable"}`.
 
 Start:
 - `docker compose up --build`
+- Or direct: `uvicorn llm.server:app --host 0.0.0.0 --port 8000`
 
-Host app start:
-- `uvicorn host_app:app --host 0.0.0.0 --port 8000 --workers 4`
-- `python host_app.py`
-
-Host app performance notes:
-- Install `orjson` from `requirements.txt`; `host_app.py` will use `ORJSONResponse` automatically when available.
-- For latency-sensitive load tests, prefer `GET /engine/eval?fen=<encoded>&nodes=3000` over JSON `POST`, or omit both limits to use the node-limited fast default.
-- `host_app.py` can use a Polyglot opening book before Redis or engine evaluation. Put a book file at `books/performance.bin` in the project root or override `OPENING_BOOK_PATH`.
-- If you do not have a real book file yet, generate the repo's small dev book with `python llm/scripts/generate_dev_polyglot_book.py`.
-- Opening-book hits return immediately with `source=book`, skip engine work, and also populate Redis with the book result.
-- `host_app.py` now expects real Redis and will fail startup if `PING` fails.
+Server performance notes:
 - In WSL dev setups, install and start Redis with `apt install redis-server`, then point the app at `REDIS_URL=redis://localhost:6379/0`.
 - Use `REDIS_MAX_CONNECTIONS` to raise or lower the async client pool; the default is `50`.
 - `REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS` and `REDIS_SOCKET_TIMEOUT_SECONDS` default to `1.0` so startup fails quickly when Redis is down or unreachable.
