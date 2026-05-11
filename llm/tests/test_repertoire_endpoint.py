@@ -76,7 +76,7 @@ def _disable_limiter():
 
 
 def _call_get_repertoire(player):
-    from llm.server import get_repertoire
+    from llm.seca.repertoire.router import get_repertoire
     limiter = _disable_limiter()
     prev = limiter.enabled
     limiter.enabled = False
@@ -125,7 +125,7 @@ class TestRepertoireDefaults:
     def test_default_mirrors_android_companion(self, temp_db):
         """REP_DEFAULT_MIRRORS_ANDROID — drift here would show users
         different ECOs on first vs subsequent visits."""
-        from llm.server import DEFAULT_REPERTOIRE
+        from llm.seca.repertoire.router import DEFAULT_REPERTOIRE
         _ensure_player()
         result = _call_get_repertoire(_player_namespace())
         assert result["openings"] == DEFAULT_REPERTOIRE
@@ -231,7 +231,7 @@ class TestRepertoireResponseShape:
 
 
 def _call_add(player, **kwargs):
-    from llm.server import add_or_update_opening, RepertoireEntryRequest
+    from llm.seca.repertoire.router import add_or_update_opening, RepertoireEntryRequest
     limiter = _disable_limiter()
     prev = limiter.enabled
     limiter.enabled = False
@@ -246,7 +246,7 @@ def _call_add(player, **kwargs):
 
 
 def _call_delete(player, eco):
-    from llm.server import delete_opening_endpoint
+    from llm.seca.repertoire.router import delete_opening_endpoint
     limiter = _disable_limiter()
     prev = limiter.enabled
     limiter.enabled = False
@@ -261,7 +261,7 @@ def _call_delete(player, eco):
 
 
 def _call_set_active(player, eco):
-    from llm.server import set_active_opening_endpoint
+    from llm.seca.repertoire.router import set_active_opening_endpoint
     limiter = _disable_limiter()
     prev = limiter.enabled
     limiter.enabled = False
@@ -370,7 +370,7 @@ class TestRepertoireSetActive:
 
 
 def _call_drill(player, eco, outcome):
-    from llm.server import drill_result_endpoint, DrillResultRequest
+    from llm.seca.repertoire.router import drill_result_endpoint, DrillResultRequest
     limiter = _disable_limiter()
     prev = limiter.enabled
     limiter.enabled = False
@@ -458,7 +458,7 @@ class TestRepertoireSeedingIdempotence:
 
     def test_seed_only_runs_when_empty(self, temp_db):
         from llm.seca.storage.repo import seed_default_repertoire, list_repertoire
-        from llm.server import DEFAULT_REPERTOIRE
+        from llm.seca.repertoire.router import DEFAULT_REPERTOIRE
 
         _ensure_player()
         assert seed_default_repertoire("player-rep", DEFAULT_REPERTOIRE) == 4
