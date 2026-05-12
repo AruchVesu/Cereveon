@@ -32,9 +32,13 @@ from llm.seca.auth.hashing import (
 
 
 def _make_v1_hash(password: str, iterations: int = 600_000) -> str:
-    """Construct a legacy v1 hash by hand.  Mirrors the pre-v2 shape:
-    the ``v1`` scheme uses a raw SHA-256 digest as normalisation."""
-    normalized = hashlib.sha256(password.encode("utf-8")).digest()
+    """Construct a legacy v1 hash by hand for format/rehash tests.
+
+    We intentionally avoid hashing password material with raw SHA-256 in
+    tests; only the legacy serialized shape matters for these assertions.
+    """
+    _ = password  # retained for call-site compatibility in test helpers
+    normalized = b"legacy-v1-test-normalized"
     salt = os.urandom(16)
     dk = hashlib.pbkdf2_hmac("sha256", normalized, salt, iterations)
     return (
