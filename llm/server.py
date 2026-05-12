@@ -1224,13 +1224,22 @@ async def llm_health(request: Request):
                 "error": "200 with unexpected response shape (no choices[0].message.content)",
             }
     except Exception as exc:  # noqa: BLE001
+        # CWE-209: exception messages can carry sensitive substrings —
+        # e.g. an httpx error formatted with the full request URL,
+        # which on auth failure includes the upstream's echoed API
+        # key fragment.  The exception class name alone is enough for
+        # operators to triage (``httpx.ConnectError`` vs
+        # ``httpx.TimeoutException`` vs ``httpx.HTTPStatusError``)
+        # without leaking payload.  Log the full ``exc`` server-side
+        # so on-call still has the detail when needed.
+        logger.warning("llm_health probe failed: %s", exc, exc_info=True)
         return {
             "ok": False,
             "provider": "deepseek",
             "model": MODEL_NAME,
             "api_base": DEEPSEEK_API_BASE,
             "latency_ms": _ms(),
-            "error": f"{type(exc).__name__}: {exc}",
+            "error": f"{type(exc).__name__}: probe failed",
         }
 
     return {

@@ -1,4 +1,5 @@
 import logging
+import re
 
 import chess
 
@@ -28,6 +29,12 @@ _KNOWN_MOVE_QUALITIES = frozenset(
 _LOG_INJECTION_CHARS = ("\r", "\n", "\x85", " ", " ")
 
 
+# Compiled character class equivalent to ``[<every char in _LOG_INJECTION_CHARS>]``.
+# Built from the tuple so the source of truth stays one place — adding a
+# new code point to the tuple automatically widens the regex.
+_LOG_INJECTION_RE = re.compile("[" + "".join(_LOG_INJECTION_CHARS) + "]")
+
+
 def _safe_log(value: object, max_len: int = 80) -> str:
     """Sanitize an untrusted value for safe inclusion in a log line.
 
@@ -37,17 +44,16 @@ def _safe_log(value: object, max_len: int = 80) -> str:
     CR/LF and forge a fake log entry.  ``repr()`` already escapes
     standard ASCII control characters, but Unicode line separators
     (NEL U+0085, U+2028, U+2029) can slip past it depending on the
-    encoder; we strip every line-terminating code point, then truncate
-    so a giant payload cannot bloat the log file.
+    encoder; we strip every line-terminating code point with a regex
+    pass, then truncate so a giant payload cannot bloat the log file.
 
-    The explicit replace chain is also what makes the sanitiser visible
-    to CodeQL's ``py/log-injection`` taint tracker — bare ``repr`` is
-    not recognised as a sanitiser even though it is one.
+    Implementation note: ``re.sub`` is deliberate.  CodeQL's
+    ``py/log-injection`` taint tracker recognises ``re.sub(pattern,
+    "", str)`` as a sanitiser but does NOT recognise the equivalent
+    loop-of-``str.replace`` shape (CodeQL alerts #225–#228, fixed
+    2026-05-13).
     """
-    s = repr(value)
-    for ch in _LOG_INJECTION_CHARS:
-        s = s.replace(ch, "")
-    return s[:max_len]
+    return _LOG_INJECTION_RE.sub("", repr(value))[:max_len]
 
 
 def side_from_fen(fen: str | None) -> str | None:

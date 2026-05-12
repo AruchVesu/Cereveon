@@ -181,13 +181,20 @@ def _build_health_app() -> FastAPI:
                     "error": "200 with unexpected response shape (no choices[0].message.content)",
                 }
         except Exception as exc:
+            # Mirrors the production trim in ``server.llm_health`` —
+            # the test stub stays aligned so any future change to the
+            # error-payload shape is caught by the existing /llm/health
+            # contract tests rather than slipping past them.  See CodeQL
+            # alert #340 / #341 (py/stack-trace-exposure) for the
+            # rationale: ``{exc}`` could carry the upstream URL + echoed
+            # API key fragment on httpx auth failures.
             return {
                 "ok": False,
                 "provider": "deepseek",
                 "model": _MODEL_NAME,
                 "api_base": _DEEPSEEK_API_BASE,
                 "latency_ms": _ms(),
-                "error": f"{type(exc).__name__}: {exc}",
+                "error": f"{type(exc).__name__}: probe failed",
             }
 
         return {
@@ -277,12 +284,23 @@ class TestLlmHealth:
     def test_llmh_06_transport_exception(self, client):
         """LLMH_06: Connection refused → ok=false, error includes
         exception type so the operator can distinguish unreachable
-        from auth-failed from timed-out."""
+        from auth-failed from timed-out.
+
+        Post CodeQL alert #340 (py/stack-trace-exposure, fixed
+        2026-05-13): the exception *message* is no longer surfaced in
+        the response body — only ``type(exc).__name__`` plus a fixed
+        ``probe failed`` sentinel.  The full ``exc`` lands in the
+        server-side ``logger.warning(..., exc_info=True)`` so on-call
+        still has the raw detail when needed.  Tests assert on the
+        type-name portion only.
+        """
         _set_script(ConnectionError("connection refused"))
         body = client.get("/llm/health").json()
         assert body["ok"] is False
         assert "ConnectionError" in body["error"]
-        assert "connection refused" in body["error"]
+        assert "probe failed" in body["error"]
+        # Negative guard: the exception message itself must NOT leak.
+        assert "connection refused" not in body["error"]
 
     def test_llmh_07_timeout_exception(self, client):
         """LLMH_07: read timeout → ok=false with TimeoutError."""
