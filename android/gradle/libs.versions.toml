@@ -1,5 +1,5 @@
 [versions]
-agp = "8.13.2"
+agp = "9.2.1"
 kotlin = "2.0.21"
 # kotlinx-serialization-json runtime.  Plugin version is tied to ``kotlin``
 # above via the ``kotlin-serialization`` plugin alias.  Sprint 4.3.C
