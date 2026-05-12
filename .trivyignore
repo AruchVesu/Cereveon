@@ -79,7 +79,9 @@ CVE-2026-40225 until:2027-07-01
 #     stream — wide-character C functions are bypassed entirely.
 #   - The only other glibc consumer in the image is Stockfish, which
 #     speaks UCI text protocol over stdin/stdout: ASCII bytes only,
-#     no wide-character I/O.  See engine_pool.py for how we feed it.
+#     no wide-character I/O.  See llm/seca/engines/stockfish/pool.py
+#     for how we feed it (the flat ``engine_pool.py`` referenced here
+#     historically was retired in the engine-library cleanup).
 #   - The exploit precondition (attacker-controlled wide-character
 #     stream reaching ungetwc) does not occur in this image's
 #     execution paths.

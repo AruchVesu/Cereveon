@@ -488,8 +488,14 @@ def test_python_tests_job_includes_mandatory_explicit_steps():
     assert "test_explain_schema_validation.py" in schema_step["run"]
 
     engine_regression_step = _step_named(python_tests_job, "Run engine regression tests")
-    assert "test_engine_eval_benchmark.py" in engine_regression_step["run"]
-    assert "test_engine_eval_lru_cache.py" in engine_regression_step["run"]
+    # Post-engine-library-cleanup (2026-05-12): live engine-pool coverage
+    # replaced the retired ``llm.engine_eval`` / ``llm.elite_engine_service``
+    # tests.  Pin the live surface — these files exercise the
+    # ``llm.seca.engines.stockfish.pool`` pool/cache plus the response-format
+    # signal extraction.
+    assert "test_engine_pool_evaluate_position.py" in engine_regression_step["run"]
+    assert "test_fen_move_cache_key.py" in engine_regression_step["run"]
+    assert "test_engine_response_format.py" in engine_regression_step["run"]
 
     api_security_step = _step_named(python_tests_job, "Run API security tests")
     assert "test_api_security.py" in api_security_step["run"]

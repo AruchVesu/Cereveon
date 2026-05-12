@@ -8,8 +8,8 @@ Critical invariant pinned here:
   a non-empty moves list will NOT get the expected board.
 
 This behavior is tested explicitly so that any future change to respect `fen`
-when moves are present triggers a review — callers in engine_eval.py and
-elite_engine_service.py depend on the current semantics.
+when moves are present triggers a review — server.py's /engine/eval path
+relies on the current semantics.
 """
 
 import chess
@@ -91,7 +91,7 @@ def test_build_board_ignores_fen_when_moves_are_present():
 
     This test pins that existing behaviour. If you change build_board to
     respect `fen` when moves are present, you must audit all callers
-    (engine_eval.py, elite_engine_service.py, server.py) for correctness.
+    (currently just server.py's /engine/eval path) for correctness.
     """
     non_starting_fen = _FEN_AFTER_E4  # position after 1. e4
     board = build_board(fen=non_starting_fen, moves=["e2e4"])

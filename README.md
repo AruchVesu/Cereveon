@@ -562,10 +562,8 @@ update — and never in CI.
 ├── android/                  # Kotlin client (UI, game orchestration, JNI)
 ├── engine/                   # C++ opponent engine (~1800 Elo, JNI bridge)
 ├── llm/
-│   ├── server.py             # FastAPI entry point
+│   ├── server.py             # FastAPI entry point — also hosts /engine/eval
 │   ├── explain_pipeline.py   # Mode-2 outer pipeline + bounded retries
-│   ├── elite_engine_service.py
-│   ├── engine_eval.py        # ESV extraction wrapper
 │   ├── rag/
 │   │   ├── engine_signal/    # ESV extraction
 │   │   ├── retriever/        # Deterministic rule-based retrieval

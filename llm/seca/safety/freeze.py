@@ -198,13 +198,18 @@ def _scan_loaded_modules():
     reverted: ``FORBIDDEN_KEYWORDS`` contains generic substrings
     (``train(``, ``.update(``) chosen to catch the historical SECA
     trainers' entry points, and those false-positive on legitimate
-    production modules outside the SECA tree (e.g.
-    ``llm.elite_engine_service.update_*`` cache helpers).  The audit's
-    specific worry — the top-level ``llm/world_model.py`` and
-    ``llm/bootstrap_skill_dataset.py`` files sitting outside the scan —
-    is addressed by deleting those files in the Sprint 2 PR.  A future
-    revival of that shape would re-trip the audit and warrant a
-    keyword-tightening pass before re-widening the scan.
+    production modules outside the SECA tree.  The cache-helper
+    false-positive that originally motivated this scope
+    (``llm.elite_engine_service.update_*``) is gone after the
+    engine-library cleanup deleted that module, but the
+    ``llm.*``-widening tradeoff remains: scan the SECA tree where the
+    forbidden adaptive paths actually live; trust the structural scan
+    plus code review for the flat ``llm/*`` surface.  The audit's
+    specific worry — top-level ``llm/world_model.py`` and
+    ``llm/bootstrap_skill_dataset.py`` — was addressed by deleting
+    those files in the Sprint 2 PR.  A future revival of that shape
+    would re-trip the audit and warrant a keyword-tightening pass
+    before re-widening the scan.
     """
     for name, module in sys.modules.items():
         if module is None:
