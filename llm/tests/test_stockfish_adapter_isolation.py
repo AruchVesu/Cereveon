@@ -3,9 +3,9 @@ AST-based isolation tests: StockfishAdapter must never be imported from live mod
 
 llm/seca/engines/stockfish/adapter.py contains StockfishAdapter, a simple
 depth-limited wrapper. It is not wired into any live request path and must
-not be imported from server.py, elite_engine_service.py, engine_eval.py,
-or pool.py.  (host_app.py was retired in 2026-05-12 and dropped from the
-isolation list at the same time.)
+not be imported from server.py or pool.py.  (host_app.py was retired in
+2026-05-12 via PR #111; ``elite_engine_service.py`` and ``engine_eval.py``
+were dropped in the engine-library cleanup that followed.)
 
 These tests parse each live module with the ast module (no execution) and
 verify that neither the name "StockfishAdapter" nor the adapter module path
@@ -23,8 +23,6 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 _LIVE_MODULES = [
     "llm/server.py",
-    "llm/elite_engine_service.py",
-    "llm/engine_eval.py",
     "llm/seca/engines/stockfish/pool.py",
 ]
 

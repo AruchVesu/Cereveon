@@ -34,14 +34,8 @@ TEST_TARGETS = [
     "llm/rag/tests/unit/test_telemetry_event.py",
     "llm/tests/test_cache_keys.py",
     "llm/tests/test_ci_pipeline.py",
-    "llm/tests/test_elite_engine_service.py",
-    "llm/tests/test_elite_engine_service_resolve_limits.py",
-    "llm/tests/test_engine_eval_fallback_cache.py",
-    "llm/tests/test_engine_eval_lru_cache.py",
-    "llm/tests/test_engine_eval_limits.py",
     "llm/tests/test_fen_move_cache_key.py",
     "llm/tests/test_position_input_build_board.py",
-    "llm/tests/test_predictive_cache.py",
     "llm/tests/test_stockfish_adapter_isolation.py",
     "llm/tests/test_seca_layer_boundaries.py",
     "llm/tests/test_coaching_pipeline_regression.py",
@@ -52,7 +46,6 @@ TEST_TARGETS = [
     "llm/tests/test_chat_stream.py",
     "llm/tests/test_live_move_pipeline.py",
     "llm/tests/test_historical_pipeline.py",
-    "llm/tests/test_engine_eval_benchmark.py",
     "llm/tests/test_api_security.py",
     "llm/tests/test_skill_updater_resilience.py",
     "llm/tests/test_next_training_after_game.py",
@@ -141,9 +134,11 @@ TEST_TARGETS = [
     "llm/tests/test_explain_schema_mutation_killers.py",
     # Progress dashboard: /player/progress endpoint contract + world-model transparency tests.
     "llm/tests/test_progress_dashboard.py",
-    # Bug regression suite: guards the six confirmed fixes (reward ZeroDivision,
-    # spacing zero-interval, trainer empty-events, bandit empty-actions + singular matrix,
-    # engine_eval cache-key sentinel, engine_pool stop race).
+    # Bug regression suite: guards the surviving confirmed fixes (reward
+    # ZeroDivision, spacing zero-interval, trainer empty-events, bandit
+    # empty-actions + singular matrix).  The flat engine_eval / engine_pool
+    # bug pins (BUG-5 / BUG-6) were retired in the engine-library cleanup
+    # alongside the modules they tested.
     "llm/tests/test_bug_regressions.py",
     # API05 — LLM retry cap, inter-retry backoff delay, and safe fallback contract.
     "llm/tests/test_explain_pipeline_retry.py",
@@ -198,13 +193,10 @@ TEST_TARGETS = [
 
 COVERAGE_TARGETS = [
     "llm.cache_keys",
-    "llm.elite_engine_service",
-    "llm.engine_eval",
     "llm.log_config",
     "llm.metrics",
     "llm.observability",
     "llm.position_input",
-    "llm.predictive_cache",
     "llm.rag.contracts.validate_output",
     "llm.rag.llm.fake",
     "llm.rag.safety.output_firewall",

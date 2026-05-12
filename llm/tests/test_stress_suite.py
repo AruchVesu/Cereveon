@@ -19,247 +19,39 @@ All tests are deterministic and use fake engines — no live Stockfish required.
 from __future__ import annotations
 
 import ast
-import asyncio
 import json
 import random
-import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import chess
-import chess.engine
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # ---------------------------------------------------------------------------
-# Shared test doubles
+# Shared test doubles (removed)
 # ---------------------------------------------------------------------------
-
-
-class _FakeEngine:
-    _SCORE = 55
-    _BEST_MOVE = "e2e4"
-
-    async def analyse(self, board, limit, **kwargs):
-        move = chess.Move.from_uci(self._BEST_MOVE)
-        score = chess.engine.PovScore(chess.engine.Cp(self._SCORE), chess.WHITE)
-        return {"score": score, "pv": [move]}
-
-    async def quit(self):
-        pass
-
-
-class _SlowFakeEngine:
-    _SCORE = 77
-    _BEST_MOVE = "d2d4"
-    _SLEEP_S = 0.05
-
-    async def analyse(self, board, limit, **kwargs):
-        await asyncio.sleep(self._SLEEP_S)
-        move = chess.Move.from_uci(self._BEST_MOVE)
-        score = chess.engine.PovScore(chess.engine.Cp(self._SCORE), chess.WHITE)
-        return {"score": score, "pv": [move]}
-
-    async def quit(self):
-        pass
-
-
-class _OneShotPool:
-    def __init__(self, engine=None):
-        self._engine = engine or _FakeEngine()
-        self._calls = 0
-        self.acquire_called = False
-
-    def try_acquire(self):
-        self._calls += 1
-        return self._engine if self._calls == 1 else None
-
-    async def acquire(self):
-        self.acquire_called = True
-        raise NotImplementedError
-
-    async def release(self, engine):
-        pass
-
-
-class _EmptyPool:
-    def __init__(self):
-        self.acquire_called = False
-
-    def try_acquire(self):
-        return None
-
-    async def acquire(self):
-        self.acquire_called = True
-        raise NotImplementedError
-
-    async def release(self, engine):
-        pass
-
-
-try:
-    from llm.engine_eval import EngineEvaluator
-except ImportError:
-    from engine_eval import EngineEvaluator
-
-
-def _make_evaluator(pool, *, acquire_timeout_ms=0, cache_size=None):
-    ev = EngineEvaluator(pool)
-    ev.acquire_timeout_ms = acquire_timeout_ms
-    if cache_size is not None:
-        ev.result_cache_size = cache_size
-    return ev
-
-
-def _unique_fens(count: int) -> list[str]:
-    """Generate `count` unique valid FENs by exploring legal moves from startpos."""
-    fens = []
-    board = chess.Board()
-    for move in board.generate_legal_moves():
-        child = chess.Board()
-        child.push(move)
-        fens.append(child.fen())
-        if len(fens) >= count:
-            break
-    return fens
-
+#
+# The fake-engine / fake-pool / ``_make_evaluator`` helpers and the
+# ``_unique_fens`` corpus generator drove the Area-1 / Area-9
+# ``EngineEvaluator`` cache stress; both areas were retired in the
+# engine-library cleanup (2026-05-12) and the live engine surface is
+# now covered by ``test_engine_pool_*.py`` /
+# ``test_fen_move_cache_key.py``.
 
 # ===========================================================================
-# AREA 1 — ENGINE EVALUATION CACHE
+# AREA 1 — ENGINE EVALUATION CACHE  (removed)
 # ===========================================================================
-
-
-class TestCacheStressConcurrency:
-    """Area 1 — Cache correctness under concurrency and LRU pressure."""
-
-    def test_100_concurrent_lookups_same_position_all_hit(self):
-        """After priming, 100 concurrent lookups for the same FEN must all be cache hits."""
-        fen = chess.STARTING_FEN
-
-        async def _run():
-            pool = _OneShotPool()
-            ev = _make_evaluator(pool)
-            await ev.evaluate_with_metrics(fen=fen, nodes=50)  # prime
-            tasks = [ev.evaluate_with_metrics(fen=fen, nodes=50) for _ in range(100)]
-            return await asyncio.gather(*tasks)
-
-        results = asyncio.run(_run())
-        for _, m in results:
-            assert m["engine_result_cache_hit"] is True
-
-    def test_20_different_positions_no_cross_contamination(self):
-        """20 distinct FENs must not bleed into each other's cache entries."""
-        fens = _unique_fens(20)
-
-        async def _run():
-            ev = _make_evaluator(_EmptyPool())
-            # First pass: all misses
-            first = []
-            for f in fens:
-                _, m = await ev.evaluate_with_metrics(fen=f, nodes=50)
-                first.append(m["engine_result_cache_hit"])
-            # Second pass: all hits
-            second = []
-            for f in fens:
-                _, m = await ev.evaluate_with_metrics(fen=f, nodes=50)
-                second.append(m["engine_result_cache_hit"])
-            return first, second
-
-        first, second = asyncio.run(_run())
-        assert all(not h for h in first), "First pass: every FEN must be a cold miss"
-        assert all(h for h in second), "Second pass: every FEN must be a cache hit"
-
-    def test_lru_eviction_size_5_with_20_positions(self):
-        """Cache of size=5 must never exceed 5 entries after 20 unique insertions."""
-        fens = _unique_fens(20)
-
-        async def _run():
-            ev = _make_evaluator(_EmptyPool(), cache_size=5)
-            for f in fens:
-                await ev.evaluate_with_metrics(fen=f, nodes=50)
-            return len(ev._result_cache)
-
-        size = asyncio.run(_run())
-        assert size <= 5, f"Cache grew to {size}; configured max is 5"
-
-    def test_cache_key_uniqueness_for_castling_right_variants(self):
-        """FENs differing only in castling rights must produce distinct cache keys."""
-        ev = _make_evaluator(_EmptyPool())
-        base = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w {} - 0 1"
-        variants = ["KQkq", "Kkq", "Qq", "-", "KQ", "kq"]
-        keys = [ev._cache_key(base.format(v), None, 100) for v in variants]
-        assert len(keys) == len(set(keys)), "Castling-right variants must produce unique cache keys"
-
-    def test_nodes_and_movetime_produce_different_keys_for_same_fen(self):
-        """nodes=100 and movetime=100 for the same FEN must be different cache keys."""
-        ev = _make_evaluator(_EmptyPool())
-        fen = chess.STARTING_FEN
-        k_nodes = ev._cache_key(fen, None, 100)
-        k_movetime = ev._cache_key(fen, 100, None)
-        assert k_nodes != k_movetime, "nodes and movetime keys for same FEN must differ"
-
-    def test_50_alternating_hits_and_misses_metrics_accurate(self):
-        """50 requests alternating between 2 FENs: exactly 2 misses, 48 hits."""
-        fens = _unique_fens(2)
-
-        async def _run():
-            pool = _OneShotPool()
-            ev = _make_evaluator(pool)
-            hits, misses = 0, 0
-            for i in range(50):
-                f = fens[i % 2]
-                _, m = await ev.evaluate_with_metrics(fen=f, nodes=50)
-                if m["engine_result_cache_hit"]:
-                    hits += 1
-                else:
-                    misses += 1
-            return hits, misses
-
-        hits, misses = asyncio.run(_run())
-        assert misses <= 2, f"Expected ≤2 misses for 2 unique FENs; got {misses}"
-        assert hits >= 48, f"Expected ≥48 hits; got {hits}"
-
-    def test_cache_hit_latency_100_requests_all_under_20ms(self):
-        """Each of 100 sequential cache hits must complete in under 20 ms."""
-        BUDGET_MS = 20.0
-
-        async def _run():
-            pool = _OneShotPool()
-            ev = _make_evaluator(pool)
-            fen = chess.STARTING_FEN
-            await ev.evaluate_with_metrics(fen=fen, nodes=50)
-            latencies = []
-            for _ in range(100):
-                t0 = time.perf_counter()
-                _, m = await ev.evaluate_with_metrics(fen=fen, nodes=50)
-                latencies.append((time.perf_counter() - t0) * 1000)
-            return latencies
-
-        latencies = asyncio.run(_run())
-        assert (
-            max(latencies) < BUDGET_MS
-        ), f"Cache-hit latency exceeded {BUDGET_MS} ms: max={max(latencies):.2f} ms"
-
-    def test_mru_entry_survives_repeated_eviction_pressure(self):
-        """With cache_size=2, the MRU entry must survive after 10 new insertions."""
-        fens = _unique_fens(12)
-
-        async def _run():
-            ev = _make_evaluator(_EmptyPool(), cache_size=2)
-            # Insert first two (fills cache)
-            await ev.evaluate_with_metrics(fen=fens[0], nodes=50)
-            await ev.evaluate_with_metrics(fen=fens[1], nodes=50)
-            # Repeatedly access fens[1] (keeps it MRU) while inserting new entries
-            for f in fens[2:12]:
-                await ev.evaluate_with_metrics(fen=fens[1], nodes=50)  # promote fens[1]
-                await ev.evaluate_with_metrics(fen=f, nodes=50)  # insert new
-            # fens[1] was promoted to MRU before each eviction → must still be cached
-            key_mru = ev._cache_key(fens[1], None, 50)
-            return key_mru in ev._result_cache
-
-        assert asyncio.run(_run()), "MRU entry must survive repeated eviction pressure"
+#
+# The Area-1 ``TestCacheStressConcurrency`` class targeted the now-deleted
+# ``EngineEvaluator`` cache that lived in ``llm/engine_eval.py``.  After
+# host_app retirement (PR #111) the only live caching layer is
+# ``FenMoveCache`` inside ``llm.seca.engines.stockfish.pool``; that
+# surface is covered by ``test_fen_move_cache_key.py`` plus the
+# concurrency / lifecycle suites in ``test_engine_pool_*.py``.  The
+# Area-1 entry in ``run_stress_suite.py`` was retired alongside.
 
 
 # ===========================================================================
@@ -448,44 +240,12 @@ class TestSchemaValidationStress:
 class TestApiContractStress:
     """Area 3 — API contracts stable under varied, adversarial, and concurrent inputs."""
 
-    def test_engine_eval_contract_with_extreme_scores(self, monkeypatch):
-        """Scores at extremes must be returned unchanged through the contract."""
-        from unittest.mock import MagicMock
-        from llm import host_app
-
-        monkeypatch.setattr(host_app._limiter, "enabled", False)
-
-        for extreme_score in (-32768, -9999, -1, 0, 1, 9999, 32767):
-
-            async def _fake_eval(*, fen, moves, movetime, nodes, _s=extreme_score):
-                return (
-                    {"score": _s, "best_move": "e2e4", "source": "engine"},
-                    {
-                        "cache_hit": False,
-                        "source": "engine",
-                        "engine_wait_ms": 1.0,
-                        "engine_eval_ms": 5.0,
-                        "total_ms": 6.0,
-                    },
-                )
-
-            class _FakeEv:
-                default_nodes = 5000
-
-                def resolve_limits(self, *, movetime, nodes):
-                    return None, self.default_nodes
-
-            monkeypatch.setattr(host_app, "engine_eval", _FakeEv())
-            monkeypatch.setattr(host_app.engine_service, "evaluate_with_metrics", _fake_eval)
-
-            async def _run(_s=extreme_score):
-                return await host_app.eval_position_query(
-                    MagicMock(), fen="startpos", movetime_ms=30, movetime=None
-                )
-
-            result = asyncio.run(_run())
-            assert result["score"] == extreme_score
-            assert "score" in result and "best_move" in result and "source" in result
+    # ``test_engine_eval_contract_with_extreme_scores`` (removed) — drove
+    # ``host_app.eval_position_query`` via a ``llm.host_app`` import that
+    # disappeared in PR #111.  The post-retirement /engine/eval lives in
+    # ``server.py`` and is exercised end-to-end by
+    # ``test_engine_eval_endpoint.py`` against the real engine pool, so
+    # mocking the extreme-score wire path here added nothing on top.
 
     def test_game_finish_contract_with_varied_pgn_lengths(self):
         """POST /game/finish must succeed with PGNs of 1, 5, 20, and 50 moves."""
@@ -602,21 +362,19 @@ class TestApiContractStress:
             "/next-training/{player_id}" in routes
         ), "Required route /next-training/{player_id} is missing from server.py"
 
-    def test_host_app_exposes_engine_eval_route(self):
-        """host_app.py must expose /engine/eval."""
-        from llm import host_app
-
-        routes = {getattr(r, "path", None) for r in host_app.app.routes}
-        assert "/engine/eval" in routes, "host_app must expose /engine/eval"
-
-    def test_coach_route_absent_from_both_apps(self):
-        """Contract: /coach endpoint must NOT exist (documented mismatch)."""
+    def test_server_exposes_engine_eval_route(self):
+        """``/engine/eval`` lives on ``server.py`` post-host_app retirement (PR #111)."""
         import llm.server as server_module
-        from llm import host_app
 
-        for app, name in [(server_module.app, "server"), (host_app.app, "host_app")]:
-            routes = {getattr(r, "path", None) for r in app.routes}
-            assert "/coach" not in routes, f"/coach unexpectedly found in {name}"
+        routes = {getattr(r, "path", None) for r in server_module.app.routes}
+        assert "/engine/eval" in routes, "server.py must expose /engine/eval"
+
+    def test_coach_route_absent_from_server(self):
+        """Contract: /coach endpoint must NOT exist on server.py (documented mismatch)."""
+        import llm.server as server_module
+
+        routes = {getattr(r, "path", None) for r in server_module.app.routes}
+        assert "/coach" not in routes, "/coach unexpectedly found in server"
 
     def test_next_training_never_returns_exercise_type(self, monkeypatch):
         """Regression guard: /next-training schema must not leak /curriculum/next fields."""
@@ -977,126 +735,16 @@ class TestTrainingRecommendationStress:
 
 
 # ===========================================================================
-# AREA 9 — ENGINE PERFORMANCE BENCHMARKS (extended)
+# AREA 9 — ENGINE PERFORMANCE BENCHMARKS (extended)  (removed)
 # ===========================================================================
-
-EXTENDED_CORPUS = [
-    chess.STARTING_FEN,
-    "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
-    "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
-    "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
-    "r1bqk2r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
-    "8/8/8/8/3k4/8/3KP3/8 w - - 0 1",
-    "r1bqkb1r/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
-    "r3k2r/pppq1ppp/2npbn2/4p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQkq - 6 9",
-    "r1b1k2r/ppp2ppp/2n5/3qp3/2B1P3/8/PPP2PPP/RNBQK2R w KQkq - 0 8",
-    "8/5k2/8/8/8/8/5K2/8 w - - 0 1",
-    "8/8/4k3/8/4K3/8/4P3/8 w - - 0 1",
-    "r2qkb1r/1pp1pppp/p1np1n2/8/3PP3/2NB1N2/PPP2PPP/R1BQK2R w KQkq - 0 7",
-]
-
-
-class TestExtendedBenchmarkCorpus:
-    """Area 9 — Extended 12-position corpus, sustained throughput, SLO verification."""
-
-    def test_all_12_positions_are_valid_chess_boards(self):
-        """Every FEN in the extended corpus must represent a legal chess position."""
-        for fen in EXTENDED_CORPUS:
-            assert chess.Board(fen).is_valid(), f"Invalid FEN: {fen!r}"
-
-    def test_cold_eval_all_12_returns_score_and_best_move(self):
-        """Cold evaluation of all 12 corpus positions must return score and best_move."""
-
-        async def _run():
-            results = []
-            for fen in EXTENDED_CORPUS:
-                ev = _make_evaluator(_OneShotPool())
-                result, _ = await ev.evaluate_with_metrics(fen=fen, nodes=50)
-                results.append(result)
-            return results
-
-        for r in asyncio.run(_run()):
-            assert "score" in r and "best_move" in r
-
-    def test_sustained_50_cache_hits_under_25ms_total(self):
-        """50 sequential cache hits for one position must complete under 25 ms total."""
-        BUDGET_MS = 25.0
-
-        async def _run():
-            pool = _OneShotPool()
-            ev = _make_evaluator(pool)
-            fen = chess.STARTING_FEN
-            await ev.evaluate_with_metrics(fen=fen, nodes=50)
-            t0 = time.perf_counter()
-            for _ in range(50):
-                _, m = await ev.evaluate_with_metrics(fen=fen, nodes=50)
-                assert m["engine_result_cache_hit"] is True
-            return (time.perf_counter() - t0) * 1000
-
-        elapsed = asyncio.run(_run())
-        assert elapsed < BUDGET_MS, f"50 cache hits: {elapsed:.2f} ms; budget {BUDGET_MS} ms"
-
-    def test_full_12_position_fallback_batch_under_60ms(self):
-        """Fallback path for all 12 extended corpus positions must complete under 60 ms."""
-        BUDGET_MS = 60.0
-
-        async def _run():
-            ev = _make_evaluator(_EmptyPool())
-            t0 = time.perf_counter()
-            for fen in EXTENDED_CORPUS:
-                _, m = await ev.evaluate_with_metrics(fen=fen, nodes=50)
-                assert m["engine_fallback"] is True
-            return (time.perf_counter() - t0) * 1000
-
-        elapsed = asyncio.run(_run())
-        assert elapsed < BUDGET_MS, f"12-position fallback: {elapsed:.2f} ms; budget {BUDGET_MS} ms"
-
-    def test_cache_size_6_never_exceeded_across_12_positions(self):
-        """cache_size=6 must cap at 6 entries after evaluating all 12 corpus positions."""
-
-        async def _run():
-            ev = _make_evaluator(_EmptyPool(), cache_size=6)
-            for fen in EXTENDED_CORPUS:
-                await ev.evaluate_with_metrics(fen=fen, nodes=50)
-            return len(ev._result_cache)
-
-        assert asyncio.run(_run()) == 6
-
-    def test_no_board_state_mutation_across_all_12_positions(self):
-        """evaluate_with_metrics must not mutate the caller's board for any corpus position."""
-
-        async def _run():
-            pool = _OneShotPool()
-            ev = _make_evaluator(pool)
-            mutations = []
-            for fen in EXTENDED_CORPUS:
-                board = chess.Board(fen)
-                fen_before = board.fen()
-                await ev.evaluate_with_metrics(fen=board.fen(), nodes=50)
-                mutations.append((fen_before, board.fen()))
-            return mutations
-
-        for before, after in asyncio.run(_run()):
-            assert before == after, f"Board mutated: {before!r} → {after!r}"
-
-    def test_second_pass_all_12_positions_cache_hits_under_30ms(self):
-        """After priming, all 12 cached positions evaluated in under 30 ms total."""
-        BUDGET_MS = 30.0
-
-        async def _run():
-            ev = _make_evaluator(_EmptyPool())
-            for fen in EXTENDED_CORPUS:
-                await ev.evaluate_with_metrics(fen=fen, nodes=50)
-            t0 = time.perf_counter()
-            hit_flags = []
-            for fen in EXTENDED_CORPUS:
-                _, m = await ev.evaluate_with_metrics(fen=fen, nodes=50)
-                hit_flags.append(m["engine_result_cache_hit"])
-            return (time.perf_counter() - t0) * 1000, hit_flags
-
-        elapsed, hit_flags = asyncio.run(_run())
-        assert all(hit_flags), "Second pass: all 12 positions must be cache hits"
-        assert elapsed < BUDGET_MS, f"Second pass: {elapsed:.2f} ms; budget {BUDGET_MS} ms"
+#
+# The ``TestExtendedBenchmarkCorpus`` class targeted the now-deleted
+# ``EngineEvaluator`` cache (``llm/engine_eval.py``).  Cache-size, hit-rate,
+# and board-mutation invariants for the live
+# ``llm.seca.engines.stockfish.pool.FenMoveCache`` are covered by
+# ``test_engine_pool_evaluate_position.py`` (correctness) and
+# ``test_fen_move_cache_key.py`` (key integrity).  The Area-9 entry in
+# ``run_stress_suite.py`` was retired alongside.
 
 
 # ===========================================================================
@@ -1165,8 +813,12 @@ class TestCiCdPipelineStress:
     def test_regression_covers_all_major_areas(self):
         """Regression groups must cover engine, coaching, API, analysis, and layer areas."""
         all_targets = " ".join(t for _, targets in self.regression_groups for t in targets)
+        # ``engine_eval`` / ``elite_engine`` were dropped in the engine-library
+        # cleanup (2026-05-12); the live surface lives under engine_pool /
+        # fen_move_cache, with engine_response_format retained for the
+        # /chat /live/move signal-extraction tests.
         required_keywords = {
-            "engine": ["engine_eval", "engine_response", "elite_engine"],
+            "engine": ["engine_pool", "engine_response", "fen_move_cache"],
             "coaching": ["coaching_pipeline", "chat_pipeline"],
             "api": ["api_contract", "api_security"],
             "analysis": ["historical_pipeline", "mistake_analytics"],

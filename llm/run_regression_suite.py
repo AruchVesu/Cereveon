@@ -33,14 +33,17 @@ REGRESSION_GROUPS: list[tuple[str, list[str]]] = [
     (
         "Engine regression",
         [
+            # Surviving engine-area regressions after the engine-library
+            # cleanup (2026-05-12): the flat engine_eval / engine_pool /
+            # elite_engine_service modules were retired alongside host_app
+            # (PR #111).  Live coverage now lives in test_engine_pool_*.py
+            # against ``llm.seca.engines.stockfish.pool``.
             "llm/tests/test_engine_response_format.py",
-            "llm/tests/test_engine_eval_lru_cache.py",
-            "llm/tests/test_engine_eval_limits.py",
-            "llm/tests/test_engine_eval_benchmark.py",
-            "llm/tests/test_engine_eval_fallback_cache.py",
+            "llm/tests/test_engine_pool_evaluate_position.py",
+            "llm/tests/test_engine_pool_exhaustion.py",
+            "llm/tests/test_engine_pool_crash_recovery.py",
+            "llm/tests/test_fen_move_cache_key.py",
             "llm/tests/test_stockfish_adapter_isolation.py",
-            "llm/tests/test_elite_engine_service.py",
-            "llm/tests/test_elite_engine_service_resolve_limits.py",
         ],
     ),
     (

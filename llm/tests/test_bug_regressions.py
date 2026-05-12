@@ -11,9 +11,12 @@ BUG-2  spacing.py:12     next_interval(_, 0.0) returned 0.0 instead of ≥1
 BUG-3  trainer.py:21     ZeroDivisionError when events list is empty
 BUG-4a bandit.py:27-47  LinUCB.select() returned None for empty actions list
 BUG-4b bandit.py:35      np.linalg.inv raised LinAlgError on near-singular A
-BUG-5  engine_eval.py:47 cache key collision: movetime=None → "0" == movetime=0
-BUG-6  engine_pool.py    stop() set _started=False *after* engine teardown,
-                          leaving a window where acquire() could run on a dead pool
+BUG-5  engine_eval.py:47 cache key collision (test class removed —
+                          engine_eval.py deleted in engine-library cleanup,
+                          live cache covered by test_fen_move_cache_key.py)
+BUG-6  engine_pool.py    stop()/_started race  (test class removed —
+                          engine_pool.py deleted, live lifecycle covered by
+                          test_engine_pool_crash_recovery.py / test_engine_pool_exhaustion.py)
 BUG-7  auth/service.py   token_hash compared with != (timing attack); must use hmac.compare_digest
 BUG-8  storage/repo.py        SQLite connections leaked on exception (no try-finally)
 BUG-9  adapt.py:241           random.choice(sorted_moves[:-1]) raises IndexError
@@ -286,125 +289,23 @@ class TestLinUCBNumericalStability:
 
 
 # ---------------------------------------------------------------------------
-# BUG-5  engine_eval.py — cache key: movetime=None must not collide with 0
+# BUG-5  engine_eval.py — cache key collision (removed)
+# BUG-6  engine_pool.py  — stop() ordering         (removed)
 # ---------------------------------------------------------------------------
-
-
-class TestEngineEvalCacheKeyNoneSentinel:
-    """BUG-5: _cache_key(fen, None, None) must not equal _cache_key(fen, 0, None)."""
-
-    def _make_evaluator(self):
-        from llm.engine_eval import EngineEvaluator
-
-        class _Stub:
-            def try_acquire(self):
-                return None
-            async def acquire(self):
-                raise NotImplementedError
-            async def release(self, e):
-                pass
-
-        return EngineEvaluator(_Stub())
-
-    def test_none_movetime_key_differs_from_zero_movetime_key(self):
-        ev = self._make_evaluator()
-        fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-        key_none = ev._cache_key(fen, None, None)
-        key_zero = ev._cache_key(fen, 0, None)
-        assert key_none != key_zero, (
-            "movetime=None and movetime=0 produced the same cache key; "
-            "results for the default-node path would be mis-served as movetime=0 hits"
-        )
-
-    def test_none_movetime_key_contains_sentinel_string(self):
-        ev = self._make_evaluator()
-        fen = "startfen"
-        key = ev._cache_key(fen, None, None)
-        assert "none" in key, f"Expected 'none' sentinel in key, got: {key!r}"
-
-    def test_nodes_key_still_takes_priority(self):
-        ev = self._make_evaluator()
-        fen = "startfen"
-        key = ev._cache_key(fen, 50, 300)
-        assert ":nodes:300" in key
-
-    def test_positive_movetime_key_unchanged(self):
-        ev = self._make_evaluator()
-        fen = "startfen"
-        key = ev._cache_key(fen, 100, None)
-        assert key == f"{fen}:movetime:100"
-
-
-# ---------------------------------------------------------------------------
-# BUG-6  engine_pool.py — _started=False must be set before teardown
-# ---------------------------------------------------------------------------
-
-
-class TestEnginePoolStopSetsStartedFirst:
-    """BUG-6: _started must be False before any async yield in stop()."""
-
-    def test_pool_not_started_returns_without_error(self):
-        """stop() on an unstarted pool must be a no-op."""
-        from llm.engine_pool import EnginePool
-
-        pool = EnginePool(size=1)
-        asyncio.run(pool.stop())
-        assert pool._started is False
-
-    def test_started_flag_is_false_after_stop(self):
-        """
-        After stop() completes, _started must be False.
-        We verify via a fake engine that simulates quit() without a real process.
-        """
-        import asyncio
-        from llm.engine_pool import EnginePool
-
-        pool = EnginePool(size=1)
-        # Manually mark as started with a fake engine entry.
-        pool._started = True
-
-        class _FakeTransport:
-            def close(self):
-                pass
-
-        class _FakeEngine:
-            async def quit(self):
-                pass
-
-        pool._engines = [(_FakeTransport(), _FakeEngine())]
-        # Put one engine in the queue so the pool looks live.
-        pool._queue.put_nowait(_FakeEngine())
-
-        asyncio.run(pool.stop())
-        assert pool._started is False
-
-    def test_acquire_raises_after_stop(self):
-        """
-        After stop(), acquire() must raise RuntimeError.
-        Before the fix, the window between engine cleanup and _started=False
-        allowed acquire() to pass the guard and block on an empty queue.
-        """
-        import asyncio
-        from llm.engine_pool import EnginePool
-
-        pool = EnginePool(size=1)
-        pool._started = True
-
-        class _FakeTransport:
-            def close(self):
-                pass
-
-        class _FakeEngine:
-            async def quit(self):
-                pass
-
-        pool._engines = [(_FakeTransport(), _FakeEngine())]
-        pool._queue.put_nowait(_FakeEngine())
-
-        asyncio.run(pool.stop())
-
-        with pytest.raises(RuntimeError, match="not started"):
-            asyncio.run(pool.acquire())
+#
+# Both regressions targeted ``llm/engine_eval.py`` and the flat
+# ``llm/engine_pool.py``, deleted in the engine-library cleanup
+# (2026-05-12) after host_app retirement (PR #111) left them with no
+# production callers.  The live ``llm.seca.engines.stockfish.pool`` has
+# its own coverage:
+#
+#   - ``test_fen_move_cache_key.py``        (post-cleanup cache-key sentinel)
+#   - ``test_engine_pool_crash_recovery.py`` (post-cleanup lifecycle / stop)
+#   - ``test_engine_pool_exhaustion.py``    (acquire-after-stop semantics)
+#
+# Bug-history entries are kept in the module docstring above for the
+# audit trail; the in-file test classes are gone because the modules
+# they pinned no longer exist.
 
 
 # ---------------------------------------------------------------------------

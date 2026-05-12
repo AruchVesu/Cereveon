@@ -99,16 +99,20 @@ jobs:
         run: python -m pytest -q llm/tests/test_explain_schema_validation.py
 
       - name: Run engine regression tests
+        # The flat ``llm/engine_eval.py`` / ``llm/elite_engine_service.py``
+        # modules were retired alongside host_app (PR #111) in the
+        # engine-library cleanup; live coverage moved to
+        # ``llm.seca.engines.stockfish.pool`` and is exercised by
+        # ``test_engine_pool_*.py`` plus the existing response-format
+        # / adapter-isolation regressions.
         run: |
           python -m pytest -q --tb=short \
             llm/tests/test_engine_response_format.py \
-            llm/tests/test_engine_eval_lru_cache.py \
-            llm/tests/test_engine_eval_limits.py \
-            llm/tests/test_engine_eval_benchmark.py \
-            llm/tests/test_engine_eval_fallback_cache.py \
-            llm/tests/test_stockfish_adapter_isolation.py \
-            llm/tests/test_elite_engine_service.py \
-            llm/tests/test_elite_engine_service_resolve_limits.py
+            llm/tests/test_engine_pool_evaluate_position.py \
+            llm/tests/test_engine_pool_exhaustion.py \
+            llm/tests/test_engine_pool_crash_recovery.py \
+            llm/tests/test_fen_move_cache_key.py \
+            llm/tests/test_stockfish_adapter_isolation.py
 
       - name: Run API security tests
         run: python -m pytest -q --tb=short llm/tests/test_api_security.py

@@ -277,124 +277,15 @@ class TestSideFromFen:
 
 
 # ---------------------------------------------------------------------------
-# best_move propagation — engine_eval layer
+# best_move propagation — engine_eval layer (removed)
 # ---------------------------------------------------------------------------
-
-
-class TestBestMoveEncoding:
-    """
-    Verify that best_move returned from EngineEvaluator is a well-formed
-    UCI string and propagates correctly through the evaluation layer.
-    """
-
-    def test_best_move_from_fake_engine_is_uci(self):
-        """evaluate_with_engine extracts best_move from the PV as a UCI string."""
-        import asyncio
-        from llm.engine_eval import EngineEvaluator
-
-        class _FakeEngine:
-            async def analyse(self, board, limit):
-                return {
-                    "score": chess.engine.PovScore(chess.engine.Cp(45), chess.WHITE),
-                    "pv": [chess.Move.from_uci("e2e4")],
-                }
-
-        async def _run():
-            ev = EngineEvaluator(pool=None)
-            return await ev.evaluate_with_engine(_FakeEngine(), "startpos")
-
-        result = asyncio.run(_run())
-        assert result["best_move"] == "e2e4"
-        assert _is_valid_uci(result["best_move"])
-
-    def test_score_is_white_perspective_centipawns(self):
-        """score is the integer centipawn value from White's perspective."""
-        import asyncio
-        from llm.engine_eval import EngineEvaluator
-
-        class _FakeEngine:
-            async def analyse(self, board, limit):
-                return {
-                    "score": chess.engine.PovScore(chess.engine.Cp(72), chess.WHITE),
-                    "pv": [chess.Move.from_uci("d2d4")],
-                }
-
-        async def _run():
-            ev = EngineEvaluator(pool=None)
-            return await ev.evaluate_with_engine(_FakeEngine(), "startpos")
-
-        result = asyncio.run(_run())
-        assert result["score"] == 72
-        assert isinstance(result["score"], int)
-
-    def test_black_winning_score_is_negative(self):
-        """
-        When Black is ahead, score_obj.white().score() returns a negative value.
-        The response must propagate this negative integer unchanged.
-        """
-        import asyncio
-        from llm.engine_eval import EngineEvaluator
-
-        class _FakeEngine:
-            async def analyse(self, board, limit):
-                return {
-                    "score": chess.engine.PovScore(chess.engine.Cp(-180), chess.WHITE),
-                    "pv": [chess.Move.from_uci("e7e5")],
-                }
-
-        async def _run():
-            ev = EngineEvaluator(pool=None)
-            return await ev.evaluate_with_engine(_FakeEngine(), "startpos")
-
-        result = asyncio.run(_run())
-        assert result["score"] == -180
-
-    def test_empty_pv_yields_none_best_move(self):
-        """If the engine returns an empty PV, best_move must be None (not an error)."""
-        import asyncio
-        from llm.engine_eval import EngineEvaluator
-
-        class _FakeEngine:
-            async def analyse(self, board, limit):
-                return {
-                    "score": chess.engine.PovScore(chess.engine.Cp(0), chess.WHITE),
-                    "pv": [],
-                }
-
-        async def _run():
-            ev = EngineEvaluator(pool=None)
-            return await ev.evaluate_with_engine(_FakeEngine(), "startpos")
-
-        result = asyncio.run(_run())
-        assert result["best_move"] is None
-
-    def test_mate_score_uses_configured_mate_score(self):
-        """
-        Mate positions are represented near ±10000 centipawns.
-
-        python-chess convention: Mate(N).score(mate_score=10000) returns
-        (mate_score - N) for forced wins, e.g. Mate(3) → 9997.
-        The score is always within [mate_score-50, mate_score] for near-mates
-        and ≥ 9950 for any realistic mate sequence.
-        """
-        import asyncio
-        from llm.engine_eval import EngineEvaluator
-
-        class _FakeEngine:
-            async def analyse(self, board, limit):
-                return {
-                    "score": chess.engine.PovScore(chess.engine.Mate(3), chess.WHITE),
-                    "pv": [chess.Move.from_uci("f4f7")],
-                }
-
-        async def _run():
-            ev = EngineEvaluator(pool=None)
-            return await ev.evaluate_with_engine(_FakeEngine(), "startpos")
-
-        result = asyncio.run(_run())
-        # Mate(3) gives mate_score - 3 = 9997 by python-chess convention
-        assert result["score"] == 9997
-        assert 9950 <= result["score"] <= 10000
+#
+# The ``TestBestMoveEncoding`` class lived here until the engine-library
+# cleanup (2026-05-12) deleted ``llm/engine_eval.py``.  The
+# ``EngineEvaluator`` wrapper was a remnant of the retired host_app
+# subprocess; current ``best_move`` extraction happens inside
+# ``llm.seca.engines.stockfish.pool.StockfishEnginePool.evaluate_position``
+# and is covered by ``test_engine_pool_evaluate_position.py``.
 
 
 # ---------------------------------------------------------------------------
