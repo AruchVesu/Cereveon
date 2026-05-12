@@ -42,7 +42,7 @@ def _parse_trusted_proxies(raw: str) -> List[_AnyNetwork]:
         try:
             networks.append(ipaddress.ip_network(token, strict=False))
         except ValueError:
-            logger.warning("TRUSTED_PROXIES: dropping malformed entry %r", token)
+            logger.warning("TRUSTED_PROXIES: dropping malformed entry")
     return networks
 
 
