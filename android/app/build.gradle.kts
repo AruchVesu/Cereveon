@@ -144,7 +144,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
 
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     // Real org.json implementation — overrides the Android stub (android.jar) so that
     // production clients that use JSONObject can be exercised in host JVM unit tests.
