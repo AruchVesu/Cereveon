@@ -166,13 +166,20 @@ A failed validator is a hard stop. The bounded retry mechanism exists only
 to improve *quality* of an already-passing response — not to recover from a
 safety violation.
 
-There is exactly one place in the pipeline where deterministic content is
-appended to LLM-generated text: the fail-safe in `run_mode_2.py:354-375`,
-which guarantees that responses for `missing_data` and `forced_mate` cases
-contain a fixed acknowledgement phrase even when the LLM fails the contract
-after its repair budget. That fail-safe is documented in detail under
-[*Deterministic Phrase-Completion Fail-Safe*](docs/ARCHITECTURE.md) in the
-architecture spec, and is forbidden from being widened.
+When the LLM path fails — validator rejection after the in-pipeline repair
+budget (`run_mode_2`'s ≤ `MAX_MODE_2_RETRIES` rewrite attempts is exhausted),
+output-firewall block, or LLM unreachable — the request does not return a
+patched LLM string. It falls through to a deterministic fallback
+(`_build_reply_deterministic` in `llm/seca/coach/chat_pipeline.py`, with the
+parallel path in `llm/seca/coach/live_move_pipeline.py`) that builds the
+reply from scratch using only trusted inputs: the engine signal, the
+`SafeExplainer` output, and a deterministic context block. The LLM's text
+is discarded entirely; the fallback never appends to or edits it. By
+construction, the reply cannot contain forbidden phrases because none are
+ever introduced. This fallback is documented under
+[*Deterministic Fallback*](docs/ARCHITECTURE.md#deterministic-fallback) in
+the architecture spec, and is forbidden from being widened to accept any
+LLM-derived content.
 
 ---
 

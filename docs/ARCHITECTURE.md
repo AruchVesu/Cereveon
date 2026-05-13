@@ -256,6 +256,51 @@ Inevitability must be emphasized
 
 Long-term planning must not be discussed
 
+Deterministic Fallback
+
+When the LLM path fails — validator rejection after `run_mode_2`'s
+in-pipeline repair budget (`MAX_MODE_2_RETRIES`) is exhausted,
+`OutputFirewallError` raised by the output firewall, or the LLM provider is
+unreachable / timing out — the calling pipeline does NOT return a patched
+LLM string. It falls through to a deterministic fallback that constructs
+the reply from scratch using only trusted inputs.
+
+Implementation:
+
+- `llm/seca/coach/chat_pipeline.py::_build_reply_deterministic` for `/chat`
+- `llm/seca/coach/live_move_pipeline.py` (parallel deterministic path) for `/live/move`
+
+The fallback composes its reply from:
+
+- the engine signal (ESV) from `extract_engine_signal`
+- the `SafeExplainer` output for that ESV
+- a deterministic context block (skill, weaknesses, move count)
+- the `coach_voice` setting (tone only — never content)
+
+Properties:
+
+- The LLM's text is discarded entirely. The fallback never appends to it,
+  edits it, or quotes from it.
+- The reply satisfies the Mode-2 contracts by construction: no LLM-derived
+  string is reachable through the fallback path, so no forbidden phrase
+  can be introduced.
+- The fallback is the safety floor of the pipeline. It is the reason the
+  validators can treat LLM output as untrusted and reject without a
+  recovery surface inside `run_mode_2`.
+
+Forbidden Widening
+
+The fallback must not be modified to:
+
+- read LLM output (including failed candidates) into its template inputs
+- copy any LLM-derived content into the deterministic reply
+- consult any non-trusted source (raw FEN-derived heuristics outside the ESV,
+  free-form user-supplied profile text, etc.)
+
+Any change that introduces an LLM-text dependency into the fallback path
+invalidates the trust-boundary guarantee and is invalid under this
+architecture.
+
 /chat Endpoint — Per-Turn Grounding Semantics
 
 The /chat endpoint accepts a conversation history (a list of role + content
