@@ -266,25 +266,46 @@ RUN_DEEPSEEK_TESTS=1 python -m pytest -q llm/rag/tests/llm/test_llm_regression.p
 
 CI Policy
 
-CI runs only the following:
+CI runs the following on every push (authoritative source:
+`.github/workflows/fly-deploy.yml`):
 
-python llm/run_quality_gate.py
-python llm/run_ci_suite.py
-python -m pytest -q llm/rag/tests/golden/test_retriever.py
-python -m pytest -q llm/rag/tests/golden/test_prompt_snapshot.py
+python llm/run_quality_gate.py black            # Black formatting
+
+python llm/run_quality_gate.py pylint           # Pylint
+
+python llm/run_quality_gate.py mypy             # Mypy (strict on trust-boundary modules)
+
+python -m pytest -q llm/rag/tests/golden/test_retriever.py llm/rag/tests/golden/test_prompt_snapshot.py
+
 python -m pytest -q llm/rag/tests/contracts/test_fake_llm.py
+
 python -m pytest -q llm/rag/tests/contracts/test_violations_corpus.py
+
 python -m pytest -q llm/tests/test_api_contract_validation.py
+
 python -m pytest -q llm/tests/test_coaching_pipeline_regression.py
+
+python -m pytest -q llm/tests/test_explain_schema_validation.py
+
+python -m pytest -q llm/tests/test_engine_response_format.py llm/tests/test_engine_pool_evaluate_position.py llm/tests/test_engine_pool_exhaustion.py llm/tests/test_engine_pool_crash_recovery.py llm/tests/test_fen_move_cache_key.py llm/tests/test_stockfish_adapter_isolation.py
+
+python -m pytest -q llm/tests/test_api_security.py
+
+python llm/run_regression_suite.py              # 6 grouped invocations: engine, coaching, contract+security, analysis, layer-boundaries, golden — fails fast on first broken group
+
+python llm/run_ci_suite.py                      # authoritative coverage gate; also runs test_output_firewall.py
 
 
 The golden tests, LLM contract tests (`test_fake_llm.py` AND
-`test_violations_corpus.py`), API contract validation, and coaching pipeline
-regression tests each run as explicit named steps in the python-tests CI job
-(fly-deploy.yml) so that failures are immediately visible in the GitHub Actions UI.
-The full suite (run_ci_suite.py) follows as the authoritative coverage gate and
-also runs the output-firewall positive-case tests (`test_output_firewall.py`)
-referenced by the Validator Coverage Matrix below.
+`test_violations_corpus.py`), API contract validation, coaching pipeline
+regression, explain schema validation, engine pool regressions, and API
+security tests each run as explicit named steps in the python-tests CI job
+so failures surface immediately in the GitHub Actions UI.
+`run_regression_suite.py` follows with a grouped re-run that fails fast at
+the first broken group; `run_ci_suite.py` runs last as the authoritative
+coverage gate and also covers the output-firewall positive-case tests
+(`test_output_firewall.py`) referenced by the Validator Coverage Matrix
+below.
 
 CI quality gates also enforce:
 
@@ -301,11 +322,20 @@ pip-audit and Trivy security scans
 
 CI must never run:
 
-real LLM tests
+real-LLM tests — `llm/rag/tests/llm/test_deepseek_smoke.py` and
+`test_llm_regression.py` are local-only and run weekly via
+`.github/workflows/llm-regression-cron.yml`
 
-regression tests
+quality heuristics — Category E is advisory only
 
-quality heuristics
+mutation tests — Category F is local-only (minutes per validator)
+
+The term *regression test* is overloaded in this project. The
+**coaching-pipeline regression** (`test_coaching_pipeline_regression.py`)
+IS a per-push CI test — it pins deterministic behavior of the chat
+pipeline and freeze guards. The **LLM-behavior regression**
+(`test_llm_regression.py`) is the one excluded from per-push CI — it
+needs a real model and is run on demand / weekly cron only.
 
 Validator Coverage Matrix
 
@@ -330,8 +360,8 @@ regression because the regex set IS the contract.
 | 1 | Engine mention | `validate_output` (`llm/rag/contracts/validate_output.py`) + `validate_mode_2_negative` (`llm/rag/validators/mode_2_negative.py`) | FORBIDDEN_PHRASES (`stockfish`, `best move`, `engine`, `depth`, `calculate`, `variation`); FORBIDDEN_PATTERNS includes `\bcalculate\b`, `\bcalculation\b`, `\bvariation\b`, `\bline\b` | `test_fake_llm.py::test_compliant_output_passes` | `violations.jsonl::ENG-01..03`, `USR-01` | `test_llm_regression.py::test_llm_regression_contract` |
 | 2 | Move suggestion (algebraic notation) | `validate_mode_2_negative` | `\b[KQRBN][a-h][1-8]\b` and `\b0-0(?:-0)?\b` | `test_fake_llm.py::test_compliant_output_passes` | `violations.jsonl::MOV-01..02`, `USR-01` | `test_llm_regression.py::test_llm_regression_contract` |
 | 3 | Move suggestion (advisory prose) | `validate_mode_2_structure` (`llm/rag/validators/mode_2_structure.py`) | FORBIDDEN_SECTIONS: `recommended move`, `example move`, `plan`, `white can`, `black can`, `if it`, `consider` | `test_fake_llm.py::test_compliant_output_passes` | `violations.jsonl::MOV-03..05`, `USR-02` | `test_llm_regression.py::test_llm_regression_contract` |
-| 4 | Speculative language | `validate_mode_2_negative` | `\bshould\b`, `\blikely\b`, `\bprobably\b`, `\bI think\b`, `\bplans to\b`, `\bwith perfect play\b`, `\bactually winning\b` | `test_fake_llm.py::test_compliant_output_passes` | `violations.jsonl::SPE-01..02`, `USR-02` | `test_llm_regression.py::test_llm_regression_contract` |
-| 5 | Mate misframing (claim outside engine) | `validate_mode_2_negative` | `\bcheckmate\b`, `\bmate in \d+\b`, `\bforce(?:d)? mate\b`, `\bgame ends here\b` | `test_fake_llm.py::test_compliant_output_passes` | `violations.jsonl::MAT-01`, `USR-02` | `test_llm_regression.py::test_llm_regression_contract` |
+| 4 | Speculative language | `validate_mode_2_negative` (lexical) + `validate_mode_2_semantic` (semantic-surface mirror, defense in depth) | `\bshould\b`, `\blikely\b`, `\bprobably\b`, `\bI think\b`, `\bplans to\b`, `\bwith perfect play\b`, `\bactually winning\b`; `mode_2_semantic` re-flags speculative tokens (`likely`, `probably`, etc.) when an ESV is in scope so prompt-injected output that bypasses the lexical layer still fails at the semantic check | `test_fake_llm.py::test_compliant_output_passes` | `violations.jsonl::SPE-01..02`, `USR-02`, `SEM-04` (semantic surface) | `test_llm_regression.py::test_llm_regression_contract` |
+| 5 | Mate misframing (claim outside engine) | `validate_mode_2_negative` (lexical) + `validate_mode_2_semantic` (decisive-mate require, defense in depth) | `\bcheckmate\b`, `\bmate in \d+\b`, `\bforce(?:d)? mate\b`, `\bgame ends here\b`; `mode_2_semantic` additionally requires `inevitable` / `forced` when `engine_signal.evaluation.type == "mate"` so an LLM that elides the mate frame entirely (no lexical hit) still fails at the semantic check | `test_fake_llm.py::test_compliant_output_passes` | `violations.jsonl::MAT-01`, `USR-02`, `SEM-03` (semantic surface) | `test_llm_regression.py::test_llm_regression_contract` |
 | 6 | Mate misframing (missing inevitability) | `validate_output` REQUIRED_ON_MATE | `case_type=forced_mate` ⇒ output must include `inevitable` / `cannot be avoided` / `unavoidable` | `test_fake_llm.py::test_compliant_output_passes` (compliant text contains "inevitable") | `violations.jsonl::MAT-02`, `test_fake_llm.py::test_mate_softening_fails` | `test_llm_regression.py::test_llm_regression_contract` |
 | 7 | Missing-data refusal | `validate_output` REQUIRED_ON_MISSING | `case_type=missing_data` ⇒ output must include `missing` / `not enough information` | `test_fake_llm.py::test_compliant_output_passes` | `violations.jsonl::MIS-01`, `test_fake_llm.py::test_missing_data_violation_fails` | `test_llm_regression.py::test_llm_regression_contract` |
 | 8 | Invented evaluation | `validate_mode_2_semantic` (`llm/rag/validators/mode_2_semantic.py`) | `engine_signal.evaluation.band == "equal"` ⇒ text must NOT contain `slight advantage` / `better` / `winning` / `initiative` / `pressure` ⇒ `Mode2Violation` | `test_fake_llm.py::test_compliant_output_passes` (smoke) | `violations.jsonl::SEM-01` | `test_llm_regression.py::test_llm_regression_contract` |

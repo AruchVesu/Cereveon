@@ -40,12 +40,25 @@ interface LiveMoveClient {
  * @param apiKey           Sent as the X-Api-Key request header.
  * @param connectTimeoutMs TCP connect deadline in milliseconds.
  * @param readTimeoutMs    Read deadline in milliseconds.
+ * @param tokenSink        Optional sink for the X-Auth-Token refresh header.
+ *                         The `/live/move` route depends on `get_current_player`
+ *                         (llm/server.py — `Depends(get_current_player)`), so the
+ *                         server attaches a freshly-minted JWT to every 200
+ *                         response.  Wiring [tokenSink] lets a long live-coach
+ *                         session rotate the stored JWT continuously, instead of
+ *                         dropping the rotation header on the floor and forcing
+ *                         a re-login at the 24 h JWT exp.  See
+ *                         docs/API_CONTRACTS.md §10 (`X-Auth-Token` refresh
+ *                         header) and [TokenRefresh] for the helper.
+ *                         Default `null` preserves existing callers; pass a
+ *                         non-null sink to participate in rotation.
  */
 class HttpLiveMoveClient(
     val baseUrl: String,
     val apiKey: String,
     val connectTimeoutMs: Int = BaseHttpClient.DEFAULT_CONNECT_TIMEOUT_MS,
     val readTimeoutMs: Int = BaseHttpClient.DEFAULT_READ_TIMEOUT_MS,
+    val tokenSink: ((String) -> Unit)? = null,
 ) : LiveMoveClient {
 
     companion object {
@@ -67,6 +80,7 @@ class HttpLiveMoveClient(
         body = ApiJson.encodeToString(
             LiveMoveRequest(fen = fen, uci = uci, playerId = playerId)
         ),
+        onResponse = { conn -> consumeRefreshedToken(conn, tokenSink) },
         parse = { body -> ApiJson.decodeFromString<LiveMoveResponse>(body) },
     )
 }
