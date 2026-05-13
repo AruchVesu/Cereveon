@@ -9,7 +9,12 @@ import kotlinx.serialization.encodeToString
  * backend live coaching pipeline.  The hint always references the engine
  * evaluation band, game phase, and move quality.
  *
- * Requires X-Api-Key authentication; no Bearer token needed.
+ * The server route is gated by `Depends(get_current_player)` (see
+ * `llm/server.py::live_move`), so a valid `Authorization: Bearer <jwt>`
+ * header is required on every call.  X-Api-Key is accepted by the
+ * upstream proxy / shared dependency chain but does not by itself
+ * satisfy `/live/move` — without a Bearer the route returns
+ * 401 "Missing token" and no Mode-1 hint is ever produced.
  * Implementations are safe to call from any coroutine context.
  */
 interface LiveMoveClient {
@@ -40,6 +45,17 @@ interface LiveMoveClient {
  * @param apiKey           Sent as the X-Api-Key request header.
  * @param connectTimeoutMs TCP connect deadline in milliseconds.
  * @param readTimeoutMs    Read deadline in milliseconds.
+ * @param tokenProvider    Supplier of the JWT Bearer token for `/live/move`.
+ *                         The route is `Depends(get_current_player)` on the
+ *                         server (llm/server.py::live_move), so it returns
+ *                         401 "Missing token" without an `Authorization:
+ *                         Bearer <jwt>` header — silently breaking the
+ *                         Mode-1 inline hint for every authenticated user.
+ *                         When the lambda returns null (logged-out window)
+ *                         the request is sent without the header and the
+ *                         server's 401 path handles it cleanly via the
+ *                         existing `ApiResult.HttpError(401)` branch in
+ *                         `ChessViewModel.dispatchHumanMoveCoach`.
  * @param tokenSink        Optional sink for the X-Auth-Token refresh header.
  *                         The `/live/move` route depends on `get_current_player`
  *                         (llm/server.py — `Depends(get_current_player)`), so the
@@ -58,6 +74,7 @@ class HttpLiveMoveClient(
     val apiKey: String,
     val connectTimeoutMs: Int = BaseHttpClient.DEFAULT_CONNECT_TIMEOUT_MS,
     val readTimeoutMs: Int = BaseHttpClient.DEFAULT_READ_TIMEOUT_MS,
+    val tokenProvider: (() -> String?)? = null,
     val tokenSink: ((String) -> Unit)? = null,
 ) : LiveMoveClient {
 
@@ -76,7 +93,10 @@ class HttpLiveMoveClient(
     ): ApiResult<LiveMoveResponse> = http.request(
         path = LIVE_MOVE_PATH,
         method = "POST",
-        headers = mapOf("X-Api-Key" to apiKey),
+        headers = buildMap {
+            put("X-Api-Key", apiKey)
+            tokenProvider?.invoke()?.let { put("Authorization", "Bearer $it") }
+        },
         body = ApiJson.encodeToString(
             LiveMoveRequest(fen = fen, uci = uci, playerId = playerId)
         ),

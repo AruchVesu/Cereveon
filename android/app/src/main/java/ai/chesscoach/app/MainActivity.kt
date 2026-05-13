@@ -545,10 +545,16 @@ class MainActivity : AppCompatActivity() {
             baseUrl = BuildConfig.COACH_API_BASE,
             apiKey = BuildConfig.COACH_API_KEY,
             // POST /live/move depends on get_current_player on the server
-            // (llm/server.py — `Depends(get_current_player)`), so every 200
-            // response carries an X-Auth-Token refresh header.  Wire the sink
-            // so long live-coach sessions rotate the JWT instead of expiring
-            // at the 24 h exp and bouncing the user to login.
+            // (llm/server.py — `Depends(get_current_player)`), so a JWT
+            // Bearer header is mandatory.  Without it the server returns
+            // 401 "Missing token" and the Mode-1 inline coach hint
+            // silently never lands.  Pass the same authRepo-backed
+            // provider used by HttpGameApiClient / HttpCoachApiClient.
+            tokenProvider = { authRepo.getToken() },
+            // Every 200 response carries an X-Auth-Token refresh header.
+            // Wire the sink so long live-coach sessions rotate the JWT
+            // instead of expiring at the 24 h exp and bouncing the user
+            // to login.
             tokenSink = { newToken -> authRepo.saveToken(newToken) },
         )
         viewModel.onQuickCoachUpdate = { update ->

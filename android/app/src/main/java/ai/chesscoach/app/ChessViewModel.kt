@@ -213,7 +213,18 @@ $moves"""
                     elo?.let { EloToStrength.map(it) } ?: 100
                 } ?: 100
 
-                val move = engineProvider.getBestMove(fen, strengthLevel)
+                // engineProvider.getBestMove is a JNI call; a bad
+                // strength level or a transient native fault must not
+                // leave `turn = AI` (board frozen forever).  Catching
+                // here lets processAIMoveResult(null, ...) flip turn
+                // back to HUMAN so the user can keep playing — same
+                // outcome as the native engine returning a no-move.
+                val move = try {
+                    engineProvider.getBestMove(fen, strengthLevel)
+                } catch (t: Throwable) {
+                    Log.e("AI_TEST", "engineProvider.getBestMove threw", t)
+                    null
+                }
 
                 withContext(Dispatchers.Main) {
                     if (stateId == requestId) {

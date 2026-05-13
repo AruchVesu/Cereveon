@@ -22,7 +22,10 @@ import org.junit.Test
  * transport-agnostic.
  *
  * Contract reference: POST /live/move (server.py).
- * Auth: X-Api-Key required.
+ * Auth: X-Api-Key for rate-limit / shared dependency chain, plus a JWT
+ * Bearer token because `live_move` is gated by
+ * `Depends(get_current_player)` on the server.  Missing Bearer →
+ * 401 "Missing token" and the inline Mode-1 hint silently never lands.
  *
  * Invariants pinned
  * -----------------
@@ -30,6 +33,10 @@ import org.junit.Test
  *  2. INT_LIVE_PATH             request path is /live/move.
  *  3. INT_LIVE_CONTENT_TYPE     Content-Type header is application/json.
  *  4. INT_LIVE_API_KEY_SENT     X-Api-Key header is present.
+ *  4b.INT_LIVE_BEARER_SENT      Authorization: Bearer <jwt> is present
+ *                               when tokenProvider returns a non-null token.
+ *  4c.INT_LIVE_BEARER_ABSENT    Authorization header is absent when
+ *                               tokenProvider is null or returns null.
  *  5. INT_LIVE_FEN_IN_BODY      fen field present in request JSON.
  *  6. INT_LIVE_UCI_IN_BODY      uci field present in request JSON.
  *  7. INT_LIVE_PLAYER_ID_BODY   player_id field present in request JSON.
@@ -147,6 +154,51 @@ class LiveMoveApiClientIntegrationTest {
             "X-Api-Key must equal the configured API key",
             apiKey,
             req.getHeader("X-Api-Key"),
+        )
+    }
+
+    @Test
+    fun `INT_LIVE_BEARER_SENT - Authorization Bearer header is sent when tokenProvider yields a JWT`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(LIVE_OK_BODY))
+        val jwt = "header.payload.signature"
+        val client = HttpLiveMoveClient(
+            baseUrl = baseUrl(),
+            apiKey = apiKey,
+            tokenProvider = { jwt },
+        )
+        client.getLiveCoaching(startingFen, testUci)
+        val req = server.takeRequest(10, TimeUnit.SECONDS)!!
+        assertEquals(
+            "Authorization must be 'Bearer <jwt>' so /live/move can resolve the player",
+            "Bearer $jwt",
+            req.getHeader("Authorization"),
+        )
+    }
+
+    @Test
+    fun `INT_LIVE_BEARER_ABSENT - Authorization header is absent when tokenProvider is null`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(LIVE_OK_BODY))
+        client().getLiveCoaching(startingFen, testUci)
+        val req = server.takeRequest(10, TimeUnit.SECONDS)!!
+        assertNull(
+            "Authorization header must be absent when no tokenProvider is configured",
+            req.getHeader("Authorization"),
+        )
+    }
+
+    @Test
+    fun `INT_LIVE_BEARER_ABSENT_WHEN_TOKEN_NULL - Authorization header is absent when tokenProvider returns null`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(LIVE_OK_BODY))
+        val client = HttpLiveMoveClient(
+            baseUrl = baseUrl(),
+            apiKey = apiKey,
+            tokenProvider = { null },
+        )
+        client.getLiveCoaching(startingFen, testUci)
+        val req = server.takeRequest(10, TimeUnit.SECONDS)!!
+        assertNull(
+            "Authorization header must be absent when tokenProvider returns null (logged-out window)",
+            req.getHeader("Authorization"),
         )
     }
 

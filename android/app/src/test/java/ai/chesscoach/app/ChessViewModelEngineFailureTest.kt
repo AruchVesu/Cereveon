@@ -7,6 +7,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.*
 import org.junit.After
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -93,6 +94,62 @@ class ChessViewModelEngineFailureTest {
         // have not yet dispatched back to Main are cancelled before tearDown calls
         // resetMain(). Without this, a Default-thread continuation that dispatches to
         // Main after resetMain() throws and contaminates the next test class.
+        viewModel.viewModelScope.cancel()
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `engine throwable does not freeze the board on the next human move`() = runTest(testDispatcher) {
+        // Pins the freeze-recovery fix: NativeEngineProvider.getBestMove is
+        // a JNI call that can throw (UnsatisfiedLinkError when the .so is
+        // not loaded, generic Throwable on a native fault).  Before the
+        // catch was added in ChessViewModel.requestAIMove, that exception
+        // propagated out of viewModelScope.launch and left `turn = AI` —
+        // every subsequent human move was rejected by the `if (turn !=
+        // Turn.HUMAN) return` guard in onHumanMove, and the board
+        // appeared frozen forever.
+        class ThrowingEngineProvider : EngineProvider {
+            override fun getBestMove(fen: String): AIMove? =
+                throw UnsatisfiedLinkError("simulated JNI failure")
+        }
+
+        var secondHumanMoveApplied = false
+        // Pin io dispatch to the test scheduler so advanceUntilIdle
+        // drains the AI coroutine before the assertion (default
+        // Dispatchers.Default is a real thread pool the test scheduler
+        // can't await).
+        val viewModel = ChessViewModel(
+            engineProvider = ThrowingEngineProvider(),
+            ioDispatcher = testDispatcher,
+        )
+
+        // First human move: AI dispatch throws.  Without the catch, turn
+        // would stay AI here.
+        viewModel.onHumanMove(
+            fr = 6, fc = 4, tr = 4, tc = 4,
+            applyHumanMove = { MoveResult.SUCCESS },
+            exportFEN = { "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b" },
+            applyAIMove = { _, _, _, _ -> '.' }
+        )
+        advanceUntilIdle()
+
+        // Second human move must still be accepted — proves turn flipped
+        // back to HUMAN even though the engine threw.
+        viewModel.onHumanMove(
+            fr = 6, fc = 3, tr = 4, tc = 3,
+            applyHumanMove = { secondHumanMoveApplied = true; MoveResult.SUCCESS },
+            exportFEN = { "rnbqkbnr/pppppppp/8/8/3PP3/8/PPP2PPP/RNBQKBNR b" },
+            applyAIMove = { _, _, _, _ -> '.' }
+        )
+        advanceUntilIdle()
+
+        assertTrue(
+            "Board must remain responsive after the engine throws; otherwise " +
+                "turn stays at AI and every subsequent human move is rejected " +
+                "by the `turn != HUMAN` guard — board appears frozen.",
+            secondHumanMoveApplied,
+        )
+
         viewModel.viewModelScope.cancel()
         advanceUntilIdle()
     }
