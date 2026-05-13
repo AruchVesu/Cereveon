@@ -222,7 +222,11 @@ $moves"""
                 val move = try {
                     engineProvider.getBestMove(fen, strengthLevel)
                 } catch (t: Throwable) {
-                    Log.e("AI_TEST", "engineProvider.getBestMove threw", t)
+                    // Dedicated tag (vs the historic catch-all "AI_TEST"
+                    // used by happy-path logs in this file) so an engine
+                    // fault is grep-able in production logs without
+                    // wading through every routine play log.
+                    Log.e("AI_ENGINE", "engineProvider.getBestMove threw", t)
                     null
                 }
 
