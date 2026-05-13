@@ -14,9 +14,9 @@
 
 ## Required Reviews
 
-- Use specialist subagents where appropriate.
-- Use `architecture-reviewer` before finishing substantial or cross-layer work.
-- Use `devils-advocate` for adversarial security, lifecycle, memory, or interop review when code is risky or externally exposed.
+- Use the governance subagents below at the appropriate stage (see *Subagent Routing*).
+- Finish substantial or cross-layer work with the `reviewer` agent (architecture + tests + scope verdict).
+- For risky or externally-exposed changes (auth, JNI bridge, validators, freeze guard, network surface), follow `reviewer` with a second pass that explicitly stress-tests hostile input, lifecycle, and memory behavior.
 - Preserve API contracts unless docs, tests, and dependent callers are updated together.
 - Report blockers explicitly instead of bypassing checks.
 
@@ -31,12 +31,19 @@
 
 ## Subagent Routing
 
-- Use `engine-specialist` for engine pool, UCI, JNI bridge, move normalization, and evaluation semantics.
-- Use `backend-coach-specialist` for API routes, coaching pipeline, auth, RAG assembly, and backend integration behavior.
-- Use `android-specialist` for Android UI, API client integration, and Gradle-backed validation.
-- Use `test-writer` for unit, integration, regression, and contract coverage.
-- Use `devils-advocate` for hostile-input, security, memory, coroutine/lifecycle, and cross-language boundary audits.
-- Use `architecture-reviewer` for read-only compliance review before closing substantial work.
+The agents under `.claude/agents/` are stage-gated quality reviewers, not domain specialists. Route by stage of work, not by file location:
+
+- `task-planner` (Opus) — at the start of non-trivial work, decompose into ≤ 6 safe subtasks (one layer per subtask, ≤ 3 files each).
+- `executor` (Sonnet) — implement a single subtask precisely; deterministic only, no RL, no test weakening, no contract breaks.
+- `scope-guard` (Sonnet) — verify the change touches only the intended layer and only relevant files.
+- `diff-guard` (Haiku) — quick diff sanity check: size reasonable, no unrelated files swept in.
+- `contract-guard` (Sonnet) — confirm API request/response schemas in `docs/API_CONTRACTS.md` are unchanged or co-updated with code and tests.
+- `test-guardian` (Sonnet) — confirm new and existing tests carry real assertions and edge cases (no trivial / weakened checks).
+- `ci-guardian` (Haiku) — confirm the relevant test suite passes locally before pushing.
+- `command-guard` (Haiku) — wrap any potentially destructive shell command (rm, curl, wget, shutdown, reboot) before execution.
+- `reviewer` (Opus) — final pre-commit verdict across architecture, tests, and scope. Required before finishing substantial or cross-layer work.
+
+Domain context (engine pool / JNI / RAG / auth / Android UI) belongs in the prompt to whichever stage-agent is running, not in a separate domain-specialist agent. There is no `architecture-reviewer`, `devils-advocate`, `engine-specialist`, `backend-coach-specialist`, `android-specialist`, or `test-writer` in the current roster — earlier drafts of this document referenced names that were never created.
 
 ## Required Checks
 

@@ -196,11 +196,12 @@ interchangeable. Clients MUST NOT assume the two endpoints return the same shape
 
 ```json
 {
-  "status":        "ok",
-  "hint":          <string>,
-  "engine_signal": <object>,
-  "move_quality":  <string>,
-  "mode":          "LIVE_V1"
+  "status":             "ok",
+  "hint":               <string>,
+  "engine_signal":      <object>,
+  "move_quality":       <string>,
+  "mode":               "LIVE_V1",
+  "dynamic_adaptation": <bool>
 }
 ```
 
@@ -211,12 +212,15 @@ interchangeable. Clients MUST NOT assume the two endpoints return the same shape
 | `engine_signal` | `object` | Structured evaluation context (see `EngineSignalDto`) |
 | `move_quality` | `string` | Quality label: `"good"`, `"inaccuracy"`, `"mistake"`, `"blunder"` |
 | `mode` | `string` | Always `"LIVE_V1"` for this endpoint |
+| `dynamic_adaptation` | `bool` | Per-player dynamic-adaptation flag from `_dynamic_registry.get_state(player_id).enabled`. Always present in the response. Drives the client-side adaptation indicator only — does not change the engine signal, the validators, or the LLM trust boundary. |
 
 ### Notes
 - `hint` must be preserved as-is by clients even when empty; clients must not
   substitute `null` for an empty string.
 - Tested end-to-end by `LiveMoveApiClientIntegrationTest` (Android) and
-  `test_live_move_pipeline.py` (backend).
+  `test_live_move_pipeline.py` (backend); `dynamic_adaptation` contract pinned by
+  `test_dynamic_adaptation.py` and the `validate_live_move_response` schema
+  validator in `llm/rag/validators/explain_response_schema.py`.
 
 ---
 
@@ -233,7 +237,8 @@ interchangeable. Clients MUST NOT assume the two endpoints return the same shape
   "messages":       <array of {role, content}>,
   "player_profile": <object | null>,
   "past_mistakes":  <string[] | null>,
-  "move_count":     <int | null>
+  "move_count":     <int | null>,
+  "coach_voice":    <string | null>
 }
 ```
 
@@ -244,6 +249,7 @@ interchangeable. Clients MUST NOT assume the two endpoints return the same shape
 | `player_profile` | `object \| null` | Optional — keys: `skill_estimate`, `common_mistakes`, `strengths` |
 | `past_mistakes` | `string[] \| null` | Optional — ≤ 20 items |
 | `move_count` | `int \| null` | Optional — 0–10 000; injects "This is move N of the game." into the context block |
+| `coach_voice` | `string \| null` | Optional tone setting. Allow-list: `"formal"`, `"conversational"`, `"terse"` (case-insensitive, whitespace-stripped; empty string is coerced to `null`). Unknown values reject the request with 422. Default `null` → server treats as `"conversational"`. Affects tone only; engine truth and validator gates are unchanged. Pinned by `test_chat_coach_voice.py`. |
 
 ### Response
 
