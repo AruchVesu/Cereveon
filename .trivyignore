@@ -109,3 +109,49 @@ CVE-2026-5928 until:2027-07-01
 # Accepted risk pending a Debian glibc patch; remove this entry when
 # `apt-get upgrade -y` ships a fixed libc6.
 CVE-2026-5450 until:2027-07-01
+
+# util-linux 2.41-5: PAM access-control bypass via improper hostname
+# canonicalization in login(1) -h <hostname>.  MEDIUM.  Affects
+# bsdutils, libblkid1, liblastlog2-2, libmount1, libsmartcols1,
+# libuuid1, login, mount, util-linux (9 sub-packages — all share
+# the util-linux source).
+# Reachability analysis (2026-05-13):
+#   - The vulnerable code path is ``login(1)`` invoked with the ``-h
+#     <remote_hostname>`` flag, which sets ``PAM_RHOST`` for host-based
+#     PAM rules.  Exploitation requires (a) the ``login`` binary to be
+#     invoked with attacker-controlled ``-h`` AND (b) PAM rules in
+#     ``/etc/pam.d/*`` that key access decisions on the unsanitised
+#     ``PAM_RHOST`` value.
+#   - The container runs ``uvicorn llm.server:app`` as ``USER appuser``
+#     (uid 10001) and never spawns ``login``.  The base image has no
+#     telnetd, sshd, getty, or any other service that would invoke
+#     ``login -h`` on incoming connections — only the FastAPI app
+#     listens on :8000.
+#   - The Dockerfile installs no ``/etc/pam.d/`` host-based rules; the
+#     stock ``python:3.13-slim`` PAM config is unused at runtime
+#     because no PAM-aware service is invoked.
+# Accepted risk pending a Debian util-linux patch; remove this entry
+# when ``apt-get upgrade -y`` ships a fixed package (Debian security
+# tracker shows no fix as of 2026-05-13).
+CVE-2026-3184 until:2027-07-01
+
+# glibc 2.41-12: out-of-bounds write in ns_printrrf / ns_printrr /
+# fp_nquery when printing DNS TSIG records.  MEDIUM.  Affects libc-bin
+# and libc6.
+# Reachability analysis (2026-05-13):
+#   - The vulnerable functions are *deprecated* DNS resource-record
+#     pretty-printers (``ns_printrrf``, ``ns_printrr``, ``fp_nquery``)
+#     that format TSIG records for human-readable output.  Their
+#     callers are DNS administration tools like ``dig`` / ``nslookup``
+#     / ``host`` and DNS server software (BIND).
+#   - The container runs Python (CPython resolver uses
+#     ``getaddrinfo``/``gethostbyname`` — never the ``ns_print*``
+#     family) and Stockfish (no networking).  Neither imports
+#     ``libresolv.so.2``'s deprecated printers.
+#   - The exploit precondition requires the application to call these
+#     functions on attacker-controlled DNS responses — only DNS-server
+#     and DNS-debugger code paths do this, and the container ships
+#     neither (slim image; no ``dig``, ``nslookup``, ``bind``, etc.).
+# Accepted risk pending a Debian glibc patch; remove this entry when
+# ``apt-get upgrade -y`` ships a fixed libc6.
+CVE-2026-5435 until:2027-07-01
