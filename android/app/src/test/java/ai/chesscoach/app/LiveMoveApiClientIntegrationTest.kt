@@ -312,4 +312,54 @@ class LiveMoveApiClientIntegrationTest {
         val data = (result as ApiResult.Success<*>).data as LiveMoveResponse
         assertNull("engineSignal must be null when engine_signal absent from response", data.engineSignal)
     }
+
+    // ---------------------------------------------------------------------------
+    // 18–19  X-Auth-Token sliding-refresh consumption
+    //
+    // POST /live/move depends on `get_current_player` (server.py — see
+    // `Depends(get_current_player)` on `live_move`), so the server attaches a
+    // freshly-minted JWT to every 200 response in the `X-Auth-Token` header
+    // (docs/API_CONTRACTS.md §10). The client was previously discarding the
+    // header; these two invariants pin that the configured [tokenSink] is
+    // invoked when the header is present and is NOT invoked when it's absent.
+    // ---------------------------------------------------------------------------
+
+    @Test
+    fun `INT_LIVE_AUTH_TOKEN_CONSUMED - tokenSink receives X-Auth-Token from response`() = runBlocking {
+        val refreshed = "refreshed.jwt.payload"
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("X-Auth-Token", refreshed)
+                .setBody(LIVE_OK_BODY),
+        )
+        val sunk = mutableListOf<String>()
+        val client = HttpLiveMoveClient(
+            baseUrl = baseUrl(),
+            apiKey = apiKey,
+            tokenSink = { sunk += it },
+        )
+        client.getLiveCoaching(startingFen, testUci)
+        assertEquals(
+            "tokenSink must receive the refreshed JWT exactly once",
+            listOf(refreshed),
+            sunk,
+        )
+    }
+
+    @Test
+    fun `INT_LIVE_AUTH_TOKEN_ABSENT_NOOP - tokenSink not invoked when header missing`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(LIVE_OK_BODY))
+        val sunk = mutableListOf<String>()
+        val client = HttpLiveMoveClient(
+            baseUrl = baseUrl(),
+            apiKey = apiKey,
+            tokenSink = { sunk += it },
+        )
+        client.getLiveCoaching(startingFen, testUci)
+        assertTrue(
+            "tokenSink must not be invoked when response carries no X-Auth-Token; got: $sunk",
+            sunk.isEmpty(),
+        )
+    }
 }
