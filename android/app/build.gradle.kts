@@ -1,6 +1,11 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    // ``org.jetbrains.kotlin.android`` was made obsolete by AGP 9.0 —
+    // the Android Gradle Plugin now bundles Kotlin support natively
+    // (see https://kotl.in/gradle/agp-built-in-kotlin).  Applying it
+    // alongside AGP 9 triggers an extension-already-registered error.
     alias(libs.plugins.kotlin.serialization)
 }
 
@@ -127,8 +132,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    // ``kotlinOptions { jvmTarget = "17" }`` was deprecated in Kotlin 2.0 and
+    // removed in 2.3 (Android toolchain bump 2026-05-13).  Migration target
+    // per https://kotl.in/u1r8ln is the ``compilerOptions`` DSL keyed on the
+    // typed ``JvmTarget`` enum rather than a raw string.
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
     }
 }
 
@@ -144,7 +155,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
 
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     // Real org.json implementation — overrides the Android stub (android.jar) so that
     // production clients that use JSONObject can be exercised in host JVM unit tests.
