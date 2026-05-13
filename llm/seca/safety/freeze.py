@@ -30,10 +30,12 @@ and deleting top-level ``llm/{world_model, bootstrap_skill_dataset,
 governor}.py``.  Several test-paired dormant clusters (``brain/{meta,
 rewards, world_model, data}/``, ``engines/{hmpt, adaptive}/``, parts of
 ``learning/``) remain on disk because deleting them requires retiring CI
-regression tests (BUG-3..BUG-8 in ``test_bug_regressions.py``); they are
-unreachable at runtime under ``SAFE_MODE=True`` and trip the guard if
-imported into a live process anyway.  See the audit notes in the Sprint 2
-commit message for the full inventory.
+regression tests (BUG-3 / BUG-4 in ``test_bug_regressions.py`` — note
+BUG-5 / BUG-6 were retired alongside ``engine_eval.py`` / ``engine_pool.py``
+in the 2026-05-12 engine-library cleanup); the surviving dormant
+clusters are unreachable at runtime under ``SAFE_MODE=True`` and trip
+the guard if imported into a live process anyway.  See the audit notes
+in the Sprint 2 commit message for the full inventory.
 
 Policy
 ------
