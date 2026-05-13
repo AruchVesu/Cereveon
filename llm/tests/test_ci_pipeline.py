@@ -330,7 +330,12 @@ def test_dependency_security_audits_ci_requirements():
 def test_container_images_keep_health_checks_and_non_root_runtime():
     root_dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "ENV NODE_ENV=production" in root_dockerfile
-    assert "FROM node:22-alpine AS deps" in root_dockerfile
+    # Build-stage Node bumped to 26-alpine 2026-05-13 (Dependabot bump #73
+    # superseded by manual PR after the structural test had to be updated
+    # in lockstep).  Runtime stage still pinned to nodejs22-debian12 because
+    # the distroless project hasn't published a nodejs26 tag yet — once it
+    # does, bump both lines together.
+    assert "FROM node:26-alpine AS deps" in root_dockerfile
     assert "FROM gcr.io/distroless/nodejs22-debian12:nonroot" in root_dockerfile
     assert "RUN apk upgrade --no-cache" in root_dockerfile
     assert "COPY --chown=nonroot:nonroot llm/server.js ./server.js" in root_dockerfile
