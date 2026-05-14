@@ -226,11 +226,13 @@ def _build_hint(
         # Pre-Sprint-5.A wording read "The engine evaluation is equal." —
         # "engine" is on validate_mode_2_semantic's
         # FORBIDDEN_ENGINE_SPECULATION list and would now reject the
-        # response at the boundary.  Drop the "engine" prefix but keep
-        # the load-bearing token "equal" (still pinned by
-        # test_cp_equal_produces_equal_in_hint and the band-word check
-        # in test_hint_contains_engine_evaluation_reference).
-        eval_sentence = "The evaluation is equal."
+        # response at the boundary.  The interim phrasing kept
+        # ``evaluation`` as the load-bearing word but users perceived
+        # it as the coach quoting engine output rather than offering
+        # an assessment.  The current phrasing keeps the ``equal``
+        # token (still pinned by tests) while reading as a plain
+        # position description.
+        eval_sentence = "The position is roughly equal."
     else:
         band_label = _BAND_LABEL.get(band, band.replace("_", " "))
         eval_sentence = f"Position: {side} has {band_label}."

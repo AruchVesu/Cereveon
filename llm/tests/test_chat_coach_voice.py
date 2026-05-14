@@ -217,12 +217,18 @@ class TestVoiceInDeterministicFallback:
             r = generate_chat_reply(self._STARTING_FEN, self._prior_turns(), coach_voice="terse")
         assert "following up" not in r.reply.lower()
         assert "regarding your earlier" not in r.reply.lower()
-        # Engine fact still in output.  Phrasing changed in Sprint 5.A —
-        # the deterministic eval line dropped the "Engine" prefix because
-        # validate_mode_2_semantic's FORBIDDEN_ENGINE_SPECULATION list
-        # rejects "engine" unconditionally; "evaluation:" remains as
-        # the load-bearing token that this assertion guards.
-        assert "evaluation" in r.reply.lower()
+        # Engine truth still in output.  Phrasing changed twice:
+        # Sprint 5.A dropped the "Engine" prefix; the deterministic
+        # rephrase that followed dropped "Evaluation:" / "evaluation"
+        # entirely (users read it as the coach quoting engine data
+        # rather than coaching language).  We now pin the band-label
+        # vocabulary itself — the engine-derived content the previous
+        # "evaluation" word was a proxy for — so the assertion still
+        # fails if a voice ever drops the eval line.
+        lower = r.reply.lower()
+        assert any(
+            word in lower for word in ("equal", "advantage", "mate")
+        ), f"terse voice dropped the eval band/mate signal: {r.reply!r}"
 
     def test_terse_drops_phase_tip(self):
         """Terse output drops the generic per-phase tip; engine-truth
@@ -323,9 +329,13 @@ class TestVoiceInDeterministicFallback:
                 r = generate_chat_reply(
                     self._STARTING_FEN, self._prior_turns(), coach_voice=voice,
                 )
-            # Phrasing change in Sprint 5.A — see test_terse_drops_history_brackets
-            # for the rationale.  The eval line now reads "Evaluation: ..."
-            # (without "Engine"); we assert on "evaluation" only.
-            assert "evaluation" in r.reply.lower(), (
-                f"voice={voice!r} dropped the evaluation line"
-            )
+            # Engine truth must be in output.  See the band/mate proxy
+            # rationale in test_terse_drops_history_brackets above —
+            # asserting on the band-label vocabulary (rather than the
+            # literal "evaluation" word that was dropped from the
+            # deterministic builder) keeps the contract objective and
+            # phrasing-agnostic.
+            lower = r.reply.lower()
+            assert any(
+                word in lower for word in ("equal", "advantage", "mate")
+            ), f"voice={voice!r} dropped the engine band/mate signal: {r.reply!r}"

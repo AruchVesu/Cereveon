@@ -107,17 +107,21 @@ class TestLiveMovePipelineQuality:
     SAMPLE_FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
 
     def test_sint05_live_reply_contains_evaluation_reference(self):
-        """Sprint 5.A: the deterministic eval line no longer carries the
-        bare word ``engine`` — ``validate_mode_2_semantic`` rejects it
-        unconditionally via FORBIDDEN_ENGINE_SPECULATION.  The
-        load-bearing token shifts to ``evaluation`` (still present in
-        every CP-band live hint and most mate / equal phrasings)."""
+        """Sprint 5.A retired the bare word ``engine`` from the
+        deterministic eval line (caught by
+        ``validate_mode_2_semantic.FORBIDDEN_ENGINE_SPECULATION``).  A
+        follow-on rephrase also retired the literal ``evaluation``
+        because users perceived it as the coach quoting engine data.
+        The load-bearing tokens are now the band-label vocabulary
+        (``equal`` / ``advantage``) plus the mate marker — the
+        engine-derived content those words were always a proxy for."""
         from llm.seca.coach.live_move_pipeline import generate_live_reply
 
         reply = generate_live_reply(fen=self.SAMPLE_FEN, uci="e2e4")
-        assert "evaluation" in reply.hint.lower() or "mate" in reply.hint.lower(), (
-            f"Live hint must reference the evaluation (or mate context): {reply.hint!r}"
-        )
+        lower = reply.hint.lower()
+        assert any(
+            word in lower for word in ("equal", "advantage", "mate")
+        ), f"Live hint must reference the band/mate context: {reply.hint!r}"
 
     def test_sint06_blunder_quality_in_hint_when_stockfish_json_provided(self):
         """When stockfish_json carries last_move_quality=blunder the hint must say so."""
@@ -233,9 +237,17 @@ class TestChatPipelineEngineSignalContract:
             messages=[ChatTurn(role="user", content="What should I do here?")],
         )
         assert reply.mode == "CHAT_V1"
-        assert "engine" in reply.reply.lower() or "evaluation" in reply.reply.lower(), (
-            f"Chat reply must reference the engine evaluation: {reply.reply!r}"
-        )
+        # Both "engine" and "evaluation" used to be acceptable proxies
+        # for "engine truth conveyed", but: "engine" is forbidden by
+        # ``validate_mode_2_semantic`` and was never going to appear in
+        # a passing reply; "evaluation" was retired from the
+        # deterministic builder because users perceived it as the coach
+        # quoting engine data.  We now assert on the band/mate
+        # vocabulary directly — the actual engine truth.
+        lower = reply.reply.lower()
+        assert any(
+            word in lower for word in ("equal", "advantage", "mate")
+        ), f"Chat reply must reference the band/mate context: {reply.reply!r}"
 
     def test_sint12_chat_engine_signal_has_evaluation_key(self):
         from llm.seca.coach.chat_pipeline import ChatTurn, generate_chat_reply

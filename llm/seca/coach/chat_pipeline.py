@@ -117,7 +117,13 @@ _PHASE_HINT: dict[str, str] = {
 _DELTA_HINT: dict[str, str] = {
     "increase": "The position is improving for the side to move.",
     "decrease": "The position has deteriorated — caution is warranted.",
-    "stable": "The evaluation is stable.",
+    # "The position is stable." replaces an earlier "The evaluation is
+    # stable." — the literal word ``evaluation`` framed the coach as a
+    # readout of engine data rather than a player-facing assessment, and
+    # the user perceived it as the LLM leaking the engine signal even
+    # when it came from the deterministic fallback.  The new phrasing
+    # carries the same delta information.
+    "stable": "The position is stable.",
 }
 
 # ---------------------------------------------------------------------------
@@ -205,9 +211,11 @@ _COACHING_ADVICE: dict[str, dict[str, str]] = {
         ),
         "intermediate": (
             # "Consider", "plan", and "engine" are all on the Mode-2 forbidden
-            # lists (negative / structure / semantic) — the rewrite below uses
-            # only neutral coaching language that survives all three gates.
-            "Use the position's evaluation and think about your next two or three moves together."
+            # lists (negative / structure / semantic).  Also drops the noun
+            # "evaluation" because users read it as the coach quoting an
+            # engine readout rather than offering coaching language — same
+            # rationale as the _DELTA_HINT["stable"] rephrase above.
+            "Look at the position carefully and think about your next two or three moves together."
         ),
         "advanced": (
             "Evaluate the position's key features: material, pawn structure, "
@@ -470,12 +478,22 @@ def _format_engine_context(engine_signal: dict) -> str:
         # ("inevitable" or "forced" required when eval_type == 'mate').
         # Avoids the FORBIDDEN_ENGINE_SPECULATION token "engine".
         eval_sentence = f"This is a forced mate — {side} secures the decisive outcome."
+    elif band == "equal":
+        # Equal-band: avoid the "{side} has equal" phrasing (awkward) and
+        # the "Evaluation:" prefix (reads as engine readout).  The
+        # FORBIDDEN_EQUAL list still applies — "roughly equal" is OK
+        # (the gate looks for "slight advantage" / "better" / etc., not
+        # "equal" itself).
+        eval_sentence = f"The position is roughly equal in the {phase}."
     else:
         band_label = _BAND_LABEL.get(band, band.replace("_", " "))
-        # Drops the "Engine" prefix from the pre-Sprint-5.A phrasing
-        # because "engine" is in FORBIDDEN_ENGINE_SPECULATION (always
-        # rejected by validate_mode_2_semantic, regardless of band).
-        eval_sentence = f"Evaluation: {side} has {band_label} [{phase}]."
+        # Plain natural-language assessment.  Drops the pre-Sprint-5.A
+        # "Engine" prefix (forbidden by FORBIDDEN_ENGINE_SPECULATION)
+        # and the "Evaluation:" prefix that succeeded it (reads as an
+        # engine readout rather than a coaching assessment — see
+        # _DELTA_HINT["stable"] for the same rationale).  All three
+        # Mode-2 gates pass on the resulting sentence by construction.
+        eval_sentence = f"{side.capitalize()} has {band_label} in the {phase}."
 
     delta_hint = _DELTA_HINT.get(delta, "")
     return f"{eval_sentence} {delta_hint}".strip()
