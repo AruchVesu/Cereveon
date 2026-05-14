@@ -220,11 +220,12 @@ independent checks at startup, plus a per-request structural twin:
    *source text*: `optimizer.step`, `loss.backward`, `.partial_fit(`,
    `train(`, `bandit.update`, `bandit.save`, `import torch`, `nn.Module`.
 
-A violation `sys.exit(1)`s the process at startup. A per-request
-verifier with the same structural checks (`verify_runtime_safety`)
-exists in `freeze.py` for future wiring; `GET /seca/status` currently
-returns the module-level `SAFE_MODE` flag only — the Android client's
-safety gate reflects the boot-time state, not a per-request re-scan.
+A violation `sys.exit(1)`s the process at startup. The per-request
+verifier (`verify_runtime_safety`) is wired into `GET /seca/status`
+as of 2026-05-14: the endpoint reflects the live runtime, not just
+the boot-time constant, so a forbidden brain module lazily loaded
+after startup flips the next status response to `safe_mode: false`
+without crashing the process.
 
 ### Dormant-code policy
 

@@ -766,6 +766,183 @@ class TestProductionStartupGuards:
 
 
 # ===========================================================================
+# SEC_PROD_FOOTGUN_*  — PR 6 op-hardening
+# ===========================================================================
+#
+# Closes the residual risk previously documented in
+# ``docs/THREAT_MODEL.md`` § T6: a deploy that lands with
+# ``SECA_INSECURE_DEV=true`` AND non-loopback CORS origins but
+# ``SECA_ENV != prod`` would serve every X-Api-Key endpoint without
+# authentication.  Pre-PR-6 the defence was documentation only;
+# server.py now crashes at module load when the unsafe combination is
+# detected.  Pinned by AST inspection + by direct calls to the
+# extracted ``_looks_like_production_deploy`` heuristic.
+
+
+class TestProductionFootgunHeuristic:
+    """Unit tests for ``server._looks_like_production_deploy``.
+
+    The function is pure (string in, bool out), so it can be exercised
+    without the server.py import chain.  These tests document the
+    boundary cases the guard cares about: empty CORS, loopback-only,
+    mixed, and an explicit production-domain origin.
+    """
+
+    def _heuristic(self):
+        """Lazy import of ``_looks_like_production_deploy``.
+
+        Defers the server.py import chain (Stockfish probe, DB init,
+        etc.) until the test actually runs — at module collection time
+        the helper is not yet imported."""
+        from llm.server import _looks_like_production_deploy  # noqa: PLC0415
+
+        return _looks_like_production_deploy
+
+    def test_empty_string_is_not_production(self):
+        """SEC_PROD_FOOTGUN_EMPTY: an unset/empty CORS_ALLOWED_ORIGINS
+        is the dev default; the heuristic must NOT flag it as
+        production-facing."""
+        assert self._heuristic()("") is False
+        assert self._heuristic()("   ") is False
+        assert self._heuristic()(", , ,") is False
+
+    def test_loopback_only_is_not_production(self):
+        """SEC_PROD_FOOTGUN_LOOPBACK: localhost / 127.0.0.1 / [::1] /
+        10.0.2.2 (Android emulator) — none flag as production."""
+        loopback_only = ",".join(
+            [
+                "http://localhost:8000",
+                "http://127.0.0.1:8000",
+                "http://10.0.2.2:8000",
+                "http://[::1]:8000",
+            ]
+        )
+        assert self._heuristic()(loopback_only) is False
+
+    def test_non_loopback_origin_flags_production(self):
+        """SEC_PROD_FOOTGUN_NON_LOOPBACK: a single non-loopback origin
+        is sufficient to flag the deploy as production-facing."""
+        assert self._heuristic()("https://app.example.com") is True
+        assert self._heuristic()("https://api.cereveon.ai") is True
+
+    def test_mixed_origins_flag_production(self):
+        """SEC_PROD_FOOTGUN_MIXED: a single non-loopback origin in a
+        list of mostly-loopback entries still flags as production."""
+        mixed = (
+            "http://localhost:3000, https://app.example.com, http://127.0.0.1:8000"
+        )
+        assert self._heuristic()(mixed) is True
+
+    def test_case_insensitive_loopback(self):
+        """SEC_PROD_FOOTGUN_CASE: marker matching is case-insensitive
+        so ``HTTP://LOCALHOST`` etc. don't slip past."""
+        assert self._heuristic()("HTTP://LOCALHOST:8000") is False
+
+    def test_loopback_substring_in_subdomain_flags_production(self):
+        """SEC_PROD_FOOTGUN_HOSTNAME_NOT_SUBSTRING: an attacker-
+        controlled subdomain with a loopback label in its name MUST
+        flag as production-facing.  Substring matching would let
+        ``https://localhost.evil.com`` masquerade as loopback;
+        hostname parsing rejects it because the hostname is
+        ``localhost.evil.com``, not ``localhost``.
+
+        Pinned because the original PR 6 implementation used substring
+        matching and the 2026-05-14 reviewer pass caught the bypass.
+        """
+        assert self._heuristic()("https://localhost.evil.com") is True
+        assert self._heuristic()("https://127.0.0.1.evil.com") is True
+        # Mixed: one malicious subdomain + one legitimate loopback →
+        # the malicious entry alone flags the deploy as production.
+        assert (
+            self._heuristic()(
+                "https://localhost.evil.com,http://localhost:3000"
+            )
+            is True
+        )
+
+    def test_unparseable_origin_fails_closed(self):
+        """SEC_PROD_FOOTGUN_UNPARSEABLE: an origin that cannot be
+        parsed as a URL is treated as production-facing (fail closed).
+        A deploy cannot evade the gate by submitting malformed CORS
+        strings."""
+        # ``http://[::1`` is a truncated IPv6 host that urlsplit
+        # rejects with ValueError on every recent Python.
+        assert self._heuristic()("http://[::1") is True
+
+    def test_ipv6_loopback_bracketed_origin_is_loopback(self):
+        """SEC_PROD_FOOTGUN_IPV6_BRACKETS: the IPv6 loopback bracketed
+        form ``[::1]`` in a URL has hostname ``::1`` — confirm the
+        loopback set entry without brackets handles it correctly."""
+        assert self._heuristic()("http://[::1]:8000") is False
+
+
+class TestProductionFootgunStartupGate:
+    """Source-level pin: server.py raises ``RuntimeError`` at module
+    load when ``SECA_INSECURE_DEV=true`` + production-facing CORS +
+    ``SECA_ENV != prod``.
+
+    The check itself runs once at module load; pinning the AST shape
+    (RuntimeError + reference to ``_looks_like_production_deploy``)
+    catches accidental deletion / loosening in any future revision.
+    """
+
+    def test_server_py_references_looks_like_production_deploy(self):
+        """SEC_PROD_FOOTGUN_SOURCE_HEURISTIC: server.py must reference
+        the production-deploy heuristic so the gate stays load-bearing."""
+        source = _SERVER_PY.read_text(encoding="utf-8")
+        assert "_looks_like_production_deploy" in source, (
+            "server.py no longer references _looks_like_production_deploy; "
+            "the THREAT_MODEL.md § T6 footgun check has regressed."
+        )
+
+    def test_server_py_references_insecure_dev(self):
+        """SEC_PROD_FOOTGUN_SOURCE_FLAG: server.py must reference
+        SECA_INSECURE_DEV as part of the footgun gate."""
+        source = _SERVER_PY.read_text(encoding="utf-8")
+        assert "SECA_INSECURE_DEV" in source, (
+            "server.py no longer references SECA_INSECURE_DEV at module "
+            "load — the production-footgun gate cannot trigger."
+        )
+
+    def test_footgun_runtime_error_mentions_threat_model(self):
+        """SEC_PROD_FOOTGUN_SOURCE_DOC: the footgun RuntimeError
+        message must reference docs/THREAT_MODEL.md § T6 so operators
+        following the crash log find the rationale."""
+        source = _SERVER_PY.read_text(encoding="utf-8")
+        assert "THREAT_MODEL.md § T6" in source, (
+            "server.py footgun crash message no longer cites "
+            "docs/THREAT_MODEL.md § T6; operators reading the crash "
+            "won't know where to look for the rationale."
+        )
+
+
+class TestSecaStatusCallsVerifyRuntimeSafety:
+    """Source-level pin: /seca/status handler must call
+    ``verify_runtime_safety(world_model)`` so the boolean reflects
+    actual runtime state — not just the boot-time ``SAFE_MODE``
+    constant.  The PR 1 reviewer flagged the previous wiring as
+    dead-code-by-docstring; PR 6 closes that thread.
+    """
+
+    def test_seca_status_handler_imports_verify_runtime_safety(self):
+        """SEC_STATUS_VERIFY_WIRED: server.py /seca/status handler
+        references verify_runtime_safety so the response reflects
+        actual runtime state, not just the boot constant."""
+        source = _SERVER_PY.read_text(encoding="utf-8")
+        # Locate the /seca/status handler region
+        start = source.find('@app.get("/seca/status")')
+        assert start >= 0, "no /seca/status handler found in server.py"
+        next_route = source.find("@app.", start + 1)
+        handler_block = source[start:next_route] if next_route > 0 else source[start:]
+        assert "verify_runtime_safety" in handler_block, (
+            "/seca/status handler no longer calls verify_runtime_safety; "
+            "the response would revert to the boot-time SAFE_MODE constant "
+            "and miss any runtime drift (e.g., a lazy import of a "
+            "forbidden brain.* module after startup)."
+        )
+
+
+# ===========================================================================
 # Invariants 41-45 — Gap 6-10 regression tests
 # ===========================================================================
 #

@@ -154,3 +154,74 @@ class TestSecaStatusEndpoint:
         assert resp.status_code == 200, (
             f"/seca/status must be open (no auth). Got {resp.status_code}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tier 3 — behavioural pin that /seca/status calls verify_runtime_safety
+# ---------------------------------------------------------------------------
+
+
+class TestSecaStatusVerifierWiring:
+    """STATUS_USES_VERIFIER_BEHAVIOURAL: the real seca_status handler
+    must compute its response from ``verify_runtime_safety(world_model)``,
+    not from the boot-time ``SAFE_MODE`` constant.
+
+    The Tier-2 stub above only pins the wire shape; this class pins
+    that the wiring actually runs.  Patches ``verify_runtime_safety``
+    at its source module (the handler imports it lazily inside the
+    function body, so the patched version is what the call resolves
+    to) and asserts the handler reflects the patched return value.
+
+    Pinned by 2026-05-14 PR 6 (closed the PR 1 reviewer's dead-code
+    thread).  A source-grep pin lives in
+    ``test_api_security.TestSecaStatusCallsVerifyRuntimeSafety``;
+    this is the behavioural mirror.
+    """
+
+    def test_returns_false_when_verifier_reports_drift(self, monkeypatch):
+        """Verifier returns ``(False, "drift")`` → endpoint returns
+        ``safe_mode: False``.  Proves the wiring runs end-to-end."""
+        from llm.seca.safety import freeze as freeze_module
+
+        monkeypatch.setattr(
+            freeze_module,
+            "verify_runtime_safety",
+            lambda world_model: (False, "test-induced drift"),
+        )
+
+        from llm.server import seca_status  # noqa: PLC0415
+
+        assert seca_status() == {"safe_mode": False}
+
+    def test_returns_true_when_verifier_reports_safe(self, monkeypatch):
+        """Verifier returns ``(True, None)`` → endpoint returns
+        ``safe_mode: True``.  Mirror of the drift case."""
+        from llm.seca.safety import freeze as freeze_module
+
+        monkeypatch.setattr(
+            freeze_module,
+            "verify_runtime_safety",
+            lambda world_model: (True, None),
+        )
+
+        from llm.server import seca_status  # noqa: PLC0415
+
+        assert seca_status() == {"safe_mode": True}
+
+    def test_falls_back_to_safe_mode_constant_when_verifier_raises(self, monkeypatch):
+        """If ``verify_runtime_safety`` raises unexpectedly, the
+        handler must not crash — it falls back to the ``SAFE_MODE``
+        constant.  Pins the defensive try/except in seca_status."""
+        from llm.seca.safety import freeze as freeze_module
+        from llm.seca.runtime.safe_mode import SAFE_MODE
+
+        def _boom(world_model):
+            raise RuntimeError("simulated verifier failure")
+
+        monkeypatch.setattr(freeze_module, "verify_runtime_safety", _boom)
+
+        from llm.server import seca_status  # noqa: PLC0415
+
+        # Fallback is the module-level constant — SAFE_MODE is True
+        # by default in tests.
+        assert seca_status() == {"safe_mode": SAFE_MODE}

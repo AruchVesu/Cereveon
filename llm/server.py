@@ -116,6 +116,92 @@ if IS_PROD and API_KEY is None:
     )
 
 
+# ---- Production-deployment footgun guard ---------------------------------
+#
+# Closes the residual risk previously documented in
+# ``docs/THREAT_MODEL.md`` § T6: a deploy that ships with both
+# ``SECA_INSECURE_DEV=true`` AND a production-facing
+# ``CORS_ALLOWED_ORIGINS`` (i.e., non-localhost origins) but
+# ``SECA_ENV != prod`` would, under the auth flow in
+# ``llm.seca.auth.api_key.verify_api_key``, serve every
+# X-Api-Key-protected endpoint without authentication.  The previous
+# defence was documentation only.
+#
+# Heuristic for "production-facing": at least one ``CORS_ALLOWED_ORIGINS``
+# entry that is not localhost / 127.0.0.1 / [::1] / the Android-emulator
+# loopback (10.0.2.2).  Dev contributors who legitimately use the
+# insecure flag never set non-loopback CORS origins (the dev defaults
+# in ``DEV_CORS_DEFAULTS`` below are all loopback); a deploy that does
+# is operating in a production-facing posture and must not also be in
+# the insecure-no-auth bypass mode.
+
+_LOOPBACK_HOSTS = frozenset(
+    {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "10.0.2.2",  # Android emulator → host loopback
+    }
+)
+
+
+def _looks_like_production_deploy(cors_origins_raw: str) -> bool:
+    """Return True when ``cors_origins_raw`` advertises a non-loopback origin.
+
+    Loopback-only origins (the dev defaults) → False.  Empty string or
+    whitespace → False.  Any single non-loopback origin → True.
+
+    Uses ``urlsplit().hostname`` for the comparison rather than a
+    substring scan — substring matching on ``localhost`` would let
+    ``https://localhost.evil.com`` masquerade as loopback, which is
+    exactly the bypass a 2026-05-14 reviewer pass caught.  Unparseable
+    origins fail closed (treated as production-facing) so a deploy
+    cannot evade the gate by submitting malformed CORS strings.
+
+    Pure function on a string so the production guard is independently
+    testable; the env-var read happens once at module load below.
+    """
+    if not cors_origins_raw.strip():
+        return False
+    from urllib.parse import urlsplit  # noqa: PLC0415
+
+    for raw in cors_origins_raw.split(","):
+        origin = raw.strip()
+        if not origin:
+            continue
+        try:
+            host = urlsplit(origin).hostname
+        except ValueError:
+            # Unparseable URL → assume production-facing.  Fails
+            # closed so a malformed CORS entry can't slip past.
+            return True
+        if host is None or host.lower() not in _LOOPBACK_HOSTS:
+            return True
+    return False
+
+
+_INSECURE_DEV = os.getenv("SECA_INSECURE_DEV", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+if (
+    _INSECURE_DEV
+    and not IS_PROD
+    and _looks_like_production_deploy(os.getenv("CORS_ALLOWED_ORIGINS", ""))
+):
+    raise RuntimeError(
+        "Production-deployment footgun: SECA_INSECURE_DEV is set AND "
+        "CORS_ALLOWED_ORIGINS contains a non-loopback origin, but "
+        "SECA_ENV is not 'prod'.  This combination would serve every "
+        "X-Api-Key-protected endpoint without authentication on what "
+        "appears to be a production-facing deploy.  Resolution: remove "
+        "SECA_INSECURE_DEV from the environment, set SECA_ENV=prod (and "
+        "configure SECA_API_KEY), or restrict CORS_ALLOWED_ORIGINS to "
+        "loopback-only origins.  See docs/THREAT_MODEL.md § T6."
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global engine_pool, move_cache, scheduler
@@ -1182,10 +1268,17 @@ def seca_status():
 
     Open endpoint (no auth): readable by Android at cold-start so the
     client can confirm ``safe_mode`` is active before sending coaching
-    requests.  Always ``safe_mode: true`` in the current release;
-    bandit training and neural policy updates are hard-disabled via
-    ``SAFE_MODE = True`` in ``llm/seca/runtime/safe_mode.py`` and
-    enforced at startup by ``llm/seca/safety/freeze.py``.
+    requests.
+
+    Implementation: calls ``verify_runtime_safety(world_model)`` (the
+    per-request twin of the lifespan-startup ``enforce``) so the
+    returned boolean reflects the **current** runtime — not just the
+    boot-time ``SAFE_MODE`` constant.  A future lazy import of any
+    forbidden ``brain.*`` module after startup would flip this to
+    False on the next request, surfacing drift to Android clients
+    without crashing the process.  Pre-PR-6 the endpoint returned
+    the module-level constant only (flagged as dead-code-by-docstring
+    by the PR 1 reviewer pass; see ``docs/SECA.md`` "Freeze guard").
 
     Response is intentionally minimal — the previous shape exposed
     ``bandit_enabled`` (redundant; just ``not safe_mode``) and
@@ -1193,7 +1286,25 @@ def seca_status():
     were small information-disclosure surfaces with no compensating
     use case.
     """
-    return {"safe_mode": SAFE_MODE}
+    try:
+        # Lazy import keeps test stubs (which do not import server.py)
+        # from paying the cost of resolving the safety package at the
+        # /seca/status fixture boundary.
+        from llm.seca.safety.freeze import verify_runtime_safety  # noqa: PLC0415
+
+        ok, _reason = verify_runtime_safety(world_model)
+    except Exception:  # noqa: BLE001
+        # Defensive: a per-request scan failure here must not crash the
+        # endpoint.  Startup ``enforce`` already validated the runtime
+        # once; fall back to the module-level constant so the
+        # endpoint always returns a usable shape.  The exception is
+        # logged for operator visibility.
+        logger.exception(
+            "verify_runtime_safety raised in /seca/status; "
+            "falling back to SAFE_MODE constant"
+        )
+        ok = SAFE_MODE
+    return {"safe_mode": ok}
 
 
 @app.get("/llm/health")

@@ -215,12 +215,25 @@ Mitigation:
   all cross-origin requests; a production deploy must opt in
   explicitly per origin, so a missing-config deploy fails *closed* on
   the browser tier.
+- **Production-deploy footgun guard.** As of 2026-05-14 (PR 6),
+  `llm/server.py` raises `RuntimeError` at module load when
+  `SECA_INSECURE_DEV=true` is set together with at least one
+  non-loopback origin in `CORS_ALLOWED_ORIGINS` and `SECA_ENV != prod`.
+  Loopback markers checked: `localhost`, `127.0.0.1`, `[::1]`,
+  `10.0.2.2` (Android emulator). The heuristic is encoded in
+  `_looks_like_production_deploy`, pinned by
+  `test_api_security.TestProductionFootgunHeuristic` and
+  `TestProductionFootgunStartupGate`. The crash message names this
+  file (`docs/THREAT_MODEL.md § T6`) so operators landing on the
+  failure mode find the rationale here.
 
-Residual risk: an operator sets all three permissive flags
-(`SECA_ENV=dev`, `SECA_API_KEY` unset, `SECA_INSECURE_DEV=true`) and
-points the deploy at the production domain. No code mitigation closes
-this — the document trail (THIS file, `OPERATIONS.md`,
-`DEPLOYMENT.md`) is the mitigation.
+Residual risk: an operator sets `SECA_ENV=dev` + `SECA_API_KEY` unset
++ `SECA_INSECURE_DEV=true` AND restricts `CORS_ALLOWED_ORIGINS` to
+loopback only AND points the deploy at the production domain. Under
+those conditions the guard does not fire — the deploy looks like a
+local-dev box on its CORS surface, and only the hostname / DNS makes
+it production. Mitigation: pre-deploy linting + the document trail
+(THIS file, `OPERATIONS.md`, `DEPLOYMENT.md`).
 
 ## 4. Cross-cutting controls
 

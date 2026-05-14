@@ -260,11 +260,14 @@ Plus three defensive guards:
 
 The guard runs once at FastAPI lifespan startup. A per-request
 verifier with the same structural checks (`verify_runtime_safety`)
-exists in `freeze.py` but is **not currently wired to any route** —
-`GET /seca/status` returns the module-level `SAFE_MODE` flag only.
-Either wiring the verifier in (the originally-intended design) or
-deleting it (it has no live caller) is tracked as a follow-up
-cleanup.
+is wired into `GET /seca/status`: the endpoint returns
+`{"safe_mode": ok}` where `ok` is `verify_runtime_safety(world_model)`
+applied to the live runtime, not just the boot-time constant. A
+forbidden brain module lazily loaded into a running process — even
+if startup `enforce` already passed — flips the next status response
+to `False`, surfacing drift to Android clients without crashing the
+process. Wiring landed in PR 6 (2026-05-14); pinned by
+`test_api_security.TestSecaStatusCallsVerifyRuntimeSafety`.
 
 What the guard *doesn't* block: the lightweight closed-form updates
 that the bandit and skill tracker perform every game. Those are the
