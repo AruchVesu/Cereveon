@@ -273,7 +273,8 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
             peekHeight = resources.displayMetrics.heightPixels
         }
 
-        // Restore messages after rotation; show greeting on first open
+        // Restore messages after rotation; otherwise preload
+        // server-persisted history before falling back to the greeting.
         val roles = savedInstanceState?.getStringArray(KEY_MSG_ROLES)
         val texts = savedInstanceState?.getStringArray(KEY_MSG_TEXTS)
         if (roles != null && texts != null && roles.size == texts.size && roles.isNotEmpty()) {
@@ -283,12 +284,27 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
             }
             scrollToBottom()
         } else {
-            val seed = seedPrompt
-            if (seed != null) {
-                appendUser(seed)
-                sendToBackend(seed)
-            } else {
-                appendAssistant("Hi! Ask me about the current position, strategy, or your recent mistakes.")
+            // Fresh open — pull server history (cross-device, persistent
+            // across process restarts) then route the seed prompt or the
+            // greeting based on what landed.  Network failure is
+            // non-fatal: an empty history shows the greeting just like a
+            // brand-new player would see it.
+            viewLifecycleOwner.lifecycleScope.launch {
+                preloadServerHistory()
+                val seed = seedPrompt
+                when {
+                    seed != null -> {
+                        appendUser(seed)
+                        sendToBackend(seed)
+                    }
+                    sessionStore.messages.isEmpty() -> {
+                        appendAssistant(
+                            "Hi! Ask me about the current position, strategy, or your recent mistakes."
+                        )
+                    }
+                    // else: history loaded — let the user see their
+                    // prior conversation without an injected greeting.
+                }
             }
         }
 
@@ -321,6 +337,31 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
     private fun scrollToBottom() {
         val count = chatAdapter.itemCount
         if (count > 0) recyclerMessages.scrollToPosition(count - 1)
+    }
+
+    /**
+     * Pull server-persisted chat history into [sessionStore] + [chatAdapter].
+     *
+     * Called on a fresh chat-sheet open (not rotation-restore, which
+     * uses the saved instance state).  Network failure is non-fatal —
+     * we silently fall through with an empty store, and the caller
+     * surfaces the greeting just like a brand-new player would see.
+     *
+     * Caps the request at the in-memory ChatSessionStore capacity so a
+     * very long server-side history doesn't immediately overflow the
+     * client cache.  The server's own `HISTORY_MAX_LIMIT` (200) is a
+     * hard upper bound; we ask for 50 to match
+     * `ChatSessionStore(maxMessages = 50)`.
+     */
+    private suspend fun preloadServerHistory() {
+        val result = coachApiClient.getHistory(limit = 50)
+        val turns = (result as? ApiResult.Success)?.data?.turns ?: return
+        if (turns.isEmpty()) return
+        turns.forEach { t ->
+            sessionStore.addMessage(t.role, t.content)
+            chatAdapter.addMessage(ChatMessage(role = t.role, text = t.content))
+        }
+        scrollToBottom()
     }
 
     // ---------------------------------------------------------------------------
@@ -418,8 +459,16 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
             coachApiClient.chatStream(
                 fen = currentFen ?: STARTING_FEN,
                 messages = messages,
-                playerProfile = playerProfile,
-                pastMistakes = pastMistakes,
+                // Server now derives player_profile + past_mistakes
+                // from the authenticated player row + skill_vector_json
+                // (see ``llm/server.py::_derive_player_profile``).
+                // Sending null here keeps the wire payload minimal and
+                // prevents a stale local cache from overriding the
+                // server-authoritative coach context.  The fields are
+                // still kept on the request body type for backwards
+                // compatibility — `encodeDefaults=false` drops them.
+                playerProfile = null,
+                pastMistakes = null,
                 moveCount = moveCount.takeIf { it > 0 },
                 // Coach voice from Settings — pulled fresh on every
                 // chat turn so a setting change takes effect on the

@@ -98,6 +98,30 @@ interface CoachApiClient {
         isHelpful: Boolean,
         token: String?,
     ): ApiResult<Unit> = ApiResult.HttpError(501)
+
+    /**
+     * GET /chat/history — load the most recent persisted chat turns for
+     * the authenticated player.
+     *
+     * The Android client calls this on [ChatBottomSheet.onAttach] so a
+     * conversation survives process restarts, device swaps, and
+     * reinstalls — the server is the source of truth for chat
+     * history; the local [ChatSessionStore] is a UI cache seeded from
+     * the server response.
+     *
+     * Server returns turns in chronological order (oldest first), so
+     * the caller can iterate the list and `addAll` directly into the
+     * adapter without re-sorting.  The server caps [limit] at
+     * ``HISTORY_MAX_LIMIT`` (200) regardless of the requested value;
+     * a value > the cap returns the cap.  Default 50 matches the
+     * in-memory ``ChatSessionStore`` capacity so a fresh seed never
+     * over-fills the cache.
+     *
+     * Returns [ApiResult.HttpError(501)] by default so test fakes
+     * don't need to override this method.
+     */
+    suspend fun getHistory(limit: Int = 50): ApiResult<ChatHistoryResponseBody> =
+        ApiResult.HttpError(501)
 }
 
 /**
@@ -139,6 +163,7 @@ class HttpCoachApiClient(
         const val DEFAULT_READ_TIMEOUT_MS = BaseHttpClient.DEFAULT_READ_TIMEOUT_MS
         private const val CHAT_PATH = "/chat"
         private const val CHAT_STREAM_PATH = "/chat/stream"
+        private const val CHAT_HISTORY_PATH = "/chat/history"
         private const val FEEDBACK_PATH = "/game/coach-feedback"
     }
 
@@ -282,6 +307,15 @@ class HttpCoachApiClient(
         ),
         onResponse = refreshOnSuccess(),
     )
+
+    override suspend fun getHistory(limit: Int): ApiResult<ChatHistoryResponseBody> =
+        http.request(
+            path = "$CHAT_HISTORY_PATH?limit=$limit",
+            method = "GET",
+            headers = authHeaders(),
+            onResponse = refreshOnSuccess(),
+            parse = { body -> ApiJson.decodeFromString<ChatHistoryResponseBody>(body) },
+        )
 
     // -----------------------------------------------------------------------
     // JSON serialisation / deserialisation (private — not unit tested directly)

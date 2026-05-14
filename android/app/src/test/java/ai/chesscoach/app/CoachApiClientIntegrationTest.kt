@@ -336,4 +336,96 @@ class CoachApiClientIntegrationTest {
         assertTrue("Expected HttpError, got: $result", result is ApiResult.HttpError)
         assertEquals(401, (result as ApiResult.HttpError).code)
     }
+
+    // ---------------------------------------------------------------------------
+    // GET /chat/history — server-authoritative chat recall.
+    //
+    // INT_HISTORY_METHOD             request uses HTTP GET.
+    // INT_HISTORY_PATH_WITH_LIMIT    path is /chat/history?limit=N.
+    // INT_HISTORY_BEARER_SENT        Authorization Bearer header is sent.
+    // INT_HISTORY_TURNS_PARSED       turns array deserialised with role + content.
+    // INT_HISTORY_EMPTY              empty turns array → Success with empty list.
+    // INT_HISTORY_HTTP_401           non-200 401 → ApiResult.HttpError(401).
+    // ---------------------------------------------------------------------------
+
+    @Test
+    fun `INT_HISTORY_METHOD - request uses HTTP GET`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"turns":[]}"""))
+        client(token = "history-token").getHistory(limit = 25)
+        assertEquals("GET", server.takeRequest(10, TimeUnit.SECONDS)!!.method)
+    }
+
+    @Test
+    fun `INT_HISTORY_PATH_WITH_LIMIT - path carries the requested limit`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"turns":[]}"""))
+        client(token = "history-token").getHistory(limit = 25)
+        val request = server.takeRequest(10, TimeUnit.SECONDS)!!
+        assertEquals("/chat/history?limit=25", request.path)
+    }
+
+    @Test
+    fun `INT_HISTORY_BEARER_SENT - Authorization Bearer header is sent`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"turns":[]}"""))
+        client(token = "history-token").getHistory(limit = 5)
+        val auth = server.takeRequest(10, TimeUnit.SECONDS)!!.getHeader("Authorization")
+        assertEquals("Bearer history-token", auth)
+    }
+
+    @Test
+    fun `INT_HISTORY_TURNS_PARSED - turns array deserialised with role + content`() = runBlocking {
+        val body = """
+            {
+              "turns": [
+                {
+                  "id": "abc-123",
+                  "role": "user",
+                  "content": "What is my plan?",
+                  "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                  "mode": "CHAT_V1",
+                  "created_at": "2026-05-14T16:30:00"
+                },
+                {
+                  "id": "def-456",
+                  "role": "assistant",
+                  "content": "Develop pieces and control the centre.",
+                  "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                  "mode": "CHAT_V1",
+                  "created_at": "2026-05-14T16:30:02"
+                }
+              ]
+            }
+        """.trimIndent()
+        server.enqueue(MockResponse().setResponseCode(200).setBody(body))
+        val result = client(token = "history-token").getHistory(limit = 50)
+        assertTrue(
+            "Expected Success, got: $result",
+            result is ApiResult.Success<*>,
+        )
+        val data = (result as ApiResult.Success<*>).data as ChatHistoryResponseBody
+        assertEquals(2, data.turns.size)
+        assertEquals("user", data.turns[0].role)
+        assertEquals("What is my plan?", data.turns[0].content)
+        assertEquals("assistant", data.turns[1].role)
+        assertEquals("Develop pieces and control the centre.", data.turns[1].content)
+    }
+
+    @Test
+    fun `INT_HISTORY_EMPTY - empty turns array returns Success with empty list`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"turns":[]}"""))
+        val result = client(token = "history-token").getHistory(limit = 10)
+        assertTrue(result is ApiResult.Success<*>)
+        val data = (result as ApiResult.Success<*>).data as ChatHistoryResponseBody
+        assertTrue(
+            "Expected empty turns list, got: ${data.turns}",
+            data.turns.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `INT_HISTORY_HTTP_401 - 401 response returns ApiResult HttpError`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"detail":"Missing token"}"""))
+        val result = client().getHistory(limit = 50)
+        assertTrue("Expected HttpError, got: $result", result is ApiResult.HttpError)
+        assertEquals(401, (result as ApiResult.HttpError).code)
+    }
 }

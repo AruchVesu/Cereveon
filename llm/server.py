@@ -29,9 +29,16 @@ except ImportError:
 from llm.seca.auth.router import (
     router as auth_router,
     get_current_player,
+    get_db,
     init_schema as init_auth_schema,
 )
 from llm.seca.auth.api_key import verify_api_key
+from llm.seca.chat.repo import (
+    HISTORY_DEFAULT_LIMIT,
+    HISTORY_MAX_LIMIT,
+    recent_turns_for_player,
+    save_exchange,
+)
 from llm.seca.events.router import router as game_router
 from llm.seca.curriculum.router import router as curriculum_router
 from llm.seca.inference.router import router as inference_router
@@ -545,9 +552,7 @@ async def commit_pending_auth_rotation(request: Request, call_next):
 
     try:
         with SessionLocal() as db:
-            AuthService(db).rotate_session_token(
-                pending["session_id"], pending["new_token"]
-            )
+            AuthService(db).rotate_session_token(pending["session_id"], pending["new_token"])
     except Exception as exc:  # noqa: BLE001
         # If the rotation write itself fails (DB hiccup), prefer to NOT
         # set X-Auth-Token — the server-side token hash is unchanged so
@@ -1930,26 +1935,128 @@ def report_outcome(req: OutcomeRequest, request: Request, player=Depends(get_cur
 # ------------------------------------------------------------------
 
 
+def _derive_player_profile(player) -> dict:
+    """Build the ``player_profile`` dict the chat pipeline expects.
+
+    ``chat_pipeline._build_context_block`` reads ``skill_estimate``,
+    ``common_mistakes``, and ``strengths``.  The Android client
+    historically sent a different shape (``{rating, confidence}``),
+    so the pipeline silently produced an empty player block on every
+    /chat call.  Building the dict server-side from the authenticated
+    Player row fixes the contract mismatch AND removes the dependency
+    on a freshly-cached client copy.
+
+    Strictly deterministic.  No skill / rating / weakness state is
+    WRITTEN here — those remain owned by
+    ``llm.seca.skills.updater.SkillUpdater`` (triggered only by
+    ``/game/finish`` per the SECA "no autonomous learning" rule).
+    """
+    skill_vector = {}
+    if player.skill_vector_json:
+        try:
+            skill_vector = json.loads(player.skill_vector_json)
+        except (json.JSONDecodeError, TypeError):
+            skill_vector = {}
+
+    # Top-3 weaknesses (highest scores in skill_vector) — items already
+    # below a soft threshold are filtered so we don't expose a
+    # placeholder "weakness" the player hasn't actually demonstrated.
+    sorted_weak = sorted(
+        ((k, float(v)) for k, v in skill_vector.items()),
+        key=lambda kv: -kv[1],
+    )
+    common_mistakes = [name for name, score in sorted_weak[:3] if score > 0.3]
+
+    # Rating → tier label.  Bands match
+    # ``llm.seca.adaptation.adaptive.compute_adaptation`` style buckets
+    # so the LLM gets a consistent skill signal across coach surfaces.
+    rating = float(player.rating or 0.0)
+    if rating < 1000:
+        skill_estimate = "beginner"
+    elif rating < 1600:
+        skill_estimate = "intermediate"
+    else:
+        skill_estimate = "advanced"
+
+    return {
+        "skill_estimate": skill_estimate,
+        "common_mistakes": common_mistakes,
+        # Inverse signal isn't tracked separately today; empty list keeps
+        # the pipeline's ``strengths`` branch on its no-strengths path.
+        "strengths": [],
+    }
+
+
+def _derive_past_mistakes(player, limit: int = 5) -> list[str]:
+    """Top-N weakness categories from the authenticated player.
+
+    Same skill_vector source as ``_derive_player_profile`` but with a
+    higher cap (5) and exposed at the top-level ``past_mistakes``
+    field that ``generate_chat_reply`` consumes separately from
+    ``player_profile``.
+    """
+    if not player.skill_vector_json:
+        return []
+    try:
+        sv = json.loads(player.skill_vector_json)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    sorted_weak = sorted(
+        ((k, float(v)) for k, v in sv.items()),
+        key=lambda kv: -kv[1],
+    )
+    return [name for name, score in sorted_weak[:limit] if score > 0.3]
+
+
+def _last_user_message(messages) -> str:
+    """Return the most-recent ``role=user`` content in the request, or
+    empty string when the history is malformed / contains no user turn.
+    Used by the persistence path to record the question the user asked
+    in this exchange."""
+    for turn in reversed(messages):
+        if turn.role == "user":
+            return turn.content
+    return ""
+
+
 @app.post("/chat")
 @limiter.limit("10/minute")
 async def chat(
     req: ChatRequest,
     request: Request,
     player=Depends(get_current_player),
+    db=Depends(get_db),
 ):
     """Mode-2: long-form coaching explanation for the LLM panel.
 
     LLM-powered with conversation history, RAG, and Mode-2 validation;
     falls back to deterministic reply when Ollama is unavailable.
     Runs in a thread-pool executor so the async event loop is not blocked.
+
+    Chat history is persisted server-side as a side-effect of a 2xx
+    response (see ``llm.seca.chat.repo.save_exchange``).  Both the
+    user message and the final reply (LLM or deterministic fallback,
+    whichever the user actually saw) are written in a single
+    transaction after boundary validation succeeds.  Saves on the
+    failure paths (5xx, validator rejection of even the deterministic
+    fallback) intentionally do NOT happen — the user will retry and
+    the next successful exchange replaces the lost turn.
     """
+    # Server-derived context replaces ``req.player_profile`` and
+    # ``req.past_mistakes`` so the coach sees authoritative player
+    # state, not a possibly-stale client cache.  Request-body fields
+    # are kept in the schema for backwards compatibility (old Android
+    # clients still send them); they are ignored at this layer.
+    derived_profile = _derive_player_profile(player)
+    derived_past_mistakes = _derive_past_mistakes(player)
+
     turns = [_ChatPipelineTurn(role=t.role, content=t.content) for t in req.messages]
     result = await asyncio.to_thread(
         generate_chat_reply,
         req.fen,
         turns,
-        req.player_profile,
-        req.past_mistakes,
+        derived_profile,
+        derived_past_mistakes,
         req.move_count,
         req.coach_voice,
     )
@@ -1977,8 +2084,8 @@ async def chat(
             generate_chat_reply,
             req.fen,
             turns,
-            req.player_profile,
-            req.past_mistakes,
+            derived_profile,
+            derived_past_mistakes,
             req.move_count,
             req.coach_voice,
             True,  # force_deterministic — skip LLM, emit hand-tuned fallback
@@ -1989,6 +2096,28 @@ async def chat(
             "mode": fallback.mode,
         }
         validate_chat_response(response)
+
+    # Persist the exchange — server-authoritative chat history.
+    # ``_last_user_message`` walks the request's message list to find
+    # the user's question for this exchange; the assistant content is
+    # the FINAL reply the user saw (deterministic-fallback included).
+    # Save failures are best-effort: a DB hiccup must not 500 a
+    # successfully-validated coaching response.
+    try:
+        save_exchange(
+            db=db,
+            player_id=str(player.id),
+            user_content=_last_user_message(req.messages),
+            assistant_content=response["reply"],
+            fen=req.fen,
+            mode=response["mode"],
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "chat history save failed (%s: %s); reply already returned",
+            type(exc).__name__,
+            exc,
+        )
     return response
 
 
@@ -2003,6 +2132,7 @@ async def chat_stream(
     req: ChatRequest,
     request: Request,
     player=Depends(get_current_player),
+    db=Depends(get_db),
 ):
     """Streaming variant of POST /chat — same LLM pipeline, chunked via Server-Sent Events.
 
@@ -2015,14 +2145,20 @@ async def chat_stream(
 
     Uses the same LLM-powered chat_pipeline.generate_chat_reply(); no RL.
     The pipeline runs in a thread-pool executor so the event loop is not blocked.
+
+    Chat history is persisted via ``save_exchange`` after boundary
+    validation succeeds — same contract as ``/chat`` above.
     """
+    derived_profile = _derive_player_profile(player)
+    derived_past_mistakes = _derive_past_mistakes(player)
+
     turns = [_ChatPipelineTurn(role=t.role, content=t.content) for t in req.messages]
     result = await asyncio.to_thread(
         generate_chat_reply,
         req.fen,
         turns,
-        req.player_profile,
-        req.past_mistakes,
+        derived_profile,
+        derived_past_mistakes,
         req.move_count,
         req.coach_voice,
     )
@@ -2054,8 +2190,8 @@ async def chat_stream(
             generate_chat_reply,
             req.fen,
             turns,
-            req.player_profile,
-            req.past_mistakes,
+            derived_profile,
+            derived_past_mistakes,
             req.move_count,
             req.coach_voice,
             True,  # force_deterministic — skip LLM, emit hand-tuned fallback
@@ -2068,6 +2204,25 @@ async def chat_stream(
             }
         )
 
+    # Persist the exchange BEFORE returning the StreamingResponse so a
+    # crash during SSE-iteration doesn't leave the row missing.  Same
+    # best-effort contract as ``/chat``.
+    try:
+        save_exchange(
+            db=db,
+            player_id=str(player.id),
+            user_content=_last_user_message(req.messages),
+            assistant_content=result.reply,
+            fen=req.fen,
+            mode=result.mode,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "chat/stream history save failed (%s: %s); reply still streamed",
+            type(exc).__name__,
+            exc,
+        )
+
     def _generate():
         words = result.reply.split(" ")
         for i, word in enumerate(words):
@@ -2076,3 +2231,49 @@ async def chat_stream(
         yield f"data: {json.dumps({'type': 'done', 'engine_signal': result.engine_signal, 'mode': result.mode})}\n\n"
 
     return StreamingResponse(_generate(), media_type="text/event-stream")
+
+
+# ------------------------------------------------------------------
+# Chat history (server-authoritative recall for the Android client)
+# ------------------------------------------------------------------
+
+
+@app.get("/chat/history")
+@limiter.limit("30/minute")
+async def chat_history(
+    request: Request,
+    limit: int = HISTORY_DEFAULT_LIMIT,
+    player=Depends(get_current_player),
+    db=Depends(get_db),
+):
+    """Return up to ``limit`` recent chat turns for the authenticated player.
+
+    The Android client calls this on ``ChatBottomSheet.onAttach`` to
+    seed its in-memory ``ChatSessionStore`` so a conversation survives
+    process restarts, device swaps, and reinstalls.
+
+    Cross-player isolation is by ``WHERE player_id = ?`` in the repo
+    layer; the route is Bearer-only via ``get_current_player`` so the
+    inbound player_id is the authenticated one — no client-supplied
+    player filter is accepted.
+
+    Response is chronological (oldest first) so the client can
+    ``addAll`` directly into its message list without re-ordering.
+    """
+    bounded = max(1, min(int(limit), HISTORY_MAX_LIMIT))
+    rows = recent_turns_for_player(db, str(player.id), limit=bounded)
+    # Repo returns DESC (newest first); reverse for client consumption.
+    rows = list(reversed(rows))
+    return {
+        "turns": [
+            {
+                "id": r.id,
+                "role": r.role,
+                "content": r.content,
+                "fen": r.fen,
+                "mode": r.mode,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }

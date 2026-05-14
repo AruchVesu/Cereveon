@@ -107,6 +107,42 @@ data class ChatResponseBody(
 )
 
 /**
+ * One persisted chat turn returned by GET /chat/history.
+ *
+ * The server stores every user message + assistant reply that
+ * survived boundary validation (see ``llm/seca/chat/repo.py``).
+ * The client seeds [ChatSessionStore] from these on
+ * [ChatBottomSheet.onAttach] so a conversation survives process
+ * restarts, device swaps, and reinstalls.
+ *
+ * Roles are ``"user"`` or ``"assistant"`` (matching
+ * [ChatMessageDto.role]).  Server-stored ``"system"`` rows
+ * (compaction summaries) are NOT yet emitted by the persistence
+ * layer but the field is left wide-typed for future expansion.
+ */
+@Serializable
+data class ChatHistoryTurnDto(
+    val id: String,
+    val role: String,
+    val content: String,
+    val fen: String? = null,
+    val mode: String = "CHAT_V1",
+    @SerialName("created_at") val createdAt: String? = null,
+)
+
+/**
+ * Response body for GET /chat/history?limit=N.
+ *
+ * Turns are returned in chronological (oldest first) order so the
+ * client can `addAll` into its message list without re-sorting.
+ * Empty list when the player has no persisted history yet.
+ */
+@Serializable
+data class ChatHistoryResponseBody(
+    val turns: List<ChatHistoryTurnDto> = emptyList(),
+)
+
+/**
  * Discriminated union for all possible outcomes of a [CoachApiClient] call.
  *
  * Callers should handle all four variants; use `when` with exhaustive branches.
