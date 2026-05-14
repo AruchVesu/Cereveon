@@ -111,9 +111,12 @@ DEBUG = not IS_PROD
 # API schema version pin.  Bumping requires a coordinated server +
 # Android release: bump this constant AND ``COACH_API_VERSION`` in
 # ``android/app/src/main/java/ai/chesscoach/app/ApiVersion.kt`` in the
-# same PR (see docs/API_CONTRACTS.md > API schema versioning).  The
-# version gate is Phase 1: lenient on missing, strict on mismatch.
-# Pinned by ``llm/tests/test_api_version_header.py`` (AVH_01..AVH_10).
+# same PR (see README.md > API schema versioning — the doc home
+# despite an earlier stale comment that pointed at API_CONTRACTS.md).
+# The version gate is Phase 1: lenient on missing, strict on mismatch.
+# Pinned by ``llm/tests/test_api_version_header.py`` (AVH_01..AVH_10);
+# the README↔code value link is pinned by
+# ``llm/tests/test_doc_constants_pinned.py::test_api_version_constant``.
 API_VERSION = "1"
 
 if IS_PROD and API_KEY is None:

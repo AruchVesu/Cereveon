@@ -147,6 +147,11 @@ TEST_TARGETS = [
     # exercises the function body): missing-API-key fail-fast, content
     # extraction + strip, malformed-response guards, HTTP-error propagation.
     "llm/tests/test_call_llm_deepseek.py",
+    # PR 12 — pin documented constant values against their live code
+    # source.  Each test imports the constant and asserts the doc text
+    # mentions the same value, catching the doc-drift class that
+    # surfaced in PRs 6 / 10 / 11.
+    "llm/tests/test_doc_constants_pinned.py",
     # QA plan — server-related categories (all 111 pass, zero external deps).
     # INV-01–05: architectural invariants (LLM output, engine format, isolation, call order, game independence).
     "llm/tests/test_architectural_invariants.py",

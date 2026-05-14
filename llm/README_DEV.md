@@ -49,10 +49,10 @@ Server performance notes:
 - Use `REDIS_MAX_CONNECTIONS` to raise or lower the async client pool; the default is `50`.
 - `REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS` and `REDIS_SOCKET_TIMEOUT_SECONDS` default to `1.0` so startup fails quickly when Redis is down or unreachable.
 - `REDIS_PING_TIMEOUT_SECONDS` defaults to `2.0` and caps the startup health check itself.
-- `ENGINE_POOL_SIZE` is per worker. With `--workers 4`, a pool size of `2` means up to `8` Stockfish processes. Raise it only when miss-heavy concurrency shows `engine_wait_ms` climbing.
+- `ENGINE_POOL_SIZE` is per worker. With `--workers 4`, a pool size of `8` means up to `32` Stockfish processes. Raise it only when miss-heavy concurrency shows `engine_wait_ms` climbing.
 
 Main env knobs:
-- `ENGINE_POOL_SIZE` (default `2`)
+- `ENGINE_POOL_SIZE` (default `8`)
 - `ENGINE_THREADS` (default `1`)
 - `ENGINE_HASH_MB` (default `16`)
 - `ENGINE_NODES` (default `5000`)
@@ -64,7 +64,7 @@ Main env knobs:
 - `ENGINE_TRAINING_MOVETIME_MS` (default `40`)
 - `ENGINE_ANALYSIS_MOVETIME_MS` (default `80`)
 - `ENGINE_BLITZ_MOVETIME_MS` (default `25`)
-- `ENGINE_QUEUE_TIMEOUT_MS` (default `0`; non-blocking acquire, immediate fallback on pool exhaustion)
+- `ENGINE_QUEUE_TIMEOUT_MS` (default `50`; fast-fail before request queue accumulates — `THREAT_MODEL.md § T3`)
 - `ENGINE_ASYNC_PREDICT_ENABLED` (default `1`; async next-position cache fill)
 - `ENGINE_ASYNC_PREDICT_PLIES` (default `2`; predictive depth)
 - `ENGINE_ASYNC_PREDICT_MOVETIME_MS` (default `20`; predictive fast eval)
