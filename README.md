@@ -185,12 +185,15 @@ LLM-derived content.
 
 ## SECA — adaptation without retraining
 
-SECA (Self-Evolving Coaching Architecture) is the framework underneath
-`llm/seca/`. It defines a third path between *static AI* (strong but
-non-adaptive) and *self-improving AI* (powerful but unstable): the
-underlying intelligence — the chess engine and the language model — stays
-fixed, while a thin **decision layer** (contextual bandit + lightweight
-embeddings + deterministic skill trackers) adapts in real time.
+SECA is the thin adaptation layer under `llm/seca/`: a 5-action
+contextual bandit plus a deterministic skill tracker that adapt to
+individual players without retraining either base model (Stockfish or
+the LLM). Every adaptation step is closed-form
+(`A ← A + xxᵀ`, `b ← b + r·x` for the bandit; deterministic deltas for
+rating / confidence / weakness / embedding state), and a hard runtime
+guard (`llm/seca/safety/freeze.py`) enforces that nothing heavier — no
+gradient steps, no neural retraining, no autonomous RL — ever runs in
+the live process.
 
 The full specification is in [`docs/SECA.md`](docs/SECA.md). The
 load-bearing facts:
@@ -201,7 +204,7 @@ load-bearing facts:
 | Bandit decision head | Closed-form LinUCB (`A ← A + xxᵀ`, `b ← b + r·x`); shadow warm-up by default, user-visible behind `SECA_USE_BANDIT_COACH=1` |
 | Online updates to base models (engine, LLM) | **Forbidden** by the freeze guard |
 | Background training tasks | **Forbidden** at startup |
-| Per-request safety verification | `verify_runtime_safety()` runs on every `GET /seca/status` |
+| Reward-signal trust | Client-supplied `accuracy` / `weaknesses` on `/game/finish` is currently trusted on faith; server-side PGN re-analysis is the planned mitigation. See [`docs/SECA.md`](docs/SECA.md#trust-property-of-the-reward-signal). |
 
 ### Freeze guard
 
@@ -217,9 +220,11 @@ independent checks at startup, plus a per-request structural twin:
    *source text*: `optimizer.step`, `loss.backward`, `.partial_fit(`,
    `train(`, `bandit.update`, `bandit.save`, `import torch`, `nn.Module`.
 
-A violation `sys.exit(1)`s the process at startup. The same structural
-checks run on every `GET /seca/status` (request-time twin) so the Android
-client's safety gate reflects current state, not a cached boot-time flag.
+A violation `sys.exit(1)`s the process at startup. A per-request
+verifier with the same structural checks (`verify_runtime_safety`)
+exists in `freeze.py` for future wiring; `GET /seca/status` currently
+returns the module-level `SAFE_MODE` flag only — the Android client's
+safety gate reflects the boot-time state, not a per-request re-scan.
 
 ### Dormant-code policy
 
