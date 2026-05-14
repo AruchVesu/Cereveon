@@ -51,10 +51,16 @@ interface LiveMoveClient {
  *                         401 "Missing token" without an `Authorization:
  *                         Bearer <jwt>` header — silently breaking the
  *                         Mode-1 inline hint for every authenticated user.
- *                         When the lambda returns null (logged-out window)
- *                         the request is sent without the header and the
- *                         server's 401 path handles it cleanly via the
- *                         existing `ApiResult.HttpError(401)` branch in
+ *                         Required (no default) on purpose: sister clients
+ *                         default this to `null`, but `/live/move` is the
+ *                         only one where a missing Bearer is a *certain*
+ *                         401, so we force every callsite to make an
+ *                         explicit choice and re-introduce the original
+ *                         bug only by writing `tokenProvider = { null }`
+ *                         on purpose.  Pass `{ null }` for the logged-out
+ *                         window or in tests that don't assert on auth;
+ *                         the server's 401 branch is handled cleanly via
+ *                         `ApiResult.HttpError(401)` in
  *                         `ChessViewModel.dispatchHumanMoveCoach`.
  * @param tokenSink        Optional sink for the X-Auth-Token refresh header.
  *                         The `/live/move` route depends on `get_current_player`
@@ -72,9 +78,9 @@ interface LiveMoveClient {
 class HttpLiveMoveClient(
     val baseUrl: String,
     val apiKey: String,
+    val tokenProvider: () -> String?,
     val connectTimeoutMs: Int = BaseHttpClient.DEFAULT_CONNECT_TIMEOUT_MS,
     val readTimeoutMs: Int = BaseHttpClient.DEFAULT_READ_TIMEOUT_MS,
-    val tokenProvider: (() -> String?)? = null,
     val tokenSink: ((String) -> Unit)? = null,
 ) : LiveMoveClient {
 
@@ -95,7 +101,7 @@ class HttpLiveMoveClient(
         method = "POST",
         headers = buildMap {
             put("X-Api-Key", apiKey)
-            tokenProvider?.invoke()?.let { put("Authorization", "Bearer $it") }
+            tokenProvider.invoke()?.let { put("Authorization", "Bearer $it") }
         },
         body = ApiJson.encodeToString(
             LiveMoveRequest(fen = fen, uci = uci, playerId = playerId)

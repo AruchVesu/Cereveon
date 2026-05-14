@@ -35,8 +35,10 @@ import org.junit.Test
  *  4. INT_LIVE_API_KEY_SENT     X-Api-Key header is present.
  *  4b.INT_LIVE_BEARER_SENT      Authorization: Bearer <jwt> is present
  *                               when tokenProvider returns a non-null token.
- *  4c.INT_LIVE_BEARER_ABSENT    Authorization header is absent when
- *                               tokenProvider is null or returns null.
+ *  4c.INT_LIVE_BEARER_ABSENT_WHEN_TOKEN_NULL
+ *                               Authorization header is absent when
+ *                               tokenProvider returns null
+ *                               (logged-out / pre-auth window).
  *  5. INT_LIVE_FEN_IN_BODY      fen field present in request JSON.
  *  6. INT_LIVE_UCI_IN_BODY      uci field present in request JSON.
  *  7. INT_LIVE_PLAYER_ID_BODY   player_id field present in request JSON.
@@ -76,6 +78,12 @@ class LiveMoveApiClientIntegrationTest {
         HttpLiveMoveClient(
             baseUrl = baseUrl(),
             apiKey = apiKey,
+            // Tests that don't assert on auth pass a null-returning
+            // provider — the Bearer-presence tests below override this
+            // with their own client instance.  Required (not defaulted)
+            // by HttpLiveMoveClient so every callsite makes an explicit
+            // choice and the Mode-1 401 bug can't regress by omission.
+            tokenProvider = { null },
             connectTimeoutMs = connectTimeoutMs,
             readTimeoutMs = readTimeoutMs,
         )
@@ -171,17 +179,6 @@ class LiveMoveApiClientIntegrationTest {
         assertEquals(
             "Authorization must be 'Bearer <jwt>' so /live/move can resolve the player",
             "Bearer $jwt",
-            req.getHeader("Authorization"),
-        )
-    }
-
-    @Test
-    fun `INT_LIVE_BEARER_ABSENT - Authorization header is absent when tokenProvider is null`() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(200).setBody(LIVE_OK_BODY))
-        client().getLiveCoaching(startingFen, testUci)
-        val req = server.takeRequest(10, TimeUnit.SECONDS)!!
-        assertNull(
-            "Authorization header must be absent when no tokenProvider is configured",
             req.getHeader("Authorization"),
         )
     }
@@ -389,6 +386,7 @@ class LiveMoveApiClientIntegrationTest {
         val client = HttpLiveMoveClient(
             baseUrl = baseUrl(),
             apiKey = apiKey,
+            tokenProvider = { null },
             tokenSink = { sunk += it },
         )
         client.getLiveCoaching(startingFen, testUci)
@@ -406,6 +404,7 @@ class LiveMoveApiClientIntegrationTest {
         val client = HttpLiveMoveClient(
             baseUrl = baseUrl(),
             apiKey = apiKey,
+            tokenProvider = { null },
             tokenSink = { sunk += it },
         )
         client.getLiveCoaching(startingFen, testUci)

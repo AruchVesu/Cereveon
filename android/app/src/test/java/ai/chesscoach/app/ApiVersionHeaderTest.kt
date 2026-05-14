@@ -151,7 +151,7 @@ class ApiVersionHeaderTest {
                 .setResponseCode(200)
                 .setBody("""{"status":"ok","hint":"fine","move_quality":"GOOD","mode":"LIVE_V1"}"""),
         )
-        val client = HttpLiveMoveClient(baseUrl = baseUrl(), apiKey = "k")
+        val client = HttpLiveMoveClient(baseUrl = baseUrl(), apiKey = "k", tokenProvider = { null })
         client.getLiveCoaching(
             fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             uci = "e2e4",
