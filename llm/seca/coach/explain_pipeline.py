@@ -39,7 +39,15 @@ DEEPSEEK_API_BASE = os.getenv("COACH_DEEPSEEK_API_BASE", "https://api.deepseek.c
 DEEPSEEK_URL = f"{DEEPSEEK_API_BASE}/chat/completions"
 MODEL_NAME = os.getenv("COACH_DEEPSEEK_MODEL", "deepseek-chat")
 
-MAX_RETRIES = 2
+#: Retry budget — sourced from ``llm.rag.llm.config.MAX_MODE_2_RETRIES``
+#: so the four LLM-bearing pipelines stay in lock-step.  PR 11
+#: (2026-05-15) consolidated four previously-independent literal
+#: constants into this shared source.  Local name ``MAX_RETRIES``
+#: preserved for backward-compat with ``test_explain_pipeline_retry.py``
+#: which imports it directly.
+from llm.rag.llm.config import MAX_MODE_2_RETRIES as _CONFIG_MAX_RETRIES
+
+MAX_RETRIES = _CONFIG_MAX_RETRIES
 _RETRY_DELAY_SECONDS = 0.5
 
 # Defense-in-depth cap on assembled streaming-response bytes.  The

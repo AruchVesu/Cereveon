@@ -61,7 +61,7 @@ Mitigation (defence in depth — five layers):
 - **Output firewall.** `llm/rag/safety/output_firewall.py::check_output`
   blocks responses that disclose the system prompt, claim alternate
   identities, or contain PII / harmful patterns.
-- **Bounded retries (`MAX_MODE_2_RETRIES = 4`).** A persistent contract
+- **Bounded retries (`MAX_MODE_2_RETRIES = 2`).** A persistent contract
   violation falls through to `_build_reply_deterministic`, which produces
   a validator-clean fallback — no compliant-looking-but-injected output
   ever reaches the client.

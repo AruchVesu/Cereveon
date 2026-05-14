@@ -85,7 +85,13 @@ except Exception as _llm_import_exc:  # noqa: BLE001
     logger.warning("LLM imports unavailable — deterministic path only: %s", _llm_import_exc)
     _LLM_AVAILABLE = False
 
-_LIVE_MAX_RETRIES = 2
+#: Retry budget — sourced from ``llm.rag.llm.config.MAX_MODE_2_RETRIES``
+#: so the four LLM-bearing pipelines stay in lock-step.  PR 11
+#: (2026-05-15) consolidated.  Local alias preserved so a reader
+#: grepping for "live retry budget" lands on this module.
+from llm.rag.llm.config import MAX_MODE_2_RETRIES as _CONFIG_MAX_RETRIES
+
+_LIVE_MAX_RETRIES = _CONFIG_MAX_RETRIES
 _LIVE_RETRY_DELAY_SECONDS = 0.5
 
 # ---------------------------------------------------------------------------
