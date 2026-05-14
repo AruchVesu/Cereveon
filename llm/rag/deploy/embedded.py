@@ -101,6 +101,7 @@ def explain_position(payload: dict) -> dict:
             llm=_REAL_LLM,
             prompt=prompt,
             case_type=case_type,
+            engine_signal=esv,
         )
 
         # Post-LLM output safety check — block before returning to caller.

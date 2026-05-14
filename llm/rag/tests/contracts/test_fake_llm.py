@@ -5,6 +5,16 @@ from llm.rag.llm.run_mode_2 import run_mode_2
 
 PROMPT = "dummy prompt"
 
+# Neutral ESV — disables every ESV-gated semantic check.  Each test below
+# pins a different validator's behaviour by varying the FakeLLM mode +
+# case_type; keeping ESV neutral isolates those gates from the
+# ESV-conditioned semantic surface (covered separately in
+# test_run_mode_2_cascades.py).
+_NEUTRAL_ESV = {
+    "evaluation": {"type": "cp", "value": 0},
+    "tactical_flags": ["any"],
+}
+
 
 def test_compliant_output_passes():
     llm = FakeLLM(mode="compliant")
@@ -12,6 +22,7 @@ def test_compliant_output_passes():
         llm=llm,
         prompt=PROMPT,
         case_type="forced_mate",
+        engine_signal=_NEUTRAL_ESV,
     )
 
 
@@ -29,6 +40,7 @@ def test_forbidden_phrase_fails():
             llm=llm,
             prompt=PROMPT,
             case_type="forced_mate",
+            engine_signal=_NEUTRAL_ESV,
         )
 
 
@@ -46,6 +58,7 @@ def test_missing_data_violation_fails():
             llm=llm,
             prompt=PROMPT,
             case_type="missing_data",
+            engine_signal=_NEUTRAL_ESV,
         )
 
 
@@ -64,4 +77,5 @@ def test_mate_softening_fails():
             llm=llm,
             prompt=PROMPT,
             case_type="forced_mate",
+            engine_signal=_NEUTRAL_ESV,
         )

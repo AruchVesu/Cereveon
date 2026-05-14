@@ -96,4 +96,5 @@ def test_llm_regression_contract():
                 llm=llm,
                 prompt=prompt,
                 case_type=case_type,
+                engine_signal=esv,
             )

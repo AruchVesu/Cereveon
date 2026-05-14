@@ -48,6 +48,19 @@ from llm.rag.validators.mode_2_semantic import (
 _CORPUS_PATH = Path(__file__).resolve().parent / "fixtures" / "violations.jsonl"
 _DUMMY_PROMPT = "dummy prompt — FakeLLM stub ignores its argument"
 
+# Neutral ESV for the run_mode_2 surface entries.  Disables every ESV-gated
+# semantic check so each corpus entry's ``expected_error_substring`` remains
+# pinned to the validator that owns its rule (negative / structure / output) —
+# inserting semantic between structure and output would otherwise shift which
+# validator fires on entries like SPE-01 ("likely") if ESV activated the
+# semantic surface.  Semantic-surface entries (SEM-*) bypass this dict
+# because they're dispatched directly to ``validate_mode_2_semantic`` with
+# their own ESV declared in the fixture.
+_NEUTRAL_ESV = {
+    "evaluation": {"type": "cp", "value": 0},
+    "tactical_flags": ["any"],
+}
+
 
 def _load_corpus() -> list[dict]:
     entries: list[dict] = []
@@ -118,7 +131,12 @@ def test_corpus_entry_is_blocked_by_contract(entry: dict) -> None:
     if surface == "run_mode_2":
         case_type = entry["case_type"]
         with pytest.raises(AssertionError) as assertion_info:
-            run_mode_2(llm=_CorpusLLM(text), prompt=_DUMMY_PROMPT, case_type=case_type)
+            run_mode_2(
+                llm=_CorpusLLM(text),
+                prompt=_DUMMY_PROMPT,
+                case_type=case_type,
+                engine_signal=_NEUTRAL_ESV,
+            )
         _assert_error_contains(entry, assertion_info)
     elif surface == "validate_mode_2_semantic":
         engine_signal = entry["engine_signal"]

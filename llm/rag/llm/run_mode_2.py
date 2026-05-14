@@ -1,5 +1,6 @@
 from llm.rag.validators.mode_2_negative import validate_mode_2_negative
 from llm.rag.validators.mode_2_structure import validate_mode_2_structure
+from llm.rag.validators.mode_2_semantic import Mode2Violation, validate_mode_2_semantic
 from llm.rag.contracts.validate_output import validate_output
 from llm.rag.validators.sanitize import mask_chess_notation
 from llm.rag.llm.config import MAX_MODE_2_RETRIES
@@ -38,13 +39,26 @@ def _is_structural_pattern(pattern: str) -> bool:
     return any(ind in pattern for ind in structural_indicators)
 
 
-def _validate_all(text: str, case_type: str) -> None:
+def _validate_all(text: str, case_type: str, engine_signal: dict) -> None:
+    # Validator order — must match the chat / live-move pipelines' boundary
+    # chain (negative → structure → semantic → output_firewall/output) so a
+    # refactor here can't silently introduce parity drift with the other
+    # Mode-2 callers.  See [[project-mode-pipelines-validator-parity]].
+    # ``Mode2Violation`` is translated into ``AssertionError`` so the retry
+    # loop's existing ``except AssertionError`` machinery keeps catching
+    # every validator failure uniformly.
     validate_mode_2_negative(text)
     validate_mode_2_structure(text)
+    try:
+        validate_mode_2_semantic(text, engine_signal)
+    except Mode2Violation as exc:
+        raise AssertionError(f"Mode-2 semantic violation: {exc}") from exc
     validate_output(text, case_type=case_type)
 
 
-def _attempt_remove_forbidden_sections(llm, prompt: str, text: str, case_type: str) -> str:
+def _attempt_remove_forbidden_sections(
+    llm, prompt: str, text: str, case_type: str, engine_signal: dict
+) -> str:
     # Attempt to remove forbidden structural sections via an LLM rewrite
     if isinstance(llm, FakeLLM):
         raise AssertionError("Mode-2 structural violation could not be auto-fixed for FakeLLM")
@@ -58,19 +72,32 @@ def _attempt_remove_forbidden_sections(llm, prompt: str, text: str, case_type: s
     )
 
     rewritten = llm.generate(rewrite_prompt)
-    _validate_all(rewritten, case_type=case_type)
+    _validate_all(rewritten, case_type=case_type, engine_signal=engine_signal)
     return rewritten
 
 
-def run_mode_2(llm, prompt: str, case_type: str) -> str:
+def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
     """Run mode 2: ask the LLM for an explanation and validate the output.
 
     Behavior:
-    - Generate output and run `validate_mode_2_negative` and `validate_output`.
-    - If a Mode-2 violation is detected due to CHESS NOTATION, attempt one automated rewrite
-      (sanitize notation and ask the LLM to rewrite to remove notation and prescriptive language).
-    - If a violation is due to advisory/prescriptive language, attempt a rewrite only for non-Fake LLMs.
+    - Generate output and run the Mode-2 validator chain inside `_validate_all`
+      (negative → structure → semantic → output) — same order the chat /
+      live-move pipelines run inside their retry loops.
+    - If a Mode-2 violation is detected due to CHESS NOTATION, attempt one
+      automated rewrite (sanitize notation and ask the LLM to rewrite to
+      remove notation and prescriptive language).
+    - If a violation is due to advisory/prescriptive language, attempt a
+      rewrite only for non-Fake LLMs.
     - For other violations or when using FakeLLM, raise immediately.
+
+    ``engine_signal`` is the engine-derived ESV dict produced by
+    ``extract_engine_signal`` and is required because
+    ``validate_mode_2_semantic`` is ESV-conditioned (rejects equal-band
+    advantage claims, requires mate-inevitability vocabulary on
+    ``evaluation.type == "mate"``, blocks invented tactical motifs when
+    ``tactical_flags`` is empty).  Required (kw-only) to prevent a future
+    caller from silently re-introducing the parity gap that this function
+    closed on 2026-05-15.
 
     Returns the LLM-generated explanation string when it passes all validators.
     Raises AssertionError when a validator detects a violation.
@@ -82,6 +109,10 @@ def run_mode_2(llm, prompt: str, case_type: str) -> str:
     def _validate_all(text: str):
         validate_mode_2_negative(text)
         validate_mode_2_structure(text)
+        try:
+            validate_mode_2_semantic(text, engine_signal)
+        except Mode2Violation as exc:
+            raise AssertionError(f"Mode-2 semantic violation: {exc}") from exc
         validate_output(text, case_type=case_type)
 
     try:

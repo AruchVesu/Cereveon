@@ -224,6 +224,16 @@ class TestDep06SafetyVerification:
         with pytest.raises(AssertionError):
             validate_mode_2_negative("The engine should play Nf3 here.")
 
+    # Neutral ESV — disables every ESV-gated semantic check so these
+    # FakeLLM-mode pins target the lexical / structure / output / forced_mate
+    # require / missing_data require surfaces explicitly, without coupling
+    # to the ESV-conditioned semantic gate (covered separately in
+    # llm/rag/tests/test_run_mode_2_cascades.py).
+    _NEUTRAL_ESV = {
+        "evaluation": {"type": "cp", "value": 0},
+        "tactical_flags": ["any"],
+    }
+
     def test_fake_llm_compliant_output_passes_validators(self):
         """The compliant FakeLLM output must pass all validators (safety baseline)."""
         from llm.rag.llm.fake import FakeLLM
@@ -231,7 +241,12 @@ class TestDep06SafetyVerification:
 
         llm = FakeLLM(mode="compliant")
         # Must not raise
-        run_mode_2(llm=llm, prompt="dummy prompt", case_type="forced_mate")
+        run_mode_2(
+            llm=llm,
+            prompt="dummy prompt",
+            case_type="forced_mate",
+            engine_signal=self._NEUTRAL_ESV,
+        )
 
     def test_fake_llm_forbidden_phrase_fails_validators(self):
         """The 'forbidden_phrase' FakeLLM mode must be caught by validators."""
@@ -240,7 +255,12 @@ class TestDep06SafetyVerification:
 
         llm = FakeLLM(mode="forbidden_phrase")
         with pytest.raises(AssertionError):
-            run_mode_2(llm=llm, prompt="dummy prompt", case_type="forced_mate")
+            run_mode_2(
+                llm=llm,
+                prompt="dummy prompt",
+                case_type="forced_mate",
+                engine_signal=self._NEUTRAL_ESV,
+            )
 
     def test_missing_data_violation_fails_validators(self):
         """FakeLLM missing_data_violation must be caught."""
@@ -249,7 +269,12 @@ class TestDep06SafetyVerification:
 
         llm = FakeLLM(mode="missing_data_violation")
         with pytest.raises(AssertionError):
-            run_mode_2(llm=llm, prompt="dummy prompt", case_type="missing_data")
+            run_mode_2(
+                llm=llm,
+                prompt="dummy prompt",
+                case_type="missing_data",
+                engine_signal=self._NEUTRAL_ESV,
+            )
 
 
 # ---------------------------------------------------------------------------

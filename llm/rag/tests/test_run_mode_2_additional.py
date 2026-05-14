@@ -5,6 +5,14 @@ import pytest
 from llm.rag.llm.run_mode_2 import run_mode_2
 from llm.rag.llm.fake import FakeLLM
 
+# Neutral ESV — disables every ESV-gated semantic check so the
+# StubbornLLM-driven retry / aggressive-sanitization machinery is what
+# these tests actually exercise.
+_NEUTRAL_ESV = {
+    "evaluation": {"type": "cp", "value": 0},
+    "tactical_flags": ["any"],
+}
+
 
 class StubbornLLM:
     """LLM that always returns the same forbidden-heavy text, even for rewrites."""
@@ -22,7 +30,7 @@ def test_aggressive_sanitization_applies():
     bad = "Stockfish shows the best move leading to checkmate. You should play Qh5."
     llm = StubbornLLM(bad)
 
-    out = run_mode_2(llm=llm, prompt="PROMPT", case_type="tactical")
+    out = run_mode_2(llm=llm, prompt="PROMPT", case_type="tactical", engine_signal=_NEUTRAL_ESV)
 
     lower = out.lower()
     assert "checkmate" not in lower
@@ -47,7 +55,12 @@ def test_retries_exhaustion_raises_for_forced_mate():
     from llm.rag.llm.config import MAX_MODE_2_RETRIES
 
     with pytest.raises(AssertionError):
-        run_mode_2(llm=llm, prompt="PROMPT", case_type="forced_mate")
+        run_mode_2(
+            llm=llm,
+            prompt="PROMPT",
+            case_type="forced_mate",
+            engine_signal=_NEUTRAL_ESV,
+        )
 
     # Ensure we used our retry budget
     assert len(llm.calls) >= 1 + MAX_MODE_2_RETRIES

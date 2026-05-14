@@ -67,10 +67,21 @@ def test_deepseek_forced_mate_smoke():
     only non-deterministic layer in the architecture."""
     llm = DeepseekLLM(temperature=0.2)
 
+    # ESV mirroring the prompt's "forced mate" framing — the semantic
+    # surface (now part of run_mode_2's chain) requires the LLM's output
+    # to use "inevitable" or "forced" when evaluation.type == "mate", so
+    # asserting on a real provider with type="mate" is the right shape for
+    # a smoke test of provider connectivity + contract compliance.
+    smoke_esv = {
+        "evaluation": {"type": "mate", "value": 1, "band": "decisive_advantage"},
+        "tactical_flags": ["mate_threat"],
+    }
+
     response = run_mode_2(
         llm=llm,
         prompt=PROMPT,
         case_type="forced_mate",
+        engine_signal=smoke_esv,
     )
 
     assert isinstance(response, str)

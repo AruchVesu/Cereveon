@@ -49,4 +49,4 @@ def test_representative_case_ci():
     llm = OllamaLLM(model=model_name, temperature=float(os.getenv("LLM_TEMPERATURE", 0.2)))
 
     # Run once; test will fail if validators raise an AssertionError
-    run_mode_2(llm=llm, prompt=prompt, case_type=case_type)
+    run_mode_2(llm=llm, prompt=prompt, case_type=case_type, engine_signal=esv)

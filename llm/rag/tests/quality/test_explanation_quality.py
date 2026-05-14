@@ -12,6 +12,15 @@ from llm.rag.llm.run_mode_2 import run_mode_2
 
 PROMPT = "Dummy prompt"
 
+# Neutral ESV — these heuristics are NOT contract tests.  They check length /
+# sentence structure of compliant FakeLLM output.  Keeping ESV neutral here
+# avoids coupling this non-CI heuristic test to the ESV-conditioned semantic
+# surface, which is exercised by test_run_mode_2_cascades.py.
+_NEUTRAL_ESV = {
+    "evaluation": {"type": "cp", "value": 0},
+    "tactical_flags": ["any"],
+}
+
 
 def quality_heuristic(text: str):
     # Minimum length
@@ -31,6 +40,7 @@ def test_quality_compliant_example():
         llm=llm,
         prompt=PROMPT,
         case_type="forced_mate",
+        engine_signal=_NEUTRAL_ESV,
     )
 
     quality_heuristic(response)

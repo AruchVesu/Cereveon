@@ -1,5 +1,13 @@
 from llm.rag.llm.run_mode_2 import run_mode_2
 
+# Neutral ESV — disables every ESV-gated semantic check so this test stays
+# focused on the lexical/structure/output cascade.  Semantic-specific
+# regression coverage lives in test_run_mode_2_cascades.py.
+_NEUTRAL_ESV = {
+    "evaluation": {"type": "cp", "value": 0},
+    "tactical_flags": ["any"],
+}
+
 
 class FakeLLM:
     def __init__(self):
@@ -18,7 +26,7 @@ def test_run_mode_2_quick_mate_sanitization():
     llm = FakeLLM()
     prompt = "SOME PROMPT"
 
-    result = run_mode_2(llm=llm, prompt=prompt, case_type="tactical")
+    result = run_mode_2(llm=llm, prompt=prompt, case_type="tactical", engine_signal=_NEUTRAL_ESV)
 
     # The initial generation should have occurred at least once
     assert len(llm.calls) >= 1

@@ -657,7 +657,9 @@ class TestFullPipelineWithFakeLLM:
             user_query=query,
         )
         llm = FakeLLM("compliant")
-        explanation = run_mode_2(llm=llm, prompt=prompt, case_type=case_type)
+        explanation = run_mode_2(
+            llm=llm, prompt=prompt, case_type=case_type, engine_signal=esv
+        )
         return explanation, esv, case_type, rag_docs, prompt
 
     @pytest.mark.parametrize("stockfish_json,fen", ALL_CASES)
