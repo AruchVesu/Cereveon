@@ -1,3 +1,4 @@
+import json
 import os
 import time
 
@@ -41,6 +42,19 @@ MODEL_NAME = os.getenv("COACH_DEEPSEEK_MODEL", "deepseek-chat")
 MAX_RETRIES = 2
 _RETRY_DELAY_SECONDS = 0.5
 
+# Defense-in-depth cap on assembled streaming-response bytes.  The
+# 120s timeout is the only other bound on a compromised provider's
+# response size; a hostile DeepSeek-equivalent streaming tokens at
+# near-line-rate could OOM the api container.  100 kB is ~25 k tokens
+# — two orders of magnitude above the realistic Mode-2 response
+# (sub-1 kB) but well below the api container's memory budget.
+# Truncation at the cap is safe by construction: validators downstream
+# (validate_mode_2_negative / structure / semantic / output_firewall)
+# will either accept the truncated text on contract or reject it and
+# fall through to the deterministic builder.  See PR 8 reviewer note
+# for the threat-model rationale.
+_MAX_STREAM_RESPONSE_BYTES = 100_000
+
 
 # ---------------------------------------------------------
 # LLM CALL
@@ -67,6 +81,7 @@ def call_llm(prompt: str) -> str:
       - ``httpx.HTTPStatusError`` on non-2xx (caught upstream by the
         retry loop in ``generate_validated_explanation`` and the
         deterministic-fallback path in chat_pipeline / live_move).
+      - ``httpx.HTTPError`` on empty / malformed streaming responses.
 
     Architecture: this function is the LLM Layer's only outbound
     point per ``docs/ARCHITECTURE.md`` ("LLM Generation
@@ -74,6 +89,26 @@ def call_llm(prompt: str) -> str:
     output firewall, ESV grounding) are unaffected by the provider
     swap — they validate the returned text regardless of where it
     came from.
+
+    Wire format: as of 2026-05-14 (PR 8) the request uses
+    ``stream: True`` and consumes DeepSeek's SSE response server-side
+    rather than waiting for the full response in one shot.  Two
+    benefits:
+
+    - The HTTP connection to DeepSeek receives bytes continuously
+      throughout generation — middleboxes / reverse proxies are less
+      likely to close it as idle.
+    - Server-side time-to-finish improves slightly on long responses
+      because we process tokens as they arrive instead of waiting for
+      the model to finalise the full body.
+
+    The return type and downstream contract are unchanged: callers
+    receive the full assembled string only after the stream ends.  The
+    architecture's "validators run on full output before bytes reach
+    the client" invariant is preserved end-to-end — see
+    ``docs/ARCHITECTURE.md`` "Output Validation".  True token-level
+    streaming to the client is intentionally not done here; see the
+    PR 8 description for the architecture-trade-off discussion.
     """
     api_key = os.getenv("COACH_DEEPSEEK_API_KEY", "").strip()
     if not api_key:
@@ -82,29 +117,63 @@ def call_llm(prompt: str) -> str:
             "Set it in .env.prod (or shell env in dev) and restart the api container."
         )
 
-    response = httpx.post(
-        DEEPSEEK_URL,
-        json={
-            "model": MODEL_NAME,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-        },
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        timeout=120,
-    )
+    request_body = {
+        "model": MODEL_NAME,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": True,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
 
-    response.raise_for_status()
-    body = response.json()
-    # OpenAI-compatible shape: choices[0].message.content
-    try:
-        return body["choices"][0]["message"]["content"].strip()
-    except (KeyError, IndexError, TypeError) as exc:
+    chunks: list[str] = []
+    total_bytes = 0
+    with httpx.stream(
+        "POST",
+        DEEPSEEK_URL,
+        json=request_body,
+        headers=headers,
+        timeout=120,
+    ) as response:
+        response.raise_for_status()
+        for raw_line in response.iter_lines():
+            line = raw_line.strip()
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[len("data:"):].strip()
+            if data == "[DONE]":
+                break
+            try:
+                event = json.loads(data)
+                delta = event["choices"][0].get("delta", {})
+            except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                # Skip individual malformed chunks rather than crashing
+                # the whole call — the OpenAI-compatible SSE format
+                # occasionally interleaves keep-alive comments and
+                # zero-content delta frames that should not abort the
+                # stream.  A truly malformed response surfaces below
+                # via the empty-chunks check.
+                continue
+            content = delta.get("content")
+            if content:
+                chunks.append(content)
+                total_bytes += len(content)
+                if total_bytes > _MAX_STREAM_RESPONSE_BYTES:
+                    # Defense-in-depth: stop consuming before the
+                    # response can OOM the container.  Downstream
+                    # validators will see truncated text and either
+                    # accept on contract or fall through to the
+                    # deterministic builder.
+                    break
+
+    assembled = "".join(chunks).strip()
+    if not assembled:
         raise httpx.HTTPError(
-            f"DeepSeek response missing expected choices[0].message.content: {body!r}"
-        ) from exc
+            "DeepSeek streaming response yielded no content; "
+            "expected at least one non-empty delta.content frame."
+        )
+    return assembled
 
 
 # ---------------------------------------------------------
