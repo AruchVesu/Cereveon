@@ -923,25 +923,40 @@ class MoveRequest(BaseModel):
 
 
 class AnalyzeRequest(BaseModel):
+    """Request shape for ``/analyze`` and ``/explain``.
+
+    Pre-PR-9 this carried an optional ``stockfish_json: dict`` field
+    that the route handlers piped directly into ``extract_engine_signal``.
+    That was a trust-boundary inconsistency with the architecture
+    invariant *"Stockfish JSON: Trusted"* (which implies the JSON is
+    server-authentic, not client-supplied).  A modded client could
+    claim any position evaluation and the server would build an ESV
+    from it.  Practical impact was bounded (``/explain`` is
+    SafeExplainer-only, no LLM gating; ``/analyze`` just returns the
+    ESV to the caller — both deceiving only the client itself), but
+    the architectural inconsistency was real.
+
+    PR 9 removes the field.  Pydantic's default extra-field policy
+    (``ignore``) silently drops any ``stockfish_json`` a back-compat
+    client still sends, so this is not a breaking change for the
+    sending side; only the server's access to that value is gone.
+    Both handlers now build the ESV from FEN-only heuristics via
+    ``extract_engine_signal(None, fen=req.fen)`` — the same fall-back
+    path that already handled missing/empty stockfish_json.
+
+    Routes that need real engine evaluation (``/live/move``,
+    ``/seca/explain``) acquire the engine pool server-side and feed
+    extract_engine_signal with the authentic Stockfish output — that
+    path is unchanged.
+    """
+
     fen: str
-    stockfish_json: dict | None = None
     user_query: str | None = ""
 
     @field_validator("fen")
     @classmethod
     def validate_fen(cls, v: str) -> str:
         return _validate_fen_field(v)
-
-    @field_validator("stockfish_json")
-    @classmethod
-    def validate_stockfish_json(cls, v: dict | None) -> dict | None:
-        if v is not None:
-            if len(v) > 50:
-                raise ValueError("stockfish_json too many keys (max 50)")
-            for val in v.values():
-                if isinstance(val, dict) and len(val) > 50:
-                    raise ValueError("stockfish_json nested dict too many keys (max 50)")
-        return v
 
     @field_validator("user_query")
     @classmethod
@@ -1187,7 +1202,19 @@ class ChatRequest(BaseModel):
 
 
 def build_engine_signal(req: AnalyzeRequest):
-    return extract_engine_signal(req.stockfish_json, fen=req.fen)
+    """Build the ESV from ``req.fen`` using FEN-only heuristics.
+
+    Single decision point for ``/analyze`` and ``/explain``: both
+    routes feed FEN to ``extract_engine_signal`` and accept the ESV
+    the FEN-derived enrichment path produces.  No client-supplied
+    Stockfish JSON reaches this helper — see ``AnalyzeRequest``
+    docstring for the PR 9 trust-boundary fix rationale.
+
+    Real engine-eval consumers (``/live/move``, ``/seca/explain``)
+    acquire the engine pool and feed ``extract_engine_signal`` with
+    authentic Stockfish JSON; this helper is NOT on that path.
+    """
+    return extract_engine_signal(None, fen=req.fen)
 
 
 # ------------------------------------------------------------------
@@ -2019,7 +2046,10 @@ def active_game(request: Request, player=Depends(get_current_player)):
 @app.post("/explain")
 @limiter.limit("30/minute")
 def explain(req: AnalyzeRequest, request: Request, player=Depends(get_current_player)):
-    engine_signal = extract_engine_signal(req.stockfish_json, fen=req.fen)
+    # FEN-only ESV via build_engine_signal — see PR 9 trust-boundary
+    # fix: client-supplied stockfish_json must not reach the ESV
+    # builder on a route the client can call.
+    engine_signal = build_engine_signal(req)
     explanation = safe_explainer.explain(engine_signal)
 
     response = {

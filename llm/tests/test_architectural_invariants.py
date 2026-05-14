@@ -8,6 +8,8 @@ INV-02  C++ engine response is exactly one move token — no explanatory text
 INV-03  Stockfish is never invoked during opponent move generation (source audit)
 INV-04  LLM is never called before ESV extraction in the pipeline data-flow
 INV-05  No component depends on LLM output for any game decision (source audit)
+INV-06  /analyze and /explain accept only FEN — no client-supplied stockfish_json
+         reaches extract_engine_signal (architecture trust boundary; PR 9)
 """
 
 from __future__ import annotations
@@ -352,4 +354,101 @@ class TestInv05GameLogicIndependentOfLlm:
         )
         assert "fast_fallback_move" not in src, (
             "ExplanationOutcomeTracker must not call fast_fallback_move"
+        )
+
+
+# ---------------------------------------------------------------------------
+# INV-06 — /analyze and /explain build the ESV from FEN only
+# ---------------------------------------------------------------------------
+#
+# Trust-boundary discipline: the architecture invariant
+# "Stockfish JSON: Trusted" requires the JSON reaching
+# extract_engine_signal to be server-authentic.  Pre-PR-9 the
+# /analyze and /explain handlers piped req.stockfish_json directly
+# into the ESV builder, accepting whatever the client claimed.
+# Practical impact was bounded (SafeExplainer-only output; no LLM
+# gating; harm scoped to the lying client itself), but the
+# architecture text was inconsistent with the code.
+#
+# These tests pin two halves of the PR 9 fix at the source level:
+#   - AnalyzeRequest no longer carries a ``stockfish_json`` field.
+#   - ``build_engine_signal`` calls ``extract_engine_signal(None, ...)``
+#     so neither route can be regressed to read the request's JSON.
+
+
+class TestInv06AnalyzeExplainFenOnly:
+    """INV-06: /analyze and /explain feed extract_engine_signal with
+    FEN only — client-supplied stockfish_json must not reach the ESV
+    builder."""
+
+    def test_analyze_request_has_no_stockfish_json_field(self):
+        """``AnalyzeRequest.model_fields`` must not contain
+        ``stockfish_json``; the field was removed in PR 9 so the
+        ESV builder cannot read a client-supplied value through it."""
+        from llm.server import AnalyzeRequest
+
+        assert "stockfish_json" not in AnalyzeRequest.model_fields, (
+            "AnalyzeRequest.stockfish_json must NOT be in the model "
+            "fields — the PR 9 trust-boundary fix removed it.  Any "
+            "future revision that re-adds the field reopens the "
+            "ESV-builder bypass scoped to /analyze + /explain."
+        )
+
+    def test_build_engine_signal_passes_none_not_request_field(self):
+        """``build_engine_signal`` must call ``extract_engine_signal``
+        with ``None`` as the stockfish_json argument — never with a
+        value read from the request.  Source-level pin so a future
+        revision that wires ``req.stockfish_json`` (or any other
+        attribute) into the call trips this test."""
+        from llm import server as server_module
+        import inspect
+
+        src = inspect.getsource(server_module.build_engine_signal)
+        assert "extract_engine_signal(None" in src, (
+            "build_engine_signal must call extract_engine_signal with "
+            "an explicit None as the stockfish_json argument — the "
+            "PR 9 trust-boundary fix.  Detected source:\n" + src
+        )
+        assert "req.stockfish_json" not in src, (
+            "build_engine_signal must NOT read req.stockfish_json — "
+            "the PR 9 fix forces FEN-only ESV computation on the "
+            "client-facing analyze/explain routes."
+        )
+
+    def test_explain_handler_uses_build_engine_signal(self):
+        """The /explain handler must route through ``build_engine_signal``
+        (which is FEN-only) rather than calling ``extract_engine_signal``
+        directly with a request field.  Source-level pin against
+        re-introducing the inline ``extract_engine_signal(req.stockfish_json, ...)``
+        pattern that PR 9 closed."""
+        from llm import server as server_module
+        import inspect
+
+        src = inspect.getsource(server_module.explain)
+        # The handler may call build_engine_signal OR call
+        # extract_engine_signal directly with an explicit None — both
+        # routes are equivalent for the trust property.  What is
+        # forbidden is reading req.stockfish_json (or any attribute
+        # whose name suggests client-supplied Stockfish JSON).
+        assert "req.stockfish_json" not in src, (
+            "/explain handler must not read req.stockfish_json — the "
+            "PR 9 trust-boundary fix removed that path."
+        )
+
+    def test_analyze_handler_does_not_read_stockfish_json(self):
+        """Symmetric pin: the /analyze handler must also not read
+        req.stockfish_json.  Without this, a future contributor could
+        re-add the field AND inline ``extract_engine_signal(req.stockfish_json, ...)``
+        inside ``analyze()`` without tripping the existing INV-06
+        pins (which only cover the model, the helper, and the
+        /explain handler).
+        """
+        from llm import server as server_module
+        import inspect
+
+        src = inspect.getsource(server_module.analyze)
+        assert "req.stockfish_json" not in src, (
+            "/analyze handler must not read req.stockfish_json — the "
+            "PR 9 trust-boundary fix forces FEN-only ESV computation "
+            "via build_engine_signal."
         )

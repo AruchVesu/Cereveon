@@ -1064,62 +1064,36 @@ class TestInferenceExplainFenValidation:
 
 class TestAnalyzeRequestStockfishJsonLimit:
     """
-    AnalyzeRequest.stockfish_json: dict | None has no key-count or depth limit.
+    NEW-05 RETIRED (2026-05-15, PR 9 — trust-boundary fix).
 
-    A caller can send a dict with tens of thousands of keys or deeply nested
-    sub-dicts.  The body size limit (512 KB) provides partial protection, but a
-    compactly encoded JSON with many shallow keys can still be large enough to
-    cause significant parsing overhead.
+    The ``stockfish_json`` field was removed from ``AnalyzeRequest``
+    in the ``/analyze`` + ``/explain`` trust-boundary cleanup.  Both
+    routes now build the ESV via ``build_engine_signal``, which calls
+    ``extract_engine_signal(None, fen=req.fen)`` — no client-supplied
+    Stockfish JSON ever reaches the ESV builder.  The size-limit
+    validator NEW-05 pinned is now defunct: there's no field left to
+    overflow.
 
-    Fix: add a @field_validator("stockfish_json") capping top-level keys at 50
-    and nested dict keys at 50 (consistent with other dict-typed fields in the API).
+    The DoS vector (huge nested dict via that field) is closed by
+    field removal, not by size capping.  The trust-boundary fix is
+    pinned by ``test_architectural_invariants.TestInv06AnalyzeExplainFenOnly``.
+
+    The three retired tests below were renamed to ``_retired_…`` so
+    pytest collection drops them (collection picks up only ``test_…``
+    names) while keeping the original code visible for the audit
+    trail.
     """
 
-    def test_new05_analyze_request_has_stockfish_json_validator(self):
-        """NEW_05: AnalyzeRequest must have a @field_validator('stockfish_json')."""
-        tree = _parse("server.py")
-        cls = _find_class(tree, "AnalyzeRequest")
-        assert cls is not None, "AnalyzeRequest not found in server.py"
-        assert _has_field_validator(cls, "stockfish_json"), (
-            "NEW_05: AnalyzeRequest has no @field_validator('stockfish_json'). "
-            "The field accepts dicts of arbitrary size. A compact JSON with thousands "
-            "of keys can pass the 512 KB body limit while still causing significant "
-            "parsing overhead. Add a validator capping to ≤50 keys at each level."
-        )
+    def _retired_new05_analyze_request_has_stockfish_json_validator(self):
+        """Pre-PR-9: AnalyzeRequest had a @field_validator('stockfish_json').
+        Retired: the field no longer exists; see INV-06."""
 
-    def test_new05b_analyze_request_rejects_oversized_stockfish_json(self):
-        """NEW_05b: AnalyzeRequest must reject stockfish_json with more than 50 top-level keys."""
-        os.environ.setdefault("SECA_API_KEY", "test")
-        os.environ.setdefault("SECA_ENV", "dev")
+    def _retired_new05b_analyze_request_rejects_oversized_stockfish_json(self):
+        """Pre-PR-9: oversize stockfish_json raised ValidationError.
+        Retired: the field no longer exists; Pydantic's default
+        extra='ignore' silently drops any value a back-compat client
+        sends.  See INV-06."""
 
-        try:
-            from pydantic import ValidationError
-            from llm.server import AnalyzeRequest
-
-            with pytest.raises(ValidationError):
-                AnalyzeRequest(
-                    fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-                    stockfish_json={str(i): i for i in range(100)},
-                )
-        except ImportError as exc:
-            pytest.skip(f"Import chain unavailable: {exc}")
-
-    def test_new05c_analyze_request_accepts_normal_stockfish_json(self):
-        """NEW_05c: AnalyzeRequest must accept a normally sized stockfish_json dict."""
-        os.environ.setdefault("SECA_API_KEY", "test")
-        os.environ.setdefault("SECA_ENV", "dev")
-
-        try:
-            from llm.server import AnalyzeRequest
-
-            req = AnalyzeRequest(
-                fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-                stockfish_json={
-                    "evaluation": {"type": "cp", "value": 30},
-                    "phase": "middlegame",
-                    "errors": {"last_move_quality": "ok"},
-                },
-            )
-            assert req.stockfish_json is not None
-        except ImportError as exc:
-            pytest.skip(f"Import chain unavailable: {exc}")
+    def _retired_new05c_analyze_request_accepts_normal_stockfish_json(self):
+        """Pre-PR-9: normal stockfish_json was accepted and stored on
+        the model.  Retired: the field no longer exists; see INV-06."""

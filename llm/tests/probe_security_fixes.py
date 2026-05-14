@@ -331,45 +331,21 @@ except Exception as e:
 
 
 # ---------------------------------------------------------------------------
-# NEW-05 — stockfish_json size limit in AnalyzeRequest
+# NEW-05 — stockfish_json size limit in AnalyzeRequest (RETIRED in PR 9)
 # ---------------------------------------------------------------------------
-section("NEW-05: stockfish_json size limit (AnalyzeRequest)")
-
-try:
-    # 100-key dict rejected
-    big_dict = {str(i): i for i in range(100)}
-    try:
-        AnalyzeRequest(fen="startpos", stockfish_json=big_dict)
-        check("AnalyzeRequest rejects stockfish_json with 100 keys", False, "no error raised")
-    except ValidationError:
-        check("AnalyzeRequest rejects stockfish_json with 100 keys", True)
-
-    # 51-key dict also rejected
-    big_dict2 = {str(i): i for i in range(51)}
-    try:
-        AnalyzeRequest(fen="startpos", stockfish_json=big_dict2)
-        check("AnalyzeRequest rejects stockfish_json with 51 keys", False, "no error raised")
-    except ValidationError:
-        check("AnalyzeRequest rejects stockfish_json with 51 keys", True)
-
-    # Normal dict accepted
-    normal_dict = {"score": 42, "depth": 20, "bestmove": "e2e4"}
-    try:
-        AnalyzeRequest(fen="startpos", stockfish_json=normal_dict)
-        check("AnalyzeRequest accepts normal stockfish_json", True)
-    except ValidationError as e:
-        check("AnalyzeRequest accepts normal stockfish_json", False, str(e))
-
-    # None accepted
-    try:
-        AnalyzeRequest(fen="startpos", stockfish_json=None)
-        check("AnalyzeRequest accepts stockfish_json=None", True)
-    except ValidationError as e:
-        check("AnalyzeRequest accepts stockfish_json=None", False, str(e))
-
-except Exception as e:
-    traceback.print_exc()
-    check("NEW-05 stockfish_json size limit", False, str(e))
+# The ``stockfish_json`` field was removed from ``AnalyzeRequest`` in
+# the 2026-05-15 ``/explain`` trust-boundary fix (PR 9): the route
+# handlers no longer accept a client-supplied Stockfish JSON, so the
+# size-limit validator that NEW-05 pinned has no field left to defend.
+# Pydantic's default extra-field policy (``ignore``) silently drops
+# any ``stockfish_json`` a back-compat client still sends; the
+# original DoS vector (huge nested dict) is closed by removal, not by
+# size capping.  This section retained as an audit-trail anchor; the
+# four probe checks are obsolete by construction.  The new
+# trust-boundary invariant is pinned by INV-06 in
+# ``test_architectural_invariants.py``.
+section("NEW-05: stockfish_json size limit (RETIRED in PR 9 — field removed)")
+check("NEW-05 retired (field removed; INV-06 pins the new invariant)", True)
 
 
 # ---------------------------------------------------------------------------

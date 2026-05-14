@@ -116,12 +116,15 @@ def test_avh_03_seca_status_response_carries_version(client) -> None:
 def test_avh_04_coaching_response_carries_version(client) -> None:
     """AVH_04: a coaching request that succeeds carries the version
     header on the way back too."""
-    # /analyze accepts an API-key + a stockfish_json body and returns
-    # the engine signal — no JWT needed, deterministic, fast.
+    # /analyze accepts an API-key + a FEN-only body and returns the
+    # engine signal — no JWT needed, deterministic, fast.  ``stockfish_json``
+    # was removed in PR 9 (trust-boundary fix; the ESV builder no
+    # longer accepts client-supplied JSON), so the request body is
+    # just ``{"fen": ...}``.
     resp = client.post(
         "/analyze",
         headers={"X-Api-Key": "ci-test-key"},
-        json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "stockfish_json": {}},
+        json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},
     )
     assert resp.status_code == 200, f"expected 200, got {resp.status_code}: {resp.text!r}"
     assert resp.headers.get("X-API-Version") == "1"
@@ -135,7 +138,7 @@ def test_avh_05_missing_header_is_lenient(client) -> None:
     resp = client.post(
         "/analyze",
         headers={"X-Api-Key": "ci-test-key"},
-        json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "stockfish_json": {}},
+        json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},
     )
     assert resp.status_code == 200
     assert resp.headers.get("X-API-Version") == "1"
@@ -145,7 +148,7 @@ def test_avh_06_matching_header_is_accepted(client) -> None:
     resp = client.post(
         "/analyze",
         headers={"X-Api-Key": "ci-test-key", "X-API-Version": "1"},
-        json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "stockfish_json": {}},
+        json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},
     )
     assert resp.status_code == 200
 
@@ -157,7 +160,7 @@ def test_avh_07_mismatched_header_is_rejected(client) -> None:
     resp = client.post(
         "/analyze",
         headers={"X-Api-Key": "ci-test-key", "X-API-Version": "999"},
-        json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "stockfish_json": {}},
+        json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},
     )
     assert resp.status_code == 400
     body = resp.json()
@@ -175,7 +178,7 @@ def test_avh_08_mismatch_response_carries_server_version(client) -> None:
     resp = client.post(
         "/analyze",
         headers={"X-Api-Key": "ci-test-key", "X-API-Version": "999"},
-        json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "stockfish_json": {}},
+        json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},
     )
     assert resp.status_code == 400
     assert resp.headers.get("X-API-Version") == "1"
