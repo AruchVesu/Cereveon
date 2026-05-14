@@ -1,27 +1,28 @@
-FORBIDDEN_PHRASES = [
-    "stockfish",
-    "best move",
-    "engine",
-    "depth",
-    "calculate",
-    "variation",
-]
+"""Mode-2 broad contract check.
 
-REQUIRED_ON_MISSING = [
-    "missing",
-    "not enough information",
-]
+Substring-level filter that runs against every LLM response, plus
+case-type-conditioned REQUIRE checks for forced-mate and missing-data
+responses.  Forbidden phrases and required phrases now come from
+``llm.rag.validators._rules`` (single source of truth shared with the
+other Mode-2 validators); the module-level lists below are re-exported
+under their historical public names so the 29 callsites that import
+them directly continue to work.
+"""
 
-REQUIRED_ON_MATE = [
-    "cannot be avoided",
-    "inevitable",
-    # "unavoidable" is the adjective form of "cannot be avoided" — accepting
-    # it broadens the contract without weakening the safety claim.  Models
-    # naturally produce phrases like "decisive and unavoidable disadvantage"
-    # when prompted on a forced mate; without this entry the contract test
-    # rejected semantically-correct output.
-    "unavoidable",
-]
+from __future__ import annotations
+
+from llm.rag.validators._rules import (
+    ENGINE_LEXICAL_PHRASES as _ENGINE_LEXICAL_PHRASES,
+    MATE_INEVITABILITY_PHRASES as _MATE_INEVITABILITY_PHRASES,
+    MISSING_DATA_PHRASES as _MISSING_DATA_PHRASES,
+)
+
+# Public re-exports — preserved as ``list`` (the historical type) so any
+# caller that mutates the list (none today, but defensively) behaves
+# unchanged.  The canonical source-of-truth tuples live in _rules.py.
+FORBIDDEN_PHRASES: list[str] = list(_ENGINE_LEXICAL_PHRASES)
+REQUIRED_ON_MISSING: list[str] = list(_MISSING_DATA_PHRASES)
+REQUIRED_ON_MATE: list[str] = list(_MATE_INEVITABILITY_PHRASES)
 
 
 def validate_output(text: str, *, case_type: str) -> None:

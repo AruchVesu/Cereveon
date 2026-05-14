@@ -348,6 +348,20 @@ A reviewer can audit completeness by reading down the leftmost column: every
 safety claim in the README and ARCHITECTURE.md must appear here, with all five
 test cells populated. Empty cells are open coverage gaps and must be tracked.
 
+**Single source of truth for the rule data.** As of 2026-05-14 (PR
+"validator consolidation"), every shared phrase / pattern set used by
+the Mode-2 validators (rows 1–9) lives in
+[`llm/rag/validators/_rules.py`](../llm/rag/validators/_rules.py).  The
+public validator modules — `validate_output`, `mode_2_negative`,
+`mode_2_structure`, `mode_2_semantic` — re-export these under their
+historical public names so the 29-callsite import surface keeps working
+unchanged.  The "Implemented by" column below names the validator entry
+point; the rule data itself is one named constant per row in `_rules.py`
+(cited inline).  The output-firewall rows (10–14) keep their categories
+in `llm/rag/safety/output_firewall.py` — concerns there are non-chess
+(PII / identity / prompt-leak / bypass / harmful) and already cleanly
+named.
+
 Negative-test cells reference the `id` field of an entry in
 `llm/rag/tests/contracts/fixtures/violations.jsonl` (driven by
 `test_violations_corpus.py`). Positive-test cells reference pytest node IDs in
