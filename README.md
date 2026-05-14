@@ -369,25 +369,52 @@ the server at startup when `SECA_ENV=prod` — by design.
 
 ### API schema versioning
 
-Every response carries an `X-API-Version` header pinned at `1`. The
-Android client sends the same header on coaching requests; the server
-gates on it (Phase 1 — **lenient on missing**, **strict on mismatch**):
+Two response headers carry the version contract:
+
+| Header | Value | Meaning |
+|---|---|---|
+| `X-API-Version` | `1` (currently) | Server's *preferred* version — what new clients should target |
+| `X-API-Versions-Supported` | `1` (comma-separated when multiple) | Every version the server will accept on inbound requests |
+
+The Android client sends `X-API-Version` on coaching requests; the
+server gates on it (**lenient on missing**, **strict on
+unsupported**):
 
 | Client header | Server response |
 |---|---|
 | absent | request proceeds; INFO log records the missing-header request |
-| `1` (matches `API_VERSION`) | request proceeds silently |
-| anything else | HTTP 400 with `{"detail": "..."}` naming both versions |
+| listed in `X-API-Versions-Supported` | request proceeds silently |
+| anything else | HTTP 400 with `{"detail": "..."}` naming the supported range |
 
 Discovery routes (`/`, `/health`, `/seca/status`) never reject on
-mismatch so an out-of-date client can still read the server's current
-version and surface an "update the app" UI. CORS preflights explicitly
-allow `X-API-Version`.
+mismatch so an out-of-date client can still read both response
+headers and surface an "update the app" UI. CORS preflights explicitly
+allow `X-API-Version`; CORS `expose_headers` includes both response
+headers so browser scripts can read them.
 
-Bumping the version requires a **coordinated server + Android release** —
-bump `API_VERSION` in `llm/server.py` and `COACH_API_VERSION` in
-`android/app/src/main/java/ai/chesscoach/app/ApiVersion.kt` in the same
-PR. Pinned by `llm/tests/test_api_version_header.py` (AVH_01..AVH_10).
+#### Bumping the version
+
+Two distinct flows, depending on whether the new version is
+breaking or additive:
+
+- **Additive (back-compat).** Append the new version to
+  `API_VERSIONS_SUPPORTED` in `llm/server.py` (and update
+  `API_VERSION` to the new value if it becomes the preferred).
+  Existing clients keep working — they're still in the supported
+  list. No coordinated Android release required.
+- **Breaking (drop old version).** Same as above, then drop the
+  old version from `API_VERSIONS_SUPPORTED` **after** the Android
+  client has rolled out to a sufficient fraction of users. The
+  bump from supported set `(1, 2)` to `(2,)` is the breaking
+  release; the migration window (when both are supported) is the
+  grace period.
+
+In either case, also update `COACH_API_VERSION` in
+`android/app/src/main/java/ai/chesscoach/app/ApiVersion.kt` when
+the *preferred* version bumps so new Android builds advertise
+the new version. Pinned by
+`llm/tests/test_api_version_header.py` (AVH_01..AVH_14) +
+`llm/tests/test_doc_constants_pinned.py::test_api_version_constant`.
 
 ### Security response headers
 

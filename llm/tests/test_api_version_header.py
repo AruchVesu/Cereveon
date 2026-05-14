@@ -5,23 +5,29 @@ Pin the contract that the ``X-API-Version`` header advertised by the
 Android client and emitted by the server backs a real version-mismatch
 gate at the HTTP boundary.
 
-Server contract (Phase 1 — lenient on missing, strict on mismatch):
+Server contract (Phase 2 — lenient on missing, strict on unsupported,
+                  PR 14 added supported-range advertisement):
 
-  * Every response carries ``X-API-Version`` matching the server's
-    ``API_VERSION`` constant.  Discovery routes (``/``, ``/health``,
-    ``/seca/status``) emit it too — so an out-of-date client can read
-    the header off /seca/status and surface a clear "update the app"
-    UI without ever hitting a coaching endpoint.
+  * Every response carries ``X-API-Version`` (server's current /
+    preferred version) AND ``X-API-Versions-Supported`` (comma-
+    separated list of every version the server accepts).  Discovery
+    routes (``/``, ``/health``, ``/seca/status``) emit both — so an
+    out-of-date client can read the headers off /seca/status and
+    surface a clear "update the app" UI without ever hitting a
+    coaching endpoint.
   * On coaching endpoints, an incoming ``X-API-Version`` header is
     validated:
-      - Missing  → request proceeds (Phase 1 lenient mode); an INFO
-        log records the missing-header request so the operator can
-        watch the rollout migrate to fully-versioned clients.
-      - Equal to ``API_VERSION``  → request proceeds silently.
-      - Anything else            → HTTP 400 with a JSON
-        ``{"detail": "..."}`` body that names both versions.
+      - Missing                       → request proceeds (lenient mode);
+        an INFO log records the missing-header request so the
+        operator can watch the rollout migrate to fully-versioned
+        clients.
+      - In ``API_VERSIONS_SUPPORTED`` → request proceeds silently.
+      - Anything else                 → HTTP 400 with a JSON
+        ``{"detail": "..."}`` body that names the supported range.
   * CORS preflights allow the ``X-API-Version`` request header so
     browsers / WebView clients aren't blocked at the preflight.
+  * CORS expose_headers includes both response headers so browser
+    scripts can read them (non-browser clients are unaffected).
 
 Stable test IDs (do NOT rename):
   AVH_01  Constant value pin (API_VERSION == "1")
@@ -35,6 +41,11 @@ Stable test IDs (do NOT rename):
           (so the client can update its constant on receipt)
   AVH_09  Discovery routes are exempt from mismatch rejection
   AVH_10  CORS allow_headers includes X-API-Version
+  AVH_11  Response carries X-API-Versions-Supported (added PR 14)
+  AVH_12  X-API-Versions-Supported value matches the tuple joined by
+          ", " (added PR 14)
+  AVH_13  API_VERSION equals API_VERSIONS_SUPPORTED[-1] (added PR 14)
+  AVH_14  Error detail names the supported range (added PR 14)
 """
 
 from __future__ import annotations
@@ -217,4 +228,88 @@ def test_avh_10_cors_allow_headers_includes_x_api_version(server_module) -> None
     allow_headers = options.get("allow_headers", [])
     assert "X-API-Version" in allow_headers, (
         f"CORS allow_headers must include 'X-API-Version'; got {allow_headers!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# PR 14 — supported-range advertisement (Phase 2 negotiation)
+# ---------------------------------------------------------------------------
+
+
+def test_avh_11_response_carries_supported_versions_header(client) -> None:
+    """AVH_11: every response carries ``X-API-Versions-Supported``.
+
+    Pinned across both the coaching path and a discovery route so a
+    future revision that adds the header to only one path trips this
+    test.
+    """
+    coaching = client.post(
+        "/analyze",
+        headers={"X-Api-Key": "ci-test-key"},
+        json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},
+    )
+    assert coaching.headers.get("X-API-Versions-Supported"), (
+        "coaching response missing X-API-Versions-Supported header"
+    )
+
+    discovery = client.get("/health")
+    assert discovery.headers.get("X-API-Versions-Supported"), (
+        "discovery response missing X-API-Versions-Supported header"
+    )
+
+
+def test_avh_12_supported_header_matches_tuple(server_module, client) -> None:
+    """AVH_12: ``X-API-Versions-Supported`` reflects
+    ``API_VERSIONS_SUPPORTED`` joined by ', '.
+
+    Direct value-match so a future revision that bumps the tuple but
+    forgets to refresh the cached header value
+    (``_API_VERSIONS_SUPPORTED_HEADER``) trips this test.
+    """
+    expected = ", ".join(server_module.API_VERSIONS_SUPPORTED)
+    resp = client.get("/health")
+    assert resp.headers.get("X-API-Versions-Supported") == expected, (
+        f"X-API-Versions-Supported header must equal {expected!r}; "
+        f"got {resp.headers.get('X-API-Versions-Supported')!r}"
+    )
+
+
+def test_avh_13_current_version_is_last_in_supported(server_module) -> None:
+    """AVH_13: ``API_VERSION`` must always equal
+    ``API_VERSIONS_SUPPORTED[-1]``.
+
+    The "current/preferred" version is conventionally the most-recent
+    entry in the supported tuple.  A future revision that bumps
+    ``API_VERSION`` without appending to the tuple (or vice versa)
+    breaks the invariant that drives the rollout flow described in
+    README > API schema versioning.
+    """
+    assert server_module.API_VERSION == server_module.API_VERSIONS_SUPPORTED[-1], (
+        f"API_VERSION ({server_module.API_VERSION!r}) must equal "
+        f"API_VERSIONS_SUPPORTED[-1] "
+        f"({server_module.API_VERSIONS_SUPPORTED[-1]!r}).  Either bump "
+        f"both together or rename one of the constants."
+    )
+
+
+def test_avh_14_error_detail_names_supported_range(client) -> None:
+    """AVH_14: a 400 from the version gate must name the supported
+    range in the ``detail`` so an out-of-date client can update its
+    constant without needing to inspect the headers separately.
+    """
+    resp = client.post(
+        "/analyze",
+        headers={"X-Api-Key": "ci-test-key", "X-API-Version": "999"},
+        json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},
+    )
+    assert resp.status_code == 400
+    detail = resp.json().get("detail", "")
+    assert "supports" in detail.lower(), (
+        f"error detail must mention what the server supports; got {detail!r}"
+    )
+    assert "999" in detail, "error detail must echo the client-sent version"
+    # The current supported list is just ("1",); the detail should
+    # mention "1" (the current preferred version + the only entry).
+    assert "1" in detail, (
+        f"error detail must list the supported range; got {detail!r}"
     )

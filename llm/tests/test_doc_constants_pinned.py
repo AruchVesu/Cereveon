@@ -276,13 +276,32 @@ class TestReadmeConstants:
         Complements ``test_api_version_header.test_avh_01`` (which
         pins ``API_VERSION == '1'`` in code) by pinning the doc side.
         Note: lives in README.md, NOT in API_CONTRACTS.md despite
-        what a stale server.py comment previously claimed."""
+        what a stale server.py comment previously claimed.
+
+        Updated in PR 14 (2026-05-15) when the docs moved from
+        ``pinned at 1`` to a per-row table — the doc text now reads
+        ```| `X-API-Version` | `{API_VERSION}` (currently) | ...```.
+        """
         from llm.server import API_VERSION
 
         _assert_doc_pin(
             doc=_README,
-            needle=f"`X-API-Version` header pinned at `{API_VERSION}`",
+            needle=f"| `X-API-Version` | `{API_VERSION}` (currently) |",
             code_origin="llm/server.py::API_VERSION",
+        )
+
+    def test_api_versions_supported_constant(self):
+        """``X-API-Versions-Supported`` advertised value pinned to
+        ``API_VERSIONS_SUPPORTED`` tuple.  Added PR 14 alongside the
+        Phase 2 supported-range advertisement.
+        """
+        from llm.server import API_VERSIONS_SUPPORTED
+
+        supported_csv = ", ".join(API_VERSIONS_SUPPORTED)
+        _assert_doc_pin(
+            doc=_README,
+            needle=f"| `X-API-Versions-Supported` | `{supported_csv}`",
+            code_origin="llm/server.py::API_VERSIONS_SUPPORTED",
         )
 
 
