@@ -1,31 +1,30 @@
+"""Mode-2 lexical filter — regex-based forbidden-pattern rejection.
+
+Rules sourced from ``llm.rag.validators._rules`` (single source of
+truth).  ``FORBIDDEN_PATTERNS`` is the concatenated bundle consumed by
+this validator; order is preserved from the pre-consolidation single
+list so the violations corpus + pattern-coverage tests' literal IDs
+remain stable across the 2026-05-14 ``_rules`` refactor.
+"""
+
+from __future__ import annotations
+
 import re
 
-FORBIDDEN_PATTERNS = [
-    # speculative / intent language
-    r"\bshould\b",
-    r"\blikely\b",
-    r"\bprobably\b",
-    r"\bI think\b",
-    r"\bthe engine wants\b",
-    r"\bplans to\b",
-    r"\bcarelessly\b",
-    r"\black of planning\b",
-    r"\bwith perfect play\b",
-    r"\bactually winning\b",
-    r"\bconsider\b",
-    # invented chess moves (Qh5, Nf3, etc.)
-    r"\b[KQRBN][a-h][1-8]\b",
-    r"\b0-0(?:-0)?\b",
-    # analysis language forbidden in MODE-2
-    r"\bcalculate\b",
-    r"\bcalculation\b",
-    r"\bvariation\b",
-    r"\bline\b",
-    # unsupported mate claims (no engine context available in this validator)
-    r"\bcheckmate\b",
-    r"\bmate in \d+\b",
-    r"\bforce(?:d)? mate\b",
-    r"\bgame ends here\b",
+from llm.rag.validators._rules import (
+    ENGINE_LEXICAL_PATTERNS,
+    MATE_CLAIM_PATTERNS,
+    MOVE_ALGEBRAIC_PATTERNS,
+    SPECULATIVE_PATTERNS,
+)
+
+# Order preserved from the pre-2026-05-14 single list:
+#   speculative → algebraic → engine-lexical → mate-claim
+FORBIDDEN_PATTERNS: list[str] = [
+    *SPECULATIVE_PATTERNS,
+    *MOVE_ALGEBRAIC_PATTERNS,
+    *ENGINE_LEXICAL_PATTERNS,
+    *MATE_CLAIM_PATTERNS,
 ]
 
 

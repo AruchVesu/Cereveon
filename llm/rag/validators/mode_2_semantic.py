@@ -1,18 +1,21 @@
-FORBIDDEN_EQUAL = [
-    r"\bslight advantage\b",
-    r"\bbetter\b",
-    r"\bwinning\b",
-    r"\binitiative\b",
-    r"\bpressure\b",
-]
+"""Mode-2 semantic filter — ESV-conditioned rejection rules.
 
-FORBIDDEN_ENGINE_SPECULATION = [
-    r"\blikely\b",
-    r"\bprobably\b",
-    r"\bmight\b",
-    r"\bengine\b",
-    r"\bwants to\b",
-]
+Rules sourced from ``llm.rag.validators._rules`` (single source of
+truth).  Pre-2026-05-14 this module carried two unused module-level
+constants (FORBIDDEN_EQUAL / FORBIDDEN_ENGINE_SPECULATION) in regex
+form while the function body used hardcoded plain-string lists — the
+constants were dead code.  The refactor deletes them and points the
+function at the shared substring sets.
+"""
+
+from __future__ import annotations
+
+from llm.rag.validators._rules import (
+    EQUAL_ADVANTAGE_WORDS,
+    MATE_INEVITABILITY_SEMANTIC,
+    SPECULATIVE_SEMANTIC,
+    TACTICAL_NOUN_WORDS,
+)
 
 
 class Mode2Violation(Exception):
@@ -27,27 +30,24 @@ def validate_mode_2_semantic(text: str, engine_signal: dict) -> None:
 
     lower = text.lower()
 
-    # Equal neutrality
+    # Equal neutrality — Row 8 of the Validator Coverage Matrix.
     if band == "equal":
-        forbidden = ["slight advantage", "better", "winning", "initiative", "pressure"]
-        for word in forbidden:
+        for word in EQUAL_ADVANTAGE_WORDS:
             if word in lower:
                 raise Mode2Violation(f"Equal position described as advantage: '{word}'")
 
-    # Mate decisiveness
+    # Mate decisiveness — Row 5 (semantic REQUIRE).
     if eval_type == "mate":
-        if "inevitable" not in lower and "forced" not in lower:
+        if not any(p in lower for p in MATE_INEVITABILITY_SEMANTIC):
             raise Mode2Violation("Mate not described as forced/inevitable")
 
-    # Engine speculation
-    forbidden_spec = ["likely", "probably", "might", "engine", "wants to"]
-    for word in forbidden_spec:
+    # Engine speculation — Row 4 (semantic mirror of the lexical filter).
+    for word in SPECULATIVE_SEMANTIC:
         if word in lower:
             raise Mode2Violation(f"Speculative language detected: '{word}'")
 
-    # Invented tactics
+    # Invented tactics — Row 9.
     if not tactical_flags:
-        invented = ["fork", "pin", "sacrifice", "attack", "threat"]
-        for word in invented:
+        for word in TACTICAL_NOUN_WORDS:
             if word in lower:
                 raise Mode2Violation(f"Invented tactic without flag: '{word}'")

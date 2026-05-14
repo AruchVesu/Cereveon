@@ -1,14 +1,18 @@
+"""Mode-2 structural filter — advisory / move-recommendation prose.
+
+Rules sourced from ``llm.rag.validators._rules.MOVE_ADVISORY_PATTERNS``
+(single source of truth).  ``FORBIDDEN_SECTIONS`` is re-exported under
+its historical public name so the callsites and tests that import it
+directly continue to work.
+"""
+
+from __future__ import annotations
+
 import re
 
-FORBIDDEN_SECTIONS = [
-    r"\brecommended move\b",
-    r"\bexample move\b",
-    r"\bplan\b",
-    r"\bwhite can\b",
-    r"\bblack can\b",
-    r"\bif it\b",
-    r"\bconsider\b",
-]
+from llm.rag.validators._rules import MOVE_ADVISORY_PATTERNS
+
+FORBIDDEN_SECTIONS: list[str] = list(MOVE_ADVISORY_PATTERNS)
 
 
 def validate_mode_2_structure(text: str) -> None:
