@@ -67,6 +67,19 @@ try:
     from llm.rag.documents import ALL_RAG_DOCUMENTS as _DOCS  # type: ignore[import]
     from llm.seca.coach.confidence_language_controller import build_language_controller_block as _build_clc  # type: ignore[import]
     from llm.rag.validators.mode_2_negative import validate_mode_2_negative as _validate_neg  # type: ignore[import]
+    # Mode-2 structure + semantic must also run inside the retry loop so
+    # the pipeline can retry / fall back instead of letting a borderline
+    # reply reach the API boundary's `validate_chat_response` and 500 the
+    # route — same #129-class bug we closed for /live/move; the symptom
+    # on the client is "Coach is offline" appearing after a successful
+    # LLM call whose output happened to fail one of the boundary gates.
+    from llm.rag.validators.mode_2_structure import (  # type: ignore[import]
+        validate_mode_2_structure as _validate_struct,
+    )
+    from llm.rag.validators.mode_2_semantic import (  # type: ignore[import]
+        validate_mode_2_semantic as _validate_sem,
+        Mode2Violation as _Mode2Violation,
+    )
     from llm.rag.safety.output_firewall import (  # type: ignore[import]
         check_output as _check_output,
         OutputFirewallError as _OutputFirewallError,
@@ -415,9 +428,26 @@ def _build_chat_llm(
     if not response:
         raise ValueError("Empty LLM response")
 
-    # Output firewall + Mode-2 negative validation
+    # Every Mode-2 gate the API boundary will re-run at
+    # ``validate_chat_response`` must run here too, so a borderline LLM
+    # reply is caught inside the retry loop and either retried or falls
+    # through to the deterministic ``_build_reply_deterministic`` — never
+    # escapes this function to 500 ``/chat`` (or ``/chat/stream``).  The
+    # client-side symptom of the missing gate was "Coach is offline"
+    # appearing after a successful LLM call whose output happened to
+    # fail the boundary's structure / semantic check.
+    #
+    # Each raises a specific exception type; ``generate_chat_reply``'s
+    # retry loop already catches ``AssertionError`` (retries with
+    # ``_CHAT_RETRY_HINT``) and the catch-all ``Exception`` (falls
+    # through to deterministic).  ``Mode2Violation`` is a plain
+    # ``Exception`` subclass, so it lands on the deterministic path on
+    # exhaustion — matching the firewall-error handling already in the
+    # retry loop.
     _check_output(response)
     _validate_neg(response)
+    _validate_struct(response)
+    _validate_sem(response, engine_signal)
 
     return response
 
@@ -578,6 +608,7 @@ def generate_chat_reply(
     past_mistakes: list[str] | None = None,
     move_count: int | None = None,
     coach_voice: str | None = None,
+    force_deterministic: bool = False,
 ) -> ChatReply:
     """Generate a coaching reply for the current chat turn.
 
@@ -597,6 +628,14 @@ def generate_chat_reply(
         Optional list of MistakeCategory strings from the analytics layer.
     move_count:
         Optional half-move count; injected into deterministic context block.
+    force_deterministic:
+        Skip the LLM path entirely and emit the deterministic reply.
+        Used by the ``/chat`` and ``/chat/stream`` handlers' safety nets
+        when the boundary validator (``validate_chat_response``) rejects
+        a pipeline reply.  The deterministic builder
+        (``_build_reply_deterministic``) is constructed to satisfy every
+        Mode-2 gate by construction so this re-call cannot 500 on the
+        same validator drift.
 
     Returns
     -------
@@ -612,7 +651,7 @@ def generate_chat_reply(
         messages = compact_history(messages)
 
     # --- LLM path with retry ---
-    if _LLM_AVAILABLE:
+    if _LLM_AVAILABLE and not force_deterministic:
         retry_hint = ""
         for attempt in range(_CHAT_MAX_RETRIES + 1):
             if attempt > 0:
@@ -633,7 +672,16 @@ def generate_chat_reply(
                 logger.debug("Chat LLM blocked by output firewall; using deterministic fallback")
                 break
             except AssertionError:
-                # Mode-2 negative validator failed — retry with stricter hint.
+                # Mode-2 negative OR structure validator failed — retry
+                # with stricter hint; the retry path is the right one
+                # because LLMs often recover when re-asked with explicit
+                # rules.
+                retry_hint = _CHAT_RETRY_HINT
+            except _Mode2Violation:
+                # Mode-2 semantic violation (equal-band drift, mate
+                # misframing, invented tactic).  Same retry behaviour as
+                # AssertionError above so the LLM gets a second chance
+                # with the stricter system prompt addition.
                 retry_hint = _CHAT_RETRY_HINT
             except Exception as exc:  # noqa: BLE001
                 # Production-impacting: Ollama unreachable, model not

@@ -537,3 +537,111 @@ class TestRetryAndSchemaValidation:
         assert received_hints[0] == "", "First attempt must have empty retry_hint"
         assert received_hints[1] != "", "Second attempt must carry a non-empty retry_hint"
         assert "MODE-2" in received_hints[1], "Retry hint must reference MODE-2 rules"
+
+
+# ---------------------------------------------------------------------------
+# In-pipeline gate parity with validate_chat_response
+#
+# Issue (Mode-2 cousin of #129): the chat pipeline used to run only
+# `_check_output` + `_validate_neg` inside `_build_chat_llm`.  The API
+# boundary `validate_chat_response` runs structure + semantic on top.  A
+# borderline LLM reply (eg "Your plan should be ..." for structure, or
+# "slight advantage" on an equal-band position for semantic) slipped
+# past the pipeline retry loop, escaped, and 500'd at the boundary —
+# the client surfaced this as "Coach is offline" after a successful
+# LLM call.
+#
+# These tests pin that the pipeline now runs every gate the boundary
+# does, so borderline replies are either retried or fall through to the
+# deterministic builder before reaching the route handler.
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineBoundaryParity:
+    def test_structure_violation_falls_back(self):
+        """CHAT_STRUCT_PLAN — `_validate_struct` is wired into the pipeline.
+
+        An LLM reply that says "Your plan should be ..." trips
+        ``validate_mode_2_structure`` (FORBIDDEN_SECTIONS includes
+        "plan"), the retry loop catches the AssertionError, retry-hint
+        is applied, the second attempt also fails (we keep returning
+        the bad reply), and the call falls through to the deterministic
+        path — which we assert does NOT contain "plan".
+        """
+        turns = _make_turns(("user", "What should I do here?"))
+        # Note: `_call_llm` is what `_build_chat_llm` invokes; patching
+        # it (instead of `_build_chat_llm` itself) keeps the in-pipeline
+        # validators in scope so structure rejection is what we observe.
+        with (
+            patch(f"{_MODULE}._LLM_AVAILABLE", True),
+            patch(f"{_MODULE}._CHAT_RETRY_DELAY_SECONDS", 0),
+            patch(
+                f"{_MODULE}._call_llm",
+                return_value="Your plan should be to develop pieces and consider central pawn breaks.",
+            ),
+        ):
+            result = generate_chat_reply(_STARTING_FEN, turns)
+        lower = result.reply.lower()
+        assert "plan" not in lower, (
+            f"Deterministic fallback leaked the structure-forbidden token 'plan': {result.reply!r}"
+        )
+        assert result.reply.strip()
+
+    def test_semantic_equal_band_advantage_falls_back(self):
+        """CHAT_SEM_EQUAL — `_validate_sem` is wired into the pipeline.
+
+        Starting position FEN → engine_signal has band == "equal".
+        A reply that uses FORBIDDEN_EQUAL vocabulary ("slight advantage",
+        "better", "initiative") trips ``validate_mode_2_semantic``;
+        the retry loop catches ``Mode2Violation``, retry-hint is
+        applied, and on exhaustion the call falls through to the
+        deterministic builder.  The deterministic builder for an
+        equal band uses the literal "equal" / "roughly equal" and
+        never the FORBIDDEN tokens.
+        """
+        turns = _make_turns(("user", "What's the situation?"))
+        with (
+            patch(f"{_MODULE}._LLM_AVAILABLE", True),
+            patch(f"{_MODULE}._CHAT_RETRY_DELAY_SECONDS", 0),
+            patch(
+                f"{_MODULE}._call_llm",
+                return_value="You have a slight advantage and a clear initiative.",
+            ),
+        ):
+            result = generate_chat_reply(_STARTING_FEN, turns)
+        lower = result.reply.lower()
+        for forbidden in ("slight advantage", "better", "initiative"):
+            assert forbidden not in lower, (
+                f"Deterministic fallback leaked the equal-band token '{forbidden}': {result.reply!r}"
+            )
+        assert result.reply.strip()
+
+    def test_force_deterministic_skips_llm(self):
+        """CHAT_FORCE_DET — handler safety-net flag bypasses the LLM.
+
+        The /chat and /chat/stream handlers call `generate_chat_reply`
+        with `force_deterministic=True` when the boundary validator
+        rejects a pipeline reply.  Pin that the re-call never invokes
+        the LLM, so a validator drift cannot 500 a second time on the
+        same surface.
+        """
+        turns = _make_turns(("user", "Hi"))
+        called = {"n": 0}
+
+        def _spy(*args, **kwargs):
+            called["n"] += 1
+            return "should not be reached"
+
+        with (
+            patch(f"{_MODULE}._LLM_AVAILABLE", True),
+            patch(f"{_MODULE}._call_llm", side_effect=_spy),
+        ):
+            result = generate_chat_reply(
+                _STARTING_FEN, turns, force_deterministic=True
+            )
+        assert called["n"] == 0, (
+            "force_deterministic=True must skip the LLM path entirely; "
+            f"got _call_llm invoked {called['n']} time(s)"
+        )
+        assert result.mode == "CHAT_V1"
+        assert result.reply.strip()

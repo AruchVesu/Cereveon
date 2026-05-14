@@ -101,11 +101,25 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
      * Shared API client — constructed once from [BuildConfig] constants.
      * Injects the current JWT (if any) via [tokenProvider] so user-specific
      * backend endpoints receive an Authorization: Bearer header automatically.
+     *
+     * Read timeout is bumped to [CHAT_READ_TIMEOUT_MS] because the server's
+     * `/chat/stream` route (see ``llm/server.py::chat_stream``) waits for
+     * ``generate_chat_reply`` — and therefore the underlying DeepSeek
+     * non-streaming call (``llm/seca/coach/explain_pipeline.py::call_llm``
+     * uses ``stream: False`` with a 120 s server-side timeout) — to finish
+     * BEFORE emitting any SSE bytes.  The default 15 s ``BaseHttpClient``
+     * read timeout is tuned for 1-2-sentence Mode-1 hints (~1-3 s on
+     * DeepSeek); Mode-2 chat replies are full coaching prose and routinely
+     * take 15-45 s.  At the default the stream times out before the first
+     * chunk lands and the user sees the "Coach is offline" fallback even
+     * when DeepSeek would have answered.  The real fix is true LLM
+     * streaming server-side; this widened timeout is the bridge.
      */
     private val coachApiClient: CoachApiClient by lazy {
         HttpCoachApiClient(
             baseUrl = BuildConfig.COACH_API_BASE,
             apiKey = BuildConfig.COACH_API_KEY,
+            readTimeoutMs = CHAT_READ_TIMEOUT_MS,
             tokenProvider = { authRepository?.getToken() },
             // Rotate the JWT on every successful coach response — without
             // this, a user who chats for 24h+ without ending a game would
@@ -130,6 +144,26 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
         private const val FALLBACK_REPLY =
             "Coach is offline. Review the position and consider piece activity, " +
                 "centre control, and king safety."
+
+        /**
+         * Per-request read deadline for Mode-2 chat (POST /chat/stream).
+         *
+         * Server-side budget: the route calls ``generate_chat_reply``
+         * which awaits the DeepSeek HTTP call with a 120 s timeout
+         * (``llm/seca/coach/explain_pipeline.py``).  Real DeepSeek
+         * non-streaming replies for full coaching prose range from
+         * ~5 s (terse settings) to ~30-45 s (long replies, network
+         * jitter).  60 s gives DeepSeek room to land the slow tail
+         * before the client gives up; the deterministic fallback
+         * (still ~instant) covers anything past that.
+         *
+         * Why not the [BaseHttpClient.DEFAULT_READ_TIMEOUT_MS] (15 s):
+         * Mode-1 hints (1-2 sentences) fit inside 15 s comfortably,
+         * but a chat reply at the default deadline times out before
+         * the LLM's first byte and the user sees "Coach is offline"
+         * even when the server would have answered.
+         */
+        private const val CHAT_READ_TIMEOUT_MS = 60_000
 
         /**
          * Create a new instance with the current board position and optional

@@ -1958,7 +1958,37 @@ async def chat(
         "engine_signal": result.engine_signal,
         "mode": result.mode,
     }
-    validate_chat_response(response)
+    try:
+        validate_chat_response(response)
+    except ExplainSchemaError as exc:
+        # Defense-in-depth — the pipeline already runs every Mode-2 gate
+        # the boundary re-runs (negative + structure + semantic), so an
+        # ExplainSchemaError here means a validator drift the pipeline
+        # didn't catch.  Returning 500 surfaces to the client as "Coach
+        # is offline".  Swap in the deterministic reply — constructed
+        # to satisfy every gate by construction — and log so the drift
+        # is fixable without losing a user session.
+        logger.warning(
+            "validate_chat_response rejected pipeline reply (%s); "
+            "substituting deterministic fallback",
+            exc,
+        )
+        fallback = await asyncio.to_thread(
+            generate_chat_reply,
+            req.fen,
+            turns,
+            req.player_profile,
+            req.past_mistakes,
+            req.move_count,
+            req.coach_voice,
+            True,  # force_deterministic — skip LLM, emit hand-tuned fallback
+        )
+        response = {
+            "reply": fallback.reply,
+            "engine_signal": fallback.engine_signal,
+            "mode": fallback.mode,
+        }
+        validate_chat_response(response)
     return response
 
 
@@ -2000,13 +2030,43 @@ async def chat_stream(
     # Boundary validation runs before any bytes are streamed so a contract
     # failure surfaces as a clean 500 from FastAPI, not a half-delivered
     # SSE stream the client has to parse to discover the failure.
-    validate_chat_response(
-        {
-            "reply": result.reply,
-            "engine_signal": result.engine_signal,
-            "mode": result.mode,
-        }
-    )
+    try:
+        validate_chat_response(
+            {
+                "reply": result.reply,
+                "engine_signal": result.engine_signal,
+                "mode": result.mode,
+            }
+        )
+    except ExplainSchemaError as exc:
+        # Defense-in-depth twin of the /chat branch above.  Same
+        # rationale: an ExplainSchemaError here means a drift between
+        # the in-pipeline gates and the boundary validator; rather than
+        # surfacing "Coach is offline" to the user, re-run the pipeline
+        # deterministically so the resulting reply passes by
+        # construction.
+        logger.warning(
+            "validate_chat_response rejected pipeline reply on /chat/stream "
+            "(%s); substituting deterministic fallback",
+            exc,
+        )
+        result = await asyncio.to_thread(
+            generate_chat_reply,
+            req.fen,
+            turns,
+            req.player_profile,
+            req.past_mistakes,
+            req.move_count,
+            req.coach_voice,
+            True,  # force_deterministic — skip LLM, emit hand-tuned fallback
+        )
+        validate_chat_response(
+            {
+                "reply": result.reply,
+                "engine_signal": result.engine_signal,
+                "mode": result.mode,
+            }
+        )
 
     def _generate():
         words = result.reply.split(" ")
