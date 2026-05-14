@@ -639,3 +639,96 @@ class TestLLMSafetyValidators:
         assert " should " not in f" {result.hint} "
         assert " probably " not in f" {result.hint} "
         assert result.hint.strip()
+
+    def test_mode_2_structure_violation_falls_back(self):
+        """LIVE_STRUCT_PLAN — issue #129 regression: an LLM hint that
+        uses the FORBIDDEN_SECTIONS token "plan" (or "consider", "white
+        can", ...) used to pass ``_validate_neg`` and escape the
+        pipeline, then 500 at ``validate_live_move_response`` and (via
+        the pre-#130 rotation cascade) lock the user out of the
+        session.  Post-#129 the pipeline runs ``validate_mode_2_structure``
+        inside ``_build_hint_llm``; this test pins that an LLM emitting
+        "plan" / "consider" falls back to the deterministic hint."""
+        adversarial = "Your plan should be to develop quickly and consider central pawn breaks."
+        with (
+            patch(f"{self._LLM_MODULE}._LLM_AVAILABLE", True),
+            patch(f"{self._LLM_MODULE}._LIVE_RETRY_DELAY_SECONDS", 0),
+            patch(f"{self._LLM_MODULE}._call_llm", return_value=adversarial),
+        ):
+            result = generate_live_reply(_MID_FEN, _UCI_NORMAL)
+        lower = result.hint.lower()
+        assert "plan" not in lower
+        assert "consider" not in lower
+        assert result.hint.strip()
+
+    def test_mode_2_semantic_equal_band_advantage_falls_back(self):
+        """LIVE_SEM_EQUAL — issue #129 regression: on an equal-band
+        position, an LLM hint that uses FORBIDDEN_EQUAL vocabulary
+        ("slight advantage", "better", "initiative") used to slip past
+        ``_validate_neg`` and 500 at the boundary.  Now caught by
+        ``validate_mode_2_semantic`` inside the pipeline."""
+        adversarial = "Solid developing move — you have a slight advantage in the opening."
+        # Use a starting position FEN so extract_engine_signal yields
+        # band == "equal" (the case where FORBIDDEN_EQUAL bites).
+        starting_fen = (
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        )
+        with (
+            patch(f"{self._LLM_MODULE}._LLM_AVAILABLE", True),
+            patch(f"{self._LLM_MODULE}._LIVE_RETRY_DELAY_SECONDS", 0),
+            patch(f"{self._LLM_MODULE}._call_llm", return_value=adversarial),
+        ):
+            result = generate_live_reply(starting_fen, "e2e4")
+        # The deterministic fallback for an equal band uses the literal
+        # word "equal" and never "slight advantage" / "better" / "initiative".
+        lower = result.hint.lower()
+        assert "slight advantage" not in lower
+        assert " better" not in lower
+        assert "initiative" not in lower
+        assert result.hint.strip()
+
+    def test_mode_2_semantic_invented_tactic_falls_back(self):
+        """LIVE_SEM_TACTIC — issue #129 regression: an LLM hint that
+        mentions a tactical motif ("attack", "fork", "pin", "threat")
+        when ``engine_signal.tactical_flags == []`` used to 500 at the
+        boundary.  Now caught by ``validate_mode_2_semantic`` inside
+        the pipeline."""
+        adversarial = "Nice knight move that creates a threat on the king."
+        with (
+            patch(f"{self._LLM_MODULE}._LLM_AVAILABLE", True),
+            patch(f"{self._LLM_MODULE}._LIVE_RETRY_DELAY_SECONDS", 0),
+            patch(f"{self._LLM_MODULE}._call_llm", return_value=adversarial),
+        ):
+            result = generate_live_reply(_MID_FEN, _UCI_NORMAL)
+        lower = result.hint.lower()
+        for forbidden in ("attack", "fork", "pin", "threat"):
+            assert forbidden not in lower, (
+                f"deterministic fallback leaked tactical motif '{forbidden}': {result.hint!r}"
+            )
+        assert result.hint.strip()
+
+    def test_force_deterministic_skips_llm(self):
+        """LIVE_FORCE_DET — the server's safety-net path
+        (``/live/move`` handler's ``except ExplainSchemaError``) calls
+        ``generate_live_reply(..., force_deterministic=True)``.  Pin
+        that this branch never invokes the LLM, so a validator drift
+        that 500s the LLM path can be recovered without re-tripping."""
+        called = {"n": 0}
+
+        def _spy(_prompt: str) -> str:
+            called["n"] += 1
+            return "should not be reached"
+
+        with (
+            patch(f"{self._LLM_MODULE}._LLM_AVAILABLE", True),
+            patch(f"{self._LLM_MODULE}._call_llm", side_effect=_spy),
+        ):
+            result = generate_live_reply(
+                _MID_FEN, _UCI_NORMAL, force_deterministic=True
+            )
+        assert called["n"] == 0, (
+            "force_deterministic=True must skip the LLM path entirely; "
+            f"got _call_llm invoked {called['n']} time(s)"
+        )
+        assert result.mode == "LIVE_V1"
+        assert result.hint.strip()

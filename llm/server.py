@@ -494,6 +494,76 @@ async def prometheus_http_middleware(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def commit_pending_auth_rotation(request: Request, call_next):
+    """Commit JWT rotation queued by ``get_current_player`` only on 2xx.
+
+    ``get_current_player`` mints a fresh JWT for every authenticated call
+    and stashes ``(session_id, new_token)`` on
+    ``request.state.pending_auth_rotation``.  This middleware completes
+    the rotation — DB write + ``X-Auth-Token`` response header — but ONLY
+    when the route handler produced a 2xx response.
+
+    Why this split exists (issue #130)
+    ----------------------------------
+    The pre-#130 design committed rotation inside ``get_current_player``
+    itself, BEFORE the route handler ran.  If the handler then failed
+    (e.g. a Mode-1 hint that 500s the boundary validator, which was
+    issue #129), the JWT had already been revoked server-side, but the
+    new token never reached the client (FastAPI's exception handler
+    drops dependency-set response headers).  Result: the client was
+    locked out of every authenticated route until re-login.
+
+    Why the DB session is opened here rather than threaded through
+    --------------------------------------------------------------
+    The per-request DB session from ``Depends(get_db)`` is already
+    closed by the time middleware runs, so we open a short-lived
+    session via ``SessionLocal()``.  One extra round-trip per
+    authenticated request is acceptable; correctness wins.
+
+    Why nothing happens on 5xx / 4xx
+    --------------------------------
+    The pending rotation is silently discarded.  The previously-
+    presented JWT remains the one bound to the session (rotation was
+    never committed), so the client's next call with that same token
+    succeeds.  This is exactly the property the cascade lockout
+    violated.
+    """
+    response = await call_next(request)
+    pending = getattr(request.state, "pending_auth_rotation", None)
+    if pending is None:
+        return response
+    if not (200 <= response.status_code < 300):
+        # Non-success — discard the rotation.  Old token stays valid;
+        # the next call from the client succeeds.
+        return response
+
+    # Defer the SessionLocal import to call-time so this middleware is
+    # safe to import before lifespan completes (init_schema not yet run).
+    from llm.seca.auth.router import SessionLocal
+    from llm.seca.auth.service import AuthService
+
+    try:
+        with SessionLocal() as db:
+            AuthService(db).rotate_session_token(
+                pending["session_id"], pending["new_token"]
+            )
+    except Exception as exc:  # noqa: BLE001
+        # If the rotation write itself fails (DB hiccup), prefer to NOT
+        # set X-Auth-Token — the server-side token hash is unchanged so
+        # the old JWT remains valid.  Log so we notice persistent issues
+        # without locking users out.
+        logger.warning(
+            "auth token rotation commit failed (%s: %s) — leaving old token in force",
+            type(exc).__name__,
+            exc,
+        )
+        return response
+
+    response.headers["X-Auth-Token"] = pending["new_token"]
+    return response
+
+
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(
@@ -1519,7 +1589,39 @@ async def live_move(
         "mode": result.mode,
         "dynamic_adaptation": _dynamic_registry.get_state(str(player.id)).enabled,
     }
-    validate_live_move_response(response)
+    try:
+        validate_live_move_response(response)
+    except ExplainSchemaError as exc:
+        # Defense-in-depth — the pipeline already runs every Mode-2 gate
+        # the boundary re-runs, so an ExplainSchemaError here means a
+        # validator drift the pipeline didn't catch (newly-added
+        # forbidden token, schema change).  Returning 500 would burn the
+        # rotated JWT (issue #130) and lock out the session.  Swap the
+        # offending hint for the deterministic fallback — it is
+        # constructed to satisfy every gate by construction — and log
+        # the original payload at WARNING so the drift is fixable
+        # without losing a user session.
+        logger.warning(
+            "validate_live_move_response rejected pipeline hint (%s); "
+            "substituting deterministic fallback",
+            exc,
+        )
+        fallback = await asyncio.to_thread(
+            generate_live_reply,
+            req.fen,
+            req.uci,
+            str(player.id),
+            adaptation["teaching"]["style"],
+            stockfish_json,
+            True,  # force_deterministic — skip LLM, emit hand-tuned fallback
+        )
+        response["hint"] = fallback.hint
+        response["move_quality"] = fallback.move_quality
+        response["mode"] = fallback.mode
+        response["engine_signal"] = fallback.engine_signal
+        # Re-validate; if the deterministic fallback itself fails the
+        # boundary, that is a structural bug we DO want to surface.
+        validate_live_move_response(response)
     return response
 
 

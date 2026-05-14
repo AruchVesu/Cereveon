@@ -64,6 +64,22 @@ try:
     # content.  Mirrors the chat_pipeline.py pattern.
     from llm.rag.safety.output_firewall import check_output as _check_output  # type: ignore[import]
     from llm.rag.validators.mode_2_negative import validate_mode_2_negative as _validate_neg  # type: ignore[import]
+    # Mode-2 structure + semantic must also run inside the retry loop so
+    # the pipeline can retry / fall back instead of letting a borderline
+    # hint reach the API boundary's `validate_live_move_response` and
+    # 500 the route.  Without these, an LLM hint that uses "consider" /
+    # "plan" (structure) or "slight advantage" on an equal-band
+    # position (semantic) passes `_validate_neg` here, gets returned to
+    # `/live/move`, then the boundary validator raises
+    # `ExplainSchemaError` → 500 → token rotation cascade locks the
+    # session.  See issue #129.
+    from llm.rag.validators.mode_2_structure import (  # type: ignore[import]
+        validate_mode_2_structure as _validate_struct,
+    )
+    from llm.rag.validators.mode_2_semantic import (  # type: ignore[import]
+        validate_mode_2_semantic as _validate_sem,
+        Mode2Violation as _Mode2Violation,
+    )
     _LLM_AVAILABLE = True
 except Exception as _llm_import_exc:  # noqa: BLE001
     logger.warning("LLM imports unavailable — deterministic path only: %s", _llm_import_exc)
@@ -305,15 +321,26 @@ def _build_hint_llm(
     if not response:
         raise ValueError("Empty LLM response")
 
-    # Defense-in-depth: output firewall + Mode-2 negative validator.
-    # check_output raises OutputFirewallError on prompt-leak / bypass /
-    # identity / PII / harmful patterns; validate_mode_2_negative raises
-    # AssertionError on forbidden chess vocabulary (engine mentions,
-    # move suggestions, calculation language).  Either raise breaks
-    # this attempt and is caught by the retry loop in generate_live_reply
-    # — exhausted retries fall through to the deterministic _build_hint.
+    # Defense-in-depth: every Mode-2 gate the API boundary will re-run
+    # at `validate_live_move_response` must run here too, so a borderline
+    # LLM hint is caught inside the retry loop and either retried or
+    # falls through to the deterministic `_build_hint` — never escapes
+    # this function and 500s the route.
+    #   - _check_output    → prompt-leak / bypass / identity / PII / harmful
+    #   - _validate_neg    → forbidden chess vocabulary (engine, calculate,
+    #                        algebraic moves, ...)
+    #   - _validate_struct → advisory sections (recommended move, plan,
+    #                        "white can", consider, ...)
+    #   - _validate_sem    → equal-band words (slight advantage, better,
+    #                        initiative), mate-decisiveness, invented
+    #                        tactics when tactical_flags == []
+    # Each raises a specific exception type; the retry loop in
+    # `generate_live_reply` catches all of them under its broad
+    # `except Exception` and retries / falls back.
     _check_output(response)
     _validate_neg(response)
+    _validate_struct(response)
+    _validate_sem(response, engine_signal)
     return response
 
 
@@ -328,6 +355,7 @@ def generate_live_reply(
     player_id: str = "demo",
     explanation_style: str | None = None,
     stockfish_json: dict | None = None,
+    force_deterministic: bool = False,
 ) -> LiveMoveReply:
     """Generate a coaching hint for the human's move.
 
@@ -345,6 +373,13 @@ def generate_live_reply(
         Player identifier — not reflected in the engine signal.
     explanation_style :
         "simple" (beginner), "intermediate" (default), or "advanced".
+    force_deterministic :
+        Skip the LLM path entirely and emit the deterministic hint.
+        Used by the /live/move handler's safety net when the boundary
+        validator rejects an LLM-pipeline hint (`ExplainSchemaError`).
+        The deterministic builder is constructed to satisfy every
+        Mode-2 gate by construction, so this re-call cannot 500 the
+        route on the same validator drift.
 
     Returns
     -------
@@ -358,7 +393,7 @@ def generate_live_reply(
     move_quality = engine_signal.get("last_move_quality", "unknown")
 
     # --- LLM path with retry ---
-    if _LLM_AVAILABLE:
+    if _LLM_AVAILABLE and not force_deterministic:
         for attempt in range(_LIVE_MAX_RETRIES + 1):
             if attempt > 0:
                 time.sleep(_LIVE_RETRY_DELAY_SECONDS)

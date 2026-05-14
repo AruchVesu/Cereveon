@@ -94,26 +94,37 @@ def get_db():
 
 
 def get_current_player(
+    request: Request,
     response: Response,
     authorization: str | None = Header(None),
     db: DBSession = Depends(get_db),
 ):
     """Validate the Bearer token and return the matched Player.
 
-    Side effect: on successful validation, attaches an
-    ``X-Auth-Token`` response header containing a freshly-minted JWT
-    for the same session.  Combined with the sliding session window
-    in [AuthService.get_player_by_session], this gives the Android
-    client a transparent refresh path so the JWT exp can stay tight
-    (24h) without bouncing active users:
+    Side effect: on successful validation, mints a fresh JWT and stashes
+    ``(session_id, new_token)`` on ``request.state.pending_auth_rotation``.
+    The actual rotation (DB write + ``X-Auth-Token`` response header) is
+    committed by the ``commit_pending_auth_rotation`` ASGI middleware
+    registered on the FastAPI app — but ONLY when the response status is
+    2xx.  Splitting the work this way fixes the cascading-401 lockout
+    documented in issue #130: if the route handler then 5xxs (e.g. an
+    LLM transient surfaces past every retry layer), the rotation never
+    commits and the same JWT remains valid for the user's next request.
+
+    Combined with the sliding session window in
+    [AuthService.get_player_by_session], this gives the Android client a
+    transparent refresh path so the JWT exp can stay tight (24h) without
+    bouncing active users:
        - Active user: every authenticated call hands back a fresh
          24h JWT, the client saves it, the session slides forward.
        - Idle user: the JWT eventually expires; next call returns
          401 and the client routes to login.
 
-    The new token is NOT issued on the failure paths — an attacker
-    probing with a stolen-then-revoked token must not receive a
-    fresh JWT they could keep using.
+    The new token is NOT issued on the failure paths (this dep raises
+    HTTPException before reaching the mint step) and NOT committed on
+    5xx routes (the middleware checks ``response.status_code``) — an
+    attacker probing with a stolen-then-revoked token must not receive
+    a fresh JWT they could keep using.
 
     Header semantics
     ----------------
@@ -124,6 +135,15 @@ def get_current_player(
     the function body runs, which the Android client can't translate
     into a "log in again" UX (it only special-cases 401).  See
     AUTH_HDR_01 / AUTH_HDR_02 in test_auth_missing_header.py.
+
+    Compatibility shim
+    ------------------
+    ``response`` is kept in the signature for test callers that invoke
+    this dependency directly (e.g. ``_call_get_current_player`` in
+    ``test_auth_refresh_header.py``).  It is no longer written to here
+    — the middleware owns the response header.  Tests asserting on the
+    rotation outcome should use TestClient against a real authenticated
+    route to exercise the full handler→middleware path.
     """
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing token")
@@ -141,19 +161,20 @@ def get_current_player(
     if not player:
         raise HTTPException(status_code=401, detail="Session invalid")
 
-    # Mint a fresh JWT for this session and hand it back so the
-    # client can rotate its stored token transparently.  Rotate the
-    # stored hash BEFORE returning so the just-presented token can no
-    # longer validate (F-07 per-token revocation): a stolen copy of
-    # the previous JWT will fail get_player_by_session's hash check
-    # on its next call, even though the JWT signature + exp are still
-    # cryptographically valid.
+    # Mint a fresh JWT for this session.  The middleware commits the
+    # rotation (DB write + response header) only if the eventual
+    # response is 2xx — see issue #130.
     new_token = create_access_token(
         player_id=str(player.id),
         session_id=payload["session_id"],
     )
-    service.rotate_session_token(payload["session_id"], new_token)
-    response.headers["X-Auth-Token"] = new_token
+    request.state.pending_auth_rotation = {
+        "session_id": payload["session_id"],
+        "new_token": new_token,
+    }
+    # The ``response`` parameter is intentionally untouched here so the
+    # rotation header is sourced exclusively from the middleware path.
+    _ = response
     return player
 
 
