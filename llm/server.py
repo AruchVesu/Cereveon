@@ -108,16 +108,43 @@ ENV = os.getenv("SECA_ENV", "dev")
 IS_PROD = ENV in {"prod", "production"}
 DEBUG = not IS_PROD
 
-# API schema version pin.  Bumping requires a coordinated server +
-# Android release: bump this constant AND ``COACH_API_VERSION`` in
-# ``android/app/src/main/java/ai/chesscoach/app/ApiVersion.kt`` in the
-# same PR (see README.md > API schema versioning — the doc home
-# despite an earlier stale comment that pointed at API_CONTRACTS.md).
-# The version gate is Phase 1: lenient on missing, strict on mismatch.
-# Pinned by ``llm/tests/test_api_version_header.py`` (AVH_01..AVH_10);
+# API schema versioning.  Two constants drive the gate:
+#
+#   API_VERSIONS_SUPPORTED  — every version the server will accept on
+#                             inbound coaching requests.  Add a new
+#                             version here when shipping a v2 schema;
+#                             keep older versions in the tuple for the
+#                             grace period during which legacy clients
+#                             can still talk to the server.
+#   API_VERSION             — the *preferred* (current) version, the
+#                             one new clients should target.  Always
+#                             equals ``API_VERSIONS_SUPPORTED[-1]``;
+#                             retained as a separate name for
+#                             backwards-compat with the test pins
+#                             (AVH_01) + the doc-constant pin in PR 12.
+#
+# Bumping the preferred version requires updating ``COACH_API_VERSION``
+# in ``android/app/src/main/java/ai/chesscoach/app/ApiVersion.kt`` in
+# the same release; bumping the supported range alone (additive) does
+# not because old clients keep working.  See README.md > API schema
+# versioning for the rollout flow.
+#
+# Phase 2 gate (PR 14, 2026-05-15): lenient on missing, strict only on
+# unsupported version (Phase 1 was strict on any mismatch).  The
+# server also advertises ``X-API-Versions-Supported`` on every
+# response so clients can discover the accepted range without needing
+# a separate /version endpoint.
+#
+# Pinned by ``llm/tests/test_api_version_header.py`` (AVH_01..AVH_14);
 # the README↔code value link is pinned by
 # ``llm/tests/test_doc_constants_pinned.py::test_api_version_constant``.
-API_VERSION = "1"
+API_VERSIONS_SUPPORTED: tuple[str, ...] = ("1",)
+API_VERSION = API_VERSIONS_SUPPORTED[-1]
+
+#: Cached for the response middleware so the join doesn't run per
+#: request.  Comma-separated to match standard HTTP list semantics
+#: (e.g. RFC 7231 Accept, RFC 7231 Cache-Control directives).
+_API_VERSIONS_SUPPORTED_HEADER = ", ".join(API_VERSIONS_SUPPORTED)
 
 if IS_PROD and API_KEY is None:
     raise RuntimeError(
@@ -382,6 +409,14 @@ app.add_middleware(
     # tripping the default ``Access-Control-Allow-Headers`` filter.  See
     # the api_version_gate middleware below for the enforcement semantics.
     allow_headers=["Authorization", "Content-Type", "X-Api-Key", "X-API-Version"],
+    # Browser scripts can only read a small CORS-safelisted set of
+    # response headers without an explicit expose_headers list.  The
+    # two API-versioning headers are exposed here so browser-based
+    # clients (dev tools, future web UI) can read the server's
+    # accepted-version range without parsing the body.  Non-browser
+    # clients (Android via OkHttp/HttpURLConnection) read all response
+    # headers regardless and are unaffected.
+    expose_headers=["X-API-Version", "X-API-Versions-Supported"],
 )
 
 # ---- Request body size limit (512 KB) ------------------------------------
@@ -492,29 +527,39 @@ async def api_version_gate(request: Request, call_next):
     client_version = request.headers.get("x-api-version")
     is_discovery = request.url.path in _DISCOVERY_PATHS
 
-    if not is_discovery and client_version is not None and client_version != API_VERSION:
+    if (
+        not is_discovery
+        and client_version is not None
+        and client_version not in API_VERSIONS_SUPPORTED
+    ):
         return JSONResponse(
             status_code=400,
             content={
                 "detail": (
                     f"X-API-Version mismatch: client sent {client_version!r}, "
-                    f"server speaks {API_VERSION!r}.  Update the client to "
-                    f"the matching release."
+                    f"server supports [{_API_VERSIONS_SUPPORTED_HEADER}] "
+                    f"(current: {API_VERSION!r}).  Update the client to a "
+                    f"supported version."
                 )
             },
-            headers={"X-API-Version": API_VERSION},
+            headers={
+                "X-API-Version": API_VERSION,
+                "X-API-Versions-Supported": _API_VERSIONS_SUPPORTED_HEADER,
+            },
         )
 
     if not is_discovery and client_version is None:
-        # Lenient phase-1 mode — log once per request so operators can see
-        # the migration rate without parsing access logs.
+        # Lenient — log once per request so operators can see the
+        # migration rate of clients sending the version header without
+        # parsing access logs.
         logger.info(
-            "X-API-Version header missing on %s; proceeding (Phase 1 lenient mode)",
+            "X-API-Version header missing on %s; proceeding (lenient mode)",
             request.url.path,
         )
 
     response = await call_next(request)
     response.headers["X-API-Version"] = API_VERSION
+    response.headers["X-API-Versions-Supported"] = _API_VERSIONS_SUPPORTED_HEADER
     return response
 
 
@@ -680,7 +725,10 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(
         status_code=429,
         content={"error": "Too many requests"},
-        headers={"X-API-Version": API_VERSION},
+        headers={
+            "X-API-Version": API_VERSION,
+            "X-API-Versions-Supported": _API_VERSIONS_SUPPORTED_HEADER,
+        },
     )
 
 
