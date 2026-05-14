@@ -216,15 +216,27 @@
     -->
     <style name="Atrium.SettingsRow.Trailing" parent="Atrium.SettingsRow" />
 
+    <!--
+        Children of Atrium.SettingsRow use parent="" to break the
+        implicit dot-notation inheritance.  Without this, every
+        decorative child (dot, title, sub, chevron) silently inherits
+        ``android:clickable="true"`` from the parent row style and
+        consumes touch events that should have reached the row's
+        OnClickListener — making the rows feel unresponsive (one of
+        the children would catch the DOWN, do nothing, and the
+        row.onClick would never fire).  See the matching pattern on
+        Atrium.HomeLibraryRow.* / Atrium.HomeTab.* below.
+    -->
+
     <!-- Leading radio dot — 12dp circle, 12dp end margin. -->
-    <style name="Atrium.SettingsRow.Dot">
+    <style name="Atrium.SettingsRow.Dot" parent="">
         <item name="android:layout_width">12dp</item>
         <item name="android:layout_height">12dp</item>
         <item name="android:layout_marginEnd">@dimen/atrium_space_12</item>
     </style>
 
     <!-- Italic Cormorant title, 16sp ink. -->
-    <style name="Atrium.SettingsRow.Title">
+    <style name="Atrium.SettingsRow.Title" parent="">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:fontFamily">@font/cormorant_garamond</item>
@@ -234,7 +246,7 @@
     </style>
 
     <!-- Inter sub label after the title (e.g. "Patient, scholarly"). -->
-    <style name="Atrium.SettingsRow.Sub">
+    <style name="Atrium.SettingsRow.Sub" parent="">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:layout_marginStart">@dimen/atrium_space_8</item>
@@ -244,7 +256,7 @@
     </style>
 
     <!-- ›-shaped trailing chevron, italic Cormorant for visual rhyme. -->
-    <style name="Atrium.SettingsRow.Chevron">
+    <style name="Atrium.SettingsRow.Chevron" parent="">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:fontFamily">@font/cormorant_garamond</item>
@@ -285,8 +297,18 @@
         <item name="android:focusable">true</item>
     </style>
 
+    <!--
+        Children use parent="" — see Atrium.SettingsRow.* doc block
+        above.  Without it, the TitleBlock / Numeral / Chevron etc.
+        inherit ``android:clickable="true"`` from the row style and
+        consume DOWN events before the row's OnClickListener can run.
+        Verified empirically with a uiautomator dump: the TitleBlock
+        (~width:height = 815:334 dp; the bulk of every row) showed
+        clickable=true and intercepted every tap.
+    -->
+
     <!-- 28dp italic Cormorant numeral, accent cyan, slightly muted. -->
-    <style name="Atrium.HomeLibraryRow.Numeral">
+    <style name="Atrium.HomeLibraryRow.Numeral" parent="">
         <item name="android:layout_width">28dp</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:gravity">center</item>
@@ -298,7 +320,7 @@
     </style>
 
     <!-- Vertical block holding the title + sub. -->
-    <style name="Atrium.HomeLibraryRow.TitleBlock">
+    <style name="Atrium.HomeLibraryRow.TitleBlock" parent="">
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:layout_weight">1</item>
@@ -307,7 +329,7 @@
     </style>
 
     <!-- Italic Cormorant title, 18sp ink. -->
-    <style name="Atrium.HomeLibraryRow.Title">
+    <style name="Atrium.HomeLibraryRow.Title" parent="">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:fontFamily">@font/cormorant_garamond</item>
@@ -318,7 +340,7 @@
     </style>
 
     <!-- Italic Inter sub, 12sp muted, 2dp top margin. -->
-    <style name="Atrium.HomeLibraryRow.Sub">
+    <style name="Atrium.HomeLibraryRow.Sub" parent="">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:layout_marginTop">2dp</item>
@@ -329,7 +351,7 @@
     </style>
 
     <!-- ›-shaped trailing chevron — same as settings, slightly dimmer. -->
-    <style name="Atrium.HomeLibraryRow.Chevron">
+    <style name="Atrium.HomeLibraryRow.Chevron" parent="">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:fontFamily">@font/cormorant_garamond</item>
@@ -364,8 +386,17 @@
         <item name="android:paddingBottom">@dimen/atrium_space_4</item>
     </style>
 
+    <!--
+        Label / Dot use parent="" — see Atrium.SettingsRow.* doc block
+        above.  Without it, the Label TextView inside each tab
+        inherits clickable=true and intermittently consumes the tab
+        tap (the user reported "bottom tabs need to be pushed several
+        times" — the Label is most of the tab's hit box, the tap
+        often lands on it, no handler fires).
+    -->
+
     <!-- Inactive label — italic Cormorant 14sp muted. -->
-    <style name="Atrium.HomeTab.Label">
+    <style name="Atrium.HomeTab.Label" parent="">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:fontFamily">@font/cormorant_garamond</item>
@@ -380,7 +411,7 @@
     </style>
 
     <!-- Active-state dot below the label. -->
-    <style name="Atrium.HomeTab.Dot">
+    <style name="Atrium.HomeTab.Dot" parent="">
         <item name="android:layout_width">4dp</item>
         <item name="android:layout_height">4dp</item>
         <item name="android:layout_marginTop">@dimen/atrium_space_4</item>
