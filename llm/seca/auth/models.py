@@ -50,6 +50,21 @@ class Session(Base):
     # login(), and rotate_session_token() never writes NULL.
     token_hash: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # sha256 of the PREVIOUS JWT, still valid until [previous_token_expires_at].
+    # Rationale: under per-token rotation, two concurrent authenticated
+    # requests with the same starting token both rotate server-side;
+    # whichever request reaches `rotate_session_token` second sends a
+    # now-revoked token (the first request rotated past it) and 401s.
+    # Holding the previous hash for a brief grace window
+    # (AuthService.PREVIOUS_TOKEN_GRACE_SECONDS) accepts both tokens
+    # during the race window, eliminating the cascade without
+    # meaningfully weakening F-07: a stolen JWT still becomes useless
+    # within seconds of the legitimate owner's next call.  Both columns
+    # nullable so pre-grace-window rows / sessions without a previous
+    # rotation pass through cleanly.
+    previous_token_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    previous_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     expires_at: Mapped[datetime] = mapped_column(
         DateTime,

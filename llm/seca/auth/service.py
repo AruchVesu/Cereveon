@@ -173,7 +173,24 @@ class AuthService:
         if not session.token_hash:
             return None
         inbound_hash = hashlib.sha256(token.encode()).hexdigest()
-        if not hmac.compare_digest(inbound_hash, session.token_hash):
+        # Two valid hashes at any moment: the current token_hash and
+        # (within a brief grace window) the previous one.  The grace
+        # window absorbs the rotation race that happens when two
+        # authenticated requests carrying the same starting token
+        # overlap server-side: the first rotates ``current → new``,
+        # demoting the original to ``previous``; the second request
+        # then validates against ``previous`` and succeeds instead of
+        # 401-ing.  After ``previous_token_expires_at`` the previous
+        # hash is no longer accepted; F-07's "stolen JWT becomes
+        # useless within seconds" guarantee holds up to that bound.
+        token_matches_current = hmac.compare_digest(inbound_hash, session.token_hash)
+        token_matches_previous = (
+            session.previous_token_hash is not None
+            and session.previous_token_expires_at is not None
+            and now < session.previous_token_expires_at
+            and hmac.compare_digest(inbound_hash, session.previous_token_hash)
+        )
+        if not (token_matches_current or token_matches_previous):
             return None
 
         # Sliding-session window: extend expires_at when the session is
@@ -189,22 +206,45 @@ class AuthService:
         return session.player
 
     # ---------------------------
-    # Rotate session token (F-07)
+    # Rotate session token (F-07) + previous-token grace window
     # ---------------------------
+
+    # Window during which the previously-rotated token is still
+    # accepted.  Tuned to cover the typical client-side request
+    # overlap window: Mode-1 hint (~1-3 s) and Mode-2 chat (~15-45 s)
+    # are the two long-pole rotating calls, and the rare ones that
+    # overlap them (me, getActiveGame, ...) are sub-second.  Ten
+    # seconds covers the realistic overlap envelope while keeping
+    # F-07's "stolen JWT becomes useless within seconds" bound tight.
+    PREVIOUS_TOKEN_GRACE_SECONDS = 10
+
     def rotate_session_token(self, session_id: str, new_token: str) -> None:
-        """Rewrite session.token_hash to sha256(new_token).
+        """Rewrite session.token_hash to sha256(new_token); demote the
+        outgoing hash to previous_token_hash with a brief grace window.
 
         Called by router.get_current_player after minting a fresh JWT for
         the X-Auth-Token rotation header.  Once this commit lands, the
         previously-issued JWT for the same session no longer matches
-        session.token_hash and will fail get_player_by_session on its
-        next presentation — that's the per-token revocation lever
-        promised by F-07.
+        ``session.token_hash`` — but it does match
+        ``session.previous_token_hash`` until
+        ``previous_token_expires_at`` elapses
+        ([PREVIOUS_TOKEN_GRACE_SECONDS] from now).  The next call
+        carrying the freshly-rotated token validates against the
+        current hash as normal; any in-flight concurrent call carrying
+        the just-rotated-out token validates against the previous
+        hash until the grace window closes.
+
+        F-07 invariant preserved: a stolen JWT becomes useless within
+        ``PREVIOUS_TOKEN_GRACE_SECONDS`` of the legitimate owner's
+        next call (vs. instantly pre-grace).  Trade-off explicitly
+        accepted to fix the cascading-401 client lockout that
+        instant-rotation produced under realistic concurrency.
 
         Idempotent: re-running with the same new_token rewrites the
-        same hash.  Silent no-op if the session was deleted between
-        get_player_by_session and this call (race with logout /
-        password change).
+        same hash (and re-demotes the same previous hash with a
+        refreshed expiry, which is fine).  Silent no-op if the
+        session was deleted between get_player_by_session and this
+        call (race with logout / password change).
 
         Implementation note: uses an ORM-level attribute assignment
         rather than the bulk-write variant because the SECA freeze
@@ -216,6 +256,16 @@ class AuthService:
         session = self.db.query(Session).filter_by(id=session_id).first()
         if session is None:
             return  # session deleted between auth and rotation; no-op
+        # Only demote if the hash is actually changing — re-running
+        # rotation with the same token (idempotency case) would
+        # otherwise stash the new hash into both current and previous
+        # with a refreshed grace window, briefly accepting the new
+        # token from two slots which is harmless but pointless.
+        if session.token_hash and session.token_hash != new_hash:
+            session.previous_token_hash = session.token_hash
+            session.previous_token_expires_at = datetime.utcnow() + timedelta(
+                seconds=self.PREVIOUS_TOKEN_GRACE_SECONDS
+            )
         session.token_hash = new_hash
         self.db.commit()
 

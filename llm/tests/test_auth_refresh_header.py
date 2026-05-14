@@ -77,9 +77,7 @@ from llm.seca.auth.service import AuthService
 from llm.seca.auth.tokens import ACCESS_EXPIRE_MINUTES, decode_token
 
 
-def _simulate_2xx_middleware_commit(
-    request: Request, response: Response, db
-) -> None:
+def _simulate_2xx_middleware_commit(request: Request, response: Response, db) -> None:
     """Replay the production ``commit_pending_auth_rotation`` middleware
     for a successful (2xx) response cycle.
 
@@ -94,9 +92,7 @@ def _simulate_2xx_middleware_commit(
     pending = getattr(request.state, "pending_auth_rotation", None)
     if pending is None:
         return
-    AuthService(db).rotate_session_token(
-        pending["session_id"], pending["new_token"]
-    )
+    AuthService(db).rotate_session_token(pending["session_id"], pending["new_token"])
     response.headers["X-Auth-Token"] = pending["new_token"]
 
 
@@ -189,9 +185,9 @@ class TestRefreshHeaderOnSuccess:
         """REFRESH_HEADER_PRESENT_ON_SUCCESS."""
         token = _login(db)
         response, player = _call_get_current_player(token, db)
-        assert "x-auth-token" in {k.lower() for k in response.headers.keys()}, (
-            f"missing X-Auth-Token, got headers: {list(response.headers.keys())}"
-        )
+        assert "x-auth-token" in {
+            k.lower() for k in response.headers.keys()
+        }, f"missing X-Auth-Token, got headers: {list(response.headers.keys())}"
 
     def test_refresh_token_decodes_as_valid_jwt(self, db):
         """REFRESH_TOKEN_IS_VALID_JWT."""
@@ -251,9 +247,9 @@ class TestNoRefreshOnFailure:
     attacker harvest valid tokens by probing with junk."""
 
     def _assert_no_header_on_response(self, response: Response):
-        assert "x-auth-token" not in {k.lower() for k in response.headers.keys()}, (
-            f"failure path leaked X-Auth-Token, got: {list(response.headers.keys())}"
-        )
+        assert "x-auth-token" not in {
+            k.lower() for k in response.headers.keys()
+        }, f"failure path leaked X-Auth-Token, got: {list(response.headers.keys())}"
 
     def test_no_header_on_invalid_bearer(self, db):
         """NO_REFRESH_ON_INVALID_TOKEN."""
@@ -285,6 +281,7 @@ class TestNoRefreshOnFailure:
 
         # Manually expire the session row.
         from llm.seca.auth.models import Session as DbSession
+
         row = db.query(DbSession).filter_by(id=session_id).first()
         row.expires_at = datetime.utcnow() - timedelta(minutes=1)
         db.commit()
@@ -299,6 +296,20 @@ class TestNoRefreshOnFailure:
 # ---------------------------------------------------------------------------
 
 
+def _expire_grace_window(db, session_id: str) -> None:
+    """Force the previous-token grace window to be in the past so
+    tests can assert post-grace revocation behaviour without sleeping
+    PREVIOUS_TOKEN_GRACE_SECONDS in wall time.  Mirrors how
+    test_no_header_on_expired_session forces an expired session row.
+    """
+    from llm.seca.auth.models import Session as DbSession
+
+    row = db.query(DbSession).filter_by(id=session_id).first()
+    if row is not None:
+        row.previous_token_expires_at = datetime.utcnow() - timedelta(seconds=1)
+        db.commit()
+
+
 class TestF07PerTokenRevocation:
     """End-to-end revocation through the router dependency.
 
@@ -306,13 +317,16 @@ class TestF07PerTokenRevocation:
     because rotate_session_token didn't exist and get_player_by_session
     didn't compare hashes.  Post-F-07 the rotation step writes
     sha256(new_token) into the session row, so any previously-issued JWT
-    for the same session fails its next router call.
+    for the same session fails its next router call — after the
+    [AuthService.PREVIOUS_TOKEN_GRACE_SECONDS] grace window elapses
+    (see TestF07GraceWindow below for the in-window behaviour).
     """
 
-    def test_old_token_rejected_after_rotation(self, db):
+    def test_old_token_rejected_after_grace_window(self, db):
         """F07_OLD_TOKEN_REVOKED — present JWT_v1 once (router rotates
-        to JWT_v2), then present JWT_v1 again.  The second call must
-        401 — that's the per-token revocation lever.
+        to JWT_v2), force-expire the grace window, then present JWT_v1
+        again.  The second call must 401 — that's the per-token
+        revocation lever.
 
         Sleep between login and the first router call so the rotated
         JWT genuinely differs as a string.  Without this, login and
@@ -329,14 +343,20 @@ class TestF07PerTokenRevocation:
         token_v2 = response.headers["x-auth-token"]
         assert token_v2 != token_v1, "rotation must mint a different token"
 
-        # Same JWT_v1 presented again — the stored token_hash now
-        # tracks JWT_v2, so this must 401.
+        # Force the grace window to be in the past so we test the
+        # post-grace revocation path without burning 10 s.
+        session_id = decode_token(token_v1)["session_id"]
+        _expire_grace_window(db, session_id)
+
+        # Same JWT_v1 presented again — grace expired, must 401.
         with pytest.raises(HTTPException) as exc:
             _call_get_current_player(token_v1, db)
         assert exc.value.status_code == 401, (
-            "F-07 violated: previously-rotated JWT still validated.  "
-            "router.get_current_player must call rotate_session_token "
-            "after issuing the X-Auth-Token header."
+            "F-07 violated: previously-rotated JWT still validated after "
+            "grace expired.  router.get_current_player must call "
+            "rotate_session_token after issuing the X-Auth-Token header, "
+            "and get_player_by_session must reject previous_token_hash "
+            "matches once previous_token_expires_at is in the past."
         )
 
     def test_rotated_token_validates_then_rotates_again(self, db):
@@ -355,13 +375,115 @@ class TestF07PerTokenRevocation:
         token_v3 = response2.headers["x-auth-token"]
         assert token_v3 != token_v2 != token_v1
 
-        # And the chain continues: JWT_v2 is now stale.
+        # And the chain continues: JWT_v2 is now in the previous slot.
+        # Expire the grace window and confirm it no longer validates —
+        # mirrors the post-grace revocation path on JWT_v1 above.
+        session_id = decode_token(token_v1)["session_id"]
+        _expire_grace_window(db, session_id)
         with pytest.raises(HTTPException) as exc:
             _call_get_current_player(token_v2, db)
         assert exc.value.status_code == 401, (
             "rotation chain broken: a JWT that was just rotated past "
-            "should be rejected on its next presentation."
+            "should be rejected on its next presentation after grace expires."
         )
+
+
+# ---------------------------------------------------------------------------
+# 4b. F-07 grace window — accepts the previous token within the grace,
+#                        rejects it after.
+# ---------------------------------------------------------------------------
+
+
+class TestF07GraceWindow:
+    """Pin the grace-window behaviour added to absorb the rotation race.
+
+    Background: pre-grace, two concurrent authenticated requests with
+    the same starting JWT both reached the server.  The first rotated
+    the token_hash; the second arrived after rotation and 401'd as
+    if revoked, even though it was the legitimate owner's
+    request — and the client's cascade then locked the session.
+
+    Fix: rotate_session_token demotes the outgoing hash to
+    previous_token_hash with an expiry
+    AuthService.PREVIOUS_TOKEN_GRACE_SECONDS in the future.  Within
+    that window, get_player_by_session accepts either current or
+    previous.  After it, only current.
+    """
+
+    def test_previous_token_accepted_within_grace(self, db):
+        """GRACE_PREVIOUS_ACCEPTED_WITHIN_WINDOW — JWT_v1 still
+        validates immediately after the rotation to JWT_v2.  This is
+        the load-bearing contract that fixes the concurrent-rotation
+        cascade lockout."""
+        token_v1 = _login(db)
+        time.sleep(1.1)
+        # First call: rotates to JWT_v2.
+        _call_get_current_player(token_v1, db)
+
+        # JWT_v1 is now in previous_token_hash with a grace window of
+        # PREVIOUS_TOKEN_GRACE_SECONDS.  Present it again — must
+        # validate, NOT 401.
+        response, player = _call_get_current_player(token_v1, db)
+        assert player is not None, (
+            "Previous token within grace must validate.  Without this, "
+            "concurrent rotating requests on the same starting token "
+            "cause the cascading-401 client lockout."
+        )
+        # And rotates again — the X-Auth-Token returned here is
+        # whatever the helper's middleware-simulate yielded; we don't
+        # pin the specific value, only that the call succeeded.
+        assert "x-auth-token" in {k.lower() for k in response.headers.keys()}
+
+    def test_previous_token_rejected_after_grace(self, db):
+        """GRACE_PREVIOUS_REJECTED_AFTER_WINDOW — once
+        previous_token_expires_at is in the past, the previous token
+        is no longer accepted; F-07 revocation is fully in force."""
+        token_v1 = _login(db)
+        time.sleep(1.1)
+        _call_get_current_player(token_v1, db)  # rotates to JWT_v2
+
+        # Force grace to be in the past.
+        session_id = decode_token(token_v1)["session_id"]
+        _expire_grace_window(db, session_id)
+
+        with pytest.raises(HTTPException) as exc:
+            _call_get_current_player(token_v1, db)
+        assert exc.value.status_code == 401, (
+            "Grace window must NOT extend revocation past "
+            "previous_token_expires_at.  After grace, the previous "
+            "token is fully revoked — that's the F-07 guarantee."
+        )
+
+    def test_concurrent_rotation_both_calls_succeed(self, db):
+        """GRACE_CONCURRENT_ROTATION — simulate two near-simultaneous
+        authenticated calls carrying the SAME starting token (the
+        production race the grace window fixes).  Both must succeed:
+        the first rotates v1→v2 and demotes v1 to previous; the
+        second presents v1, matches previous, and rotates again
+        (this time previous→v2's predecessor, i.e. v1 re-demoted
+        with a refreshed grace).  Neither 401s.
+        """
+        token_v1 = _login(db)
+        time.sleep(1.1)
+
+        # First call rotates to v2.
+        response_a, player_a = _call_get_current_player(token_v1, db)
+        assert player_a is not None
+
+        # Simulated second call from a concurrent request that still
+        # carries v1 (it started before A's rotation committed).
+        # Must NOT 401.
+        response_b, player_b = _call_get_current_player(token_v1, db)
+        assert player_b is not None, (
+            "Concurrent request with the previous token must validate "
+            "inside the grace window — this is the whole point of the "
+            "grace window (it fixes the cascading-401 lockout)."
+        )
+        # Both calls receive a new X-Auth-Token via the middleware
+        # simulation; we don't pin the specific values, only that
+        # both succeeded and got refreshed headers.
+        assert "x-auth-token" in {k.lower() for k in response_a.headers.keys()}
+        assert "x-auth-token" in {k.lower() for k in response_b.headers.keys()}
 
 
 # ---------------------------------------------------------------------------
@@ -396,18 +518,16 @@ class TestCascadePreventionOnNon2xx:
         # First call: dep runs (mints + queues), route "5xxs" → middleware
         # skip → no commit.  Use simulate_success=False to mirror that path.
         time.sleep(1.1)
-        response_1, _ = _call_get_current_player(
-            token_v1, db, simulate_success=False
-        )
-        assert "x-auth-token" not in {k.lower() for k in response_1.headers.keys()}, (
-            "5xx response leaked X-Auth-Token — middleware skip is the contract"
-        )
+        response_1, _ = _call_get_current_player(token_v1, db, simulate_success=False)
+        assert "x-auth-token" not in {
+            k.lower() for k in response_1.headers.keys()
+        }, "5xx response leaked X-Auth-Token — middleware skip is the contract"
 
         # Second call: same JWT, route succeeds.  Must still validate.
         response_2, player = _call_get_current_player(token_v1, db)
-        assert player is not None, (
-            "token_v1 was revoked after a 5xx — cascade lockout regressed (#130)"
-        )
+        assert (
+            player is not None
+        ), "token_v1 was revoked after a 5xx — cascade lockout regressed (#130)"
 
     def test_4xx_response_leaves_old_token_valid(self, db):
         """CASCADE_NO_LOCKOUT_ON_4XX — same property for handler-raised
@@ -417,16 +537,14 @@ class TestCascadePreventionOnNon2xx:
         time.sleep(1.1)
         # Same simulation: dep ran but middleware skipped because the
         # route was 4xx.
-        response_1, _ = _call_get_current_player(
-            token_v1, db, simulate_success=False
-        )
+        response_1, _ = _call_get_current_player(token_v1, db, simulate_success=False)
         assert "x-auth-token" not in {k.lower() for k in response_1.headers.keys()}
 
         # Token still works.
         _, player = _call_get_current_player(token_v1, db)
-        assert player is not None, (
-            "token_v1 was revoked after a 4xx — cascade lockout regressed (#130)"
-        )
+        assert (
+            player is not None
+        ), "token_v1 was revoked after a 4xx — cascade lockout regressed (#130)"
 
     def test_consecutive_5xx_does_not_compound_lockout(self, db):
         """CASCADE_REPEATED_5XX — even multiple consecutive 5xx

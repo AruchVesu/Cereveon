@@ -142,14 +142,25 @@ def test_rotation_round_trip(service, db):
 
 
 def test_old_token_revoked_after_rotation(service, db):
-    """AUTH_ROT_02 — closes the F-07 stolen-JWT-lives-until-exp gap.
+    """AUTH_ROT_02 — closes the F-07 stolen-JWT-lives-until-exp gap,
+    bounded by the [AuthService.PREVIOUS_TOKEN_GRACE_SECONDS] window.
 
     After the router rotates token_hash to sha256(JWT_v2), the
     previously-issued JWT_v1 must no longer validate even though its
     JWT signature is still cryptographically valid and its exp claim
-    has not yet elapsed.  This is the per-token revocation lever F-07
-    introduces.
+    has not yet elapsed.  Per-token revocation is the F-07 lever.
+
+    Grace-window caveat (added with the rotation-race fix): within
+    [PREVIOUS_TOKEN_GRACE_SECONDS] of rotation, JWT_v1 IS still
+    accepted via the previous_token_hash slot — that's the
+    load-bearing fix for the concurrent-request cascade.  This test
+    force-expires the grace window before asserting revocation, so
+    the assertion still pins the "stolen JWT becomes useless within
+    seconds" property without depending on wall-clock sleep.
     """
+    from llm.seca.auth.models import Session as DbSession
+    from datetime import datetime, timedelta
+
     service.register("revoke@example.com", "revoke-pass-1")
     jwt_v1, player = service.login("revoke@example.com", "revoke-pass-1")
     session_id = decode_token(jwt_v1)["session_id"]
@@ -163,16 +174,25 @@ def test_old_token_revoked_after_rotation(service, db):
     jwt_v2 = create_access_token(player_id=str(player.id), session_id=session_id)
     service.rotate_session_token(session_id, jwt_v2)
 
-    # JWT_v1 is now stale and must be rejected.
-    assert service.get_player_by_session(session_id, jwt_v1) is None, (
-        "AUTH_ROT_02 violated: after rotation, the superseded JWT still "
-        "validated.  rotate_session_token must update token_hash and "
-        "get_player_by_session must hash-check the inbound token.  "
-        "Without both halves, the F-07 per-token revocation gap reopens."
-    )
-
     # JWT_v2 still validates (sanity check).
     assert service.get_player_by_session(session_id, jwt_v2) is not None
+
+    # Force-expire the previous-token grace window so we can assert
+    # the post-grace revocation contract without waiting 10 s of
+    # wall-clock time.
+    row = db.query(DbSession).filter_by(id=session_id).first()
+    row.previous_token_expires_at = datetime.utcnow() - timedelta(seconds=1)
+    db.commit()
+
+    # JWT_v1 is now stale AND outside the grace window — must be rejected.
+    assert service.get_player_by_session(session_id, jwt_v1) is None, (
+        "AUTH_ROT_02 violated: after rotation AND grace expiry, the "
+        "superseded JWT still validated.  rotate_session_token must "
+        "update token_hash AND demote the old hash with a bounded "
+        "expiry; get_player_by_session must reject previous-hash matches "
+        "once previous_token_expires_at is in the past.  Without all "
+        "three, the F-07 per-token revocation gap reopens."
+    )
 
 
 def test_get_player_rejects_tampered_token(service, db):

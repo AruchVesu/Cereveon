@@ -78,6 +78,24 @@ def init_schema() -> None:
                 )
                 conn.commit()
 
+            # F-07 rotation race grace window — see Session model + service.
+            # Sessions table existed before previous_token_hash /
+            # previous_token_expires_at were added, so legacy SQLite files
+            # need these columns ADDed in-place.  Postgres deployments get
+            # them from create_all() above and skip this step.  Both
+            # columns nullable so existing rows pass through without a
+            # backfill.
+            session_rows = conn.execute(text("PRAGMA table_info(sessions)")).fetchall()
+            session_cols = {r[1] for r in session_rows}
+            if "previous_token_hash" not in session_cols:
+                conn.execute(text("ALTER TABLE sessions ADD COLUMN previous_token_hash TEXT"))
+                conn.commit()
+            if "previous_token_expires_at" not in session_cols:
+                conn.execute(
+                    text("ALTER TABLE sessions ADD COLUMN previous_token_expires_at DATETIME")
+                )
+                conn.commit()
+
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
