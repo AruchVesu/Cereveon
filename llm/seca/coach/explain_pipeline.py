@@ -217,10 +217,18 @@ def generate_validated_explanation(
 ):
     # Authoritative sanitization point for the LLM pipeline.
     #
-    # Forward-looking: generate_validated_explanation is not yet wired to an
-    # HTTP endpoint — the /explain route currently uses SafeExplainer.  When
-    # user_query is plumbed through to the LLM, this guard ensures injection
-    # is blocked before any LLM call.
+    # Not wired to any HTTP endpoint — ``/explain`` and ``/seca/explain``
+    # are intentionally deterministic SAFE_V1 routes (free, fast,
+    # CI-friendly); the Mode-2 LLM path is reached via ``/chat`` and
+    # ``/chat/stream``, which call ``generate_chat_reply`` directly.
+    # This function is alive as the test surface for the retry /
+    # validate / fallback assembly (``test_firewall_integration.py``,
+    # ``test_explain_pipeline_retry.py``) but has no live HTTP caller.
+    #
+    # The PR 10 doc-honesty pass aligned README + SECA.md with this
+    # reality; the previous "forward-looking, not yet wired" comment
+    # implied wiring was on the roadmap when it was actually a
+    # deliberate non-choice.
     #
     # server.py schema validation is an independent early-rejection layer
     # (returns HTTP 422 before reaching here).  Both call sites are

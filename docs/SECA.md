@@ -173,7 +173,7 @@ path:
 | **analysis** | `seca/analysis/` | `HistoricalAnalysisPipeline` — read-only per-player roll-up over recent games. |
 | **brain** (allowlisted) | `seca/brain/bandit/{context_builder, experience_store, decision}` + `seca/brain/{models, training/models}` | Context builder, LinUCB head, experience store, plus SQLAlchemy schema modules. Everything else under `brain/` is dormant. |
 | **learning** (allowlisted) | `seca/learning/{player_embedding, outcome_tracker, skill_update}` | Player embedding encoder + outcome tracker + skill-state utilities. |
-| **inference** | `seca/inference/` | `POST /seca/explain` — full ESV → RAG → LLM → validators pipeline. |
+| **inference** | `seca/inference/` | `POST /seca/explain` — deterministic ESV → SafeExplainer pipeline (SAFE_V1, no LLM). The Mode-2 LLM path is reachable via `/chat`; this route is the free, CI-friendly deterministic counterpart. |
 | **engines** | `seca/engines/stockfish/` | Stockfish process pool + FEN move cache. |
 | **safety** | `seca/safety/` | Freeze guard — runtime enforcement of the no-retraining policy. |
 | **runtime** | `seca/runtime/` | `SAFE_MODE` constant + `assert_safe()` import-time gate. |
@@ -279,8 +279,8 @@ violations (39 test cases).
 | `GET /game/active` | `storage/repo.get_active_game` | (cross-device resume) |
 | `GET /game/history` | `events/storage.EventStorage.get_recent_games` | (read-only history) |
 | `GET /repertoire` | `storage/repo.list_repertoire` (+ default fallback) | (study material) |
-| `POST /seca/explain` | `inference/router.py` → ESV → RAG → LLM → validators | (Mode-2 explainer, not the SECA loop) |
-| `POST /chat`, `POST /chat/stream` | `coach/chat_pipeline.py` (Mode-2 explainer) | (Mode-2, not the SECA loop) |
+| `POST /seca/explain` | `inference/router.py` → `extract_engine_signal({}, fen)` → `SafeExplainer` | (SAFE_V1 deterministic, no LLM; not the SECA loop) |
+| `POST /chat`, `POST /chat/stream` | `coach/chat_pipeline.py` (Mode-2 LLM explainer with RAG + validators) | (Mode-2, not the SECA loop) |
 
 Authenticated endpoints depend on `seca/auth/router.get_current_player`,
 which validates the session AND stashes a pending `X-Auth-Token`

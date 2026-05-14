@@ -331,7 +331,7 @@ the server at startup when `SECA_ENV=prod` — by design.
 | POST | `/move` | JWT | 30/min | Request opponent move |
 | POST | `/live/move` | JWT | 30/min | Real-time coaching hint on player move |
 | POST | `/analyze` | API key | 30/min | Engine signal only (no LLM) |
-| POST | `/explain` | API key | — | Full Mode-2 explanation |
+| POST | `/explain` | API key | — | Deterministic SAFE_V1 explanation (no LLM) — see note below |
 | POST | `/chat` | API key | 10/min | Multi-turn coaching conversation |
 | POST | `/chat/stream` | API key | 10/min | SSE-streamed chat |
 | POST | `/explanation_outcome` | API key | 20/min | Post-explanation learning outcome |
@@ -355,6 +355,17 @@ the server at startup when `SECA_ENV=prod` — by design.
 | POST | `/game/finish` | JWT | — | Close a game; runs SECA loop |
 | POST | `/game/coach-feedback` | JWT | — | Per-game coach feedback |
 | GET | `/game/history` | JWT | — | Recent games |
+
+> **`/explain` and `/seca/explain` are intentionally deterministic.** Both
+> routes run the engine signal through `SafeExplainer` and return prose
+> templated from the ESV bands — no LLM call, no RAG retrieval, no
+> contract validators (the templates are safe by construction). The
+> real Mode-2 LLM pipeline (RAG retrieval → prompt rendering → DeepSeek
+> → output validators → deterministic fallback) is reachable via
+> `/chat` and `/chat/stream`. Keeping the `/explain` routes
+> deterministic means they are free, fast, and CI-friendly; the Android
+> client routes coaching conversation through `/chat` and uses
+> `/explain` for cheap structured explanations only.
 
 ### API schema versioning
 

@@ -71,17 +71,25 @@ class TestEventsRouterNoPrintStatements:
 class TestExplainEndpointWiring:
     """WIRE-02: /explain must call safe_explainer.explain(), not generate_validated_explanation().
 
-    generate_validated_explanation() calls an external Ollama process; using it in
-    /explain would make the endpoint unavailable when Ollama is offline.
-    SafeExplainer is the deterministic, always-available fallback that must be used.
+    /explain is intentionally deterministic SAFE_V1 — engine signal →
+    SafeExplainer → templated prose.  Wiring the Mode-2 LLM pipeline
+    (``generate_validated_explanation``) here would make the endpoint
+    a paid DeepSeek call on every hit; the architectural choice is to
+    keep ``/explain`` free, fast, CI-friendly, and always-available.
+    The Mode-2 LLM path is reached via ``/chat`` and ``/chat/stream``.
+    The historical rationale referenced Ollama (the pre-PR-8 LLM
+    provider); post-PR-8 the same principle applies to DeepSeek.
+    Pinned by README's endpoint catalogue + SECA.md /seca/explain
+    description (both updated in PR 10).
     """
 
     def test_explain_function_calls_safe_explainer(self):
         source = _SERVER_PY.read_text(encoding="utf-8")
         assert "safe_explainer.explain" in source, (
             "server.py /explain endpoint must call safe_explainer.explain(). "
-            "The LLM pipeline (generate_validated_explanation) requires Ollama "
-            "and must not be wired to the /explain HTTP route."
+            "The LLM pipeline (generate_validated_explanation) is the paid "
+            "DeepSeek path and must not be wired to the /explain HTTP route; "
+            "the Mode-2 LLM path is /chat and /chat/stream."
         )
 
     def test_explain_function_does_not_call_llm_pipeline_directly(self):
@@ -103,8 +111,8 @@ class TestExplainEndpointWiring:
                 )
                 assert name != "generate_validated_explanation", (
                     "explain() must not call generate_validated_explanation() — "
-                    "that function requires a live Ollama process. "
-                    "Use safe_explainer.explain() instead."
+                    "the /explain route is intentionally deterministic SAFE_V1; "
+                    "use safe_explainer.explain().  Mode-2 LLM path is /chat."
                 )
 
 
@@ -232,25 +240,23 @@ class TestUnusedModelPresent:
 
 
 # ===========================================================================
-# WIRE-06  generate_validated_explanation is imported in server.py
+# WIRE-06  generate_validated_explanation is imported in server.py (RETIRED in PR 10)
 # ===========================================================================
-
-
-class TestExplainPipelineImported:
-    """WIRE-06: generate_validated_explanation must remain imported in server.py.
-
-    The import ensures that the module is loadable and type-checked even though
-    the function is not yet wired to an HTTP endpoint.  Removing the import
-    would silently break the LLM pipeline at wiring time.
-    """
-
-    def test_generate_validated_explanation_imported(self):
-        source = _SERVER_PY.read_text(encoding="utf-8")
-        assert "generate_validated_explanation" in source, (
-            "generate_validated_explanation was removed from server.py imports. "
-            "Keep the import to ensure the module stays type-checked and wiring "
-            "the function to /explain in the future does not break silently."
-        )
+#
+# Pre-PR-10 ``server.py`` carried a "future-wiring placeholder" import
+# of ``generate_validated_explanation``.  WIRE-06 pinned the import to
+# prevent silent removal.  In practice the function was never wired
+# (and never going to be — the Mode-2 LLM path is reached via /chat;
+# /explain stays deterministic SAFE_V1 by design — see WIRE-02 below).
+# PR 10 retired both the dead import and this pinning test as part of
+# the doc-honesty pass that aligned README + SECA.md with the
+# deterministic-by-design /explain behaviour.  The function itself
+# still lives in ``llm.seca.coach.explain_pipeline`` and is covered
+# by ``test_firewall_integration.py`` + ``test_explain_pipeline_retry.py``.
+#
+# Intentionally left as a comment marker rather than deleted so a
+# future contributor searching for "WIRE-06" lands here and finds the
+# rationale.
 
 
 # ===========================================================================

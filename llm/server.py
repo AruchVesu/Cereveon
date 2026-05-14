@@ -55,7 +55,14 @@ from llm.seca.engines.stockfish.pool import (
     engine_config_fingerprint,
 )
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
-from llm.seca.coach.explain_pipeline import generate_validated_explanation
+# NOTE (PR 10): ``generate_validated_explanation`` was previously
+# imported here as a "leave it ready for future wiring" placeholder.
+# The function is alive (exercised by ``test_firewall_integration.py``
+# and ``test_explain_pipeline_retry.py``) but never wired into any
+# HTTP route — the Mode-2 LLM path is reached via /chat and
+# /chat/stream; /explain and /seca/explain are intentionally
+# deterministic SAFE_V1.  The dead import + its WIRE-06 pinning test
+# were both retired to align with reality.
 from llm.rag.validators.explain_response_schema import (
     validate_explain_response,
     validate_chat_response,
