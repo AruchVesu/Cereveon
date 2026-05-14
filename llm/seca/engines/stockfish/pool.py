@@ -8,16 +8,28 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from typing import cast
 
 import chess
 import chess.engine
 
 logger = logging.getLogger(__name__)
 
+# ``redis`` is an optional dependency.  The ``# type: ignore[assignment]``
+# is intentional: when the import fails, ``redis`` is reassigned to
+# ``None``, producing a ``Module | None`` union mypy rejects under
+# strict assignment-narrowing.  Every caller below guards on
+# ``redis is not None`` before touching it, so the ignore is locally
+# scoped and the runtime behaviour is unchanged.
+# ``redis`` is a module name, not a constant — the ``invalid-name``
+# disable below is the pylint mark for the ``redis = None`` fallback
+# (pylint sees the module-shadow as a constant assignment).
+# pylint: disable=invalid-name
 try:
-    import redis
+    import redis  # noqa: F401  — re-exported as ``redis`` for the guards below
 except Exception:  # pragma: no cover - optional dependency
-    redis = None
+    redis = None  # type: ignore[assignment]
+# pylint: enable=invalid-name
 
 
 @dataclass(frozen=True)
@@ -91,7 +103,7 @@ def engine_config_fingerprint(
 
 
 class FenMoveCache:
-    def __init__(
+    def __init__(  # pylint: disable=redefined-outer-name
         self,
         *,
         redis_url: str | None,
@@ -100,6 +112,13 @@ class FenMoveCache:
         max_memory_items: int = 500,
         engine_config_fingerprint: str = "",
     ):
+        # The ``engine_config_fingerprint`` parameter intentionally
+        # shadows the module-level ``engine_config_fingerprint``
+        # function name — callers pass the fingerprint VALUE, which
+        # is the result of calling the function.  Renaming the
+        # parameter would be a breaking change for every caller (the
+        # parameter is keyword-only).  pylint disable scoped to this
+        # method only.
         self._ttl_seconds = ttl_seconds
         self._namespace = namespace
         self._engine_config_fingerprint = engine_config_fingerprint
@@ -117,7 +136,7 @@ class FenMoveCache:
             except Exception:
                 self._redis = None
 
-    def _cache_key(
+    def _cache_key(  # pylint: disable=unused-argument
         self,
         *,
         fen: str,
@@ -126,6 +145,13 @@ class FenMoveCache:
         target_elo: int | None,
         line_key: str | None = None,
     ) -> str:
+        # ``movetime_ms`` is intentionally part of the signature for
+        # call-site symmetry with ``get`` / ``set`` but is NOT included
+        # in the cache-key digest: positions cached at one movetime
+        # are reused for any subsequent movetime.  The cache-key
+        # equivalence class is documented in docs/API_CONTRACTS.md.
+        # The pylint disable above is scoped to this method only.
+        #
         # Keep key coarse for movetime, but include line_key to disambiguate
         # equivalent FEN requests coming from different move-line contexts.
         # Engine config fingerprint participates in the digest so config
@@ -157,7 +183,14 @@ class FenMoveCache:
 
         if self._redis is not None:
             try:
-                cached = self._redis.get(key)
+                # ``redis-py``'s stubs surface ``Redis.get`` as a union
+                # of sync (returns ``bytes | None``) and async (returns
+                # ``Awaitable[Any]``) signatures because the same class
+                # name is reused for both clients.  ``self._redis`` is a
+                # sync client (constructed via ``Redis.from_url`` above),
+                # so the runtime value is ``bytes | None``.  ``cast``
+                # picks the right side without a runtime cost.
+                cached = cast("bytes | None", self._redis.get(key))
                 if cached:
                     return cached.decode("utf-8")
             except Exception:
@@ -165,11 +198,14 @@ class FenMoveCache:
 
         now = time.time()
         with self._lock:
-            cached = self._memory_cache.get(key)
-            if not cached:
+            # L1 fallback.  Renamed from ``cached`` (used above for the
+            # Redis path) so mypy doesn't latch the variable's type at
+            # ``bytes | None`` and reject the L1 tuple shape.
+            entry = self._memory_cache.get(key)
+            if not entry:
                 return None
 
-            value, expires_at = cached
+            value, expires_at = entry
             if expires_at < now:
                 self._memory_cache.pop(key, None)
                 return None

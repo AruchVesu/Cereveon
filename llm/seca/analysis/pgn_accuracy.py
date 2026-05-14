@@ -35,34 +35,13 @@ from __future__ import annotations
 import io
 import logging
 from dataclasses import dataclass
-from typing import Protocol
 
 import chess
 import chess.pgn
 
+from llm.seca.engines.stockfish.pool import StockfishEnginePool
+
 logger = logging.getLogger(__name__)
-
-
-class _EnginePool(Protocol):
-    """Structural type for the engine-pool dependency.
-
-    Defined as a Protocol so this module does not need a runtime
-    import of ``llm.seca.engines.stockfish.pool`` — which keeps the
-    mypy strict-typed surface narrow (pool.py is not on the typed
-    surface today; following its imports here would surface
-    pre-existing type seams that are out of scope for this PR).
-    Any object exposing the keyword-only ``evaluate_position``
-    method satisfies the Protocol; the production
-    ``StockfishEnginePool`` does.
-    """
-
-    def evaluate_position(
-        self,
-        *,
-        fen: str,
-        movetime_ms: int,
-        queue_timeout_ms: int | None = ...,
-    ) -> dict: ...
 
 
 # Per-move classification thresholds (centipawn loss from the mover's
@@ -136,7 +115,7 @@ class AccuracyAnalysis:
 
 def compute_accuracy_from_pgn(
     pgn_text: str,
-    engine_pool: _EnginePool,
+    engine_pool: StockfishEnginePool,
     *,
     result: str,
     movetime_ms: int = 50,
@@ -219,7 +198,7 @@ def compute_accuracy_from_pgn(
 
 
 def _evaluate_cp(
-    pool: _EnginePool,
+    pool: StockfishEnginePool,
     fen: str,
     movetime_ms: int,
 ) -> int:
