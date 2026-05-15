@@ -234,76 +234,14 @@ class TestEngineEvalContractSchema:
 
 
 # ---------------------------------------------------------------------------
-# 2. GET /next-training/{player_id} (server.py)
+# 2. GET /next-training/{player_id} — RETIRED in PR 26 (2026-05-15).  The
+# placeholder endpoint with hardcoded "demo weaknesses" was removed; its
+# Android caller was the fallback path that fired only when /curriculum/next
+# failed.  See test_curriculum_next_contract.py for the surviving
+# training-recommendation schema pins (/curriculum/next).  The schema-conflict
+# pin below (TestNextTrainingSchemaConflict) is also gone — both endpoints
+# coexisted with different shapes; the mismatch is resolved by retirement.
 # ---------------------------------------------------------------------------
-
-_NEXT_TRAINING_REQUIRED = {"topic", "difficulty", "format", "expected_gain"}
-
-
-class TestNextTrainingContractSchema:
-    """GET /next-training/{player_id} response schema validation."""
-
-    def _call_next_training(self, monkeypatch, player_id="p1"):
-        import llm.server as server_module
-        from llm.seca.curriculum.types import TrainingTask
-
-        fake_task = TrainingTask(
-            topic="tactics",
-            difficulty=0.6,
-            format="puzzle",
-            expected_gain=2.5,
-        )
-
-        class _FakeScheduler:
-            def next_task(self, weaknesses, rating):
-                return fake_task
-
-        monkeypatch.setattr(server_module, "scheduler", _FakeScheduler())
-
-        # Call handler directly.  After AUT-01 the dependency is
-        # get_current_player (JWT-derived) and the handler enforces
-        # path player_id == str(player.id).  Pin both to the same id
-        # so the legitimate code path is exercised.
-        from types import SimpleNamespace as _SN
-        fake_player = _SN(id=player_id, rating=1200.0, confidence=0.5)
-        return server_module.next_training(player_id=player_id, player=fake_player)
-
-    def test_response_has_all_required_fields(self, monkeypatch):
-        result = self._call_next_training(monkeypatch)
-        missing = _NEXT_TRAINING_REQUIRED - set(result.keys())
-        assert not missing, f"Response missing required fields: {missing}"
-
-    def test_topic_is_string(self, monkeypatch):
-        result = self._call_next_training(monkeypatch)
-        _assert_str(result["topic"], "topic")
-
-    def test_difficulty_is_numeric(self, monkeypatch):
-        result = self._call_next_training(monkeypatch)
-        _assert_float(result["difficulty"], "difficulty")
-
-    def test_format_is_string(self, monkeypatch):
-        result = self._call_next_training(monkeypatch)
-        _assert_str(result["format"], "format")
-
-    def test_expected_gain_is_numeric(self, monkeypatch):
-        result = self._call_next_training(monkeypatch)
-        _assert_float(result["expected_gain"], "expected_gain")
-
-    def test_no_exercise_type_field(self, monkeypatch):
-        """/next-training must NOT return 'exercise_type' (that belongs to /curriculum/next)."""
-        result = self._call_next_training(monkeypatch)
-        assert "exercise_type" not in result, (
-            "exercise_type must not appear in /next-training response "
-            "(belongs to /curriculum/next schema)"
-        )
-
-    def test_no_payload_field(self, monkeypatch):
-        """/next-training must NOT return 'payload' (that belongs to /curriculum/next)."""
-        result = self._call_next_training(monkeypatch)
-        assert "payload" not in result, (
-            "payload must not appear in /next-training response "
-            "(belongs to /curriculum/next schema)"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -617,73 +555,12 @@ class TestCoachEndpointMissing:
             "Update docs/API_CONTRACTS.md to document the new endpoint."
         )
 
-class TestNextTrainingSchemaConflict:
-    """
-    Contract mismatch: /next-training and /curriculum/next return different schemas.
-
-    These two endpoints serve the same purpose but have incompatible response shapes.
-    This test ensures neither endpoint silently starts returning the other's schema.
-    """
-
-    def test_next_training_does_not_return_exercise_type(self, monkeypatch):
-        """Regression guard: /next-training must never start returning exercise_type."""
-        import llm.server as server_module
-        from llm.seca.curriculum.types import TrainingTask
-
-        fake_task = TrainingTask(topic="endgame", difficulty=0.5, format="game", expected_gain=1.0)
-        monkeypatch.setattr(
-            server_module, "scheduler", SimpleNamespace(next_task=lambda *a: fake_task)
-        )
-        result = server_module.next_training(
-            player_id="p1",
-            player=SimpleNamespace(id="p1", rating=1200.0, confidence=0.5),
-        )
-        assert "exercise_type" not in result
-
-    def test_curriculum_next_schema_has_exercise_type_not_format(self):
-        """
-        CurriculumGenerator.generate() returns a TrainingPlan with exercise_type,
-        not format.  If someone renames this field, /curriculum/next contract breaks.
-        """
-        from llm.seca.curriculum.generator import CurriculumGenerator
-
-        # Verify the attribute name on the return type
-        sig = CurriculumGenerator.generate
-        import inspect
-
-        src = inspect.getsource(sig)
-        assert "exercise_type" in src, (
-            "CurriculumGenerator.generate() no longer uses 'exercise_type'. "
-            "Update /curriculum/next contract in docs/API_CONTRACTS.md."
-        )
-        assert "format" not in src or "exercise_type" in src, (
-            "CurriculumGenerator has changed its field naming — "
-            "the /curriculum/next contract needs review."
-        )
-
-    def test_next_training_schema_fields_are_stable(self, monkeypatch):
-        """
-        The four fields of /next-training are: topic, difficulty, format, expected_gain.
-        If the handler changes these names, the Android client breaks.
-        """
-        import llm.server as server_module
-        from llm.seca.curriculum.types import TrainingTask
-
-        fake_task = TrainingTask(
-            topic="tactics", difficulty=0.7, format="puzzle", expected_gain=3.0
-        )
-        monkeypatch.setattr(
-            server_module, "scheduler", SimpleNamespace(next_task=lambda *a: fake_task)
-        )
-        result = server_module.next_training(
-            player_id="p2",
-            player=SimpleNamespace(id="p2", rating=1200.0, confidence=0.5),
-        )
-        for field in ("topic", "difficulty", "format", "expected_gain"):
-            assert field in result, (
-                f"Field '{field}' removed from /next-training response. "
-                "This breaks backward compatibility with Android clients."
-            )
+# TestNextTrainingSchemaConflict retired in PR 26 (2026-05-15) alongside
+# the /next-training/{player_id} endpoint.  The mismatch the test pinned
+# (two endpoints with different shapes serving the same purpose) was
+# resolved by retirement — /curriculum/next is now the sole
+# training-recommendation surface; its schema is pinned by
+# test_curriculum_next_contract.py.
 
 
 class TestCoachExecutorHandlerGap:

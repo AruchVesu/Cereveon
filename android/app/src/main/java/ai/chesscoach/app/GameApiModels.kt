@@ -78,16 +78,12 @@ data class SecaStatusDto(
 /**
  * Training recommendation returned by POST /curriculum/next.
  *
- * Driven by the SECA brain using real per-player history — more accurate than
- * [TrainingRecommendation] from /next-training which uses hardcoded demo weights.
+ * Driven by the SECA brain using real per-player history.  This is the
+ * authoritative training-recommendation surface; the legacy
+ * GET /next-training/{player_id} endpoint + its companion
+ * ``TrainingRecommendation`` DTO were retired in PR 26 (2026-05-15).
  *
- * **Schema note:** field names differ from [TrainingRecommendation]:
- *  - [exerciseType] (not `format`) — exercise type string
- *  - [payload] (not `expectedGain`) — type-specific parameters dict
- *
- * Clients MUST NOT conflate this type with [TrainingRecommendation].
- *
- * Backend contract: docs/API_CONTRACTS.md §2 (schema conflict note).
+ * Backend contract: docs/API_CONTRACTS.md §18.
  */
 @Serializable
 data class CurriculumRecommendation(
@@ -102,28 +98,6 @@ data class CurriculumRecommendation(
 @Serializable
 data class CurriculumNextRequest(
     @SerialName("player_id") val playerId: String,
-)
-
-// ── /next-training/{player_id} ───────────────────────────────────────────────
-
-/**
- * Training recommendation returned by GET /next-training/{player_id}.
- *
- * Schema matches the backend contract documented in docs/API_CONTRACTS.md §2.
- * Fields correspond 1-to-1 with the JSON keys: topic, difficulty, format,
- * expected_gain.
- *
- * [topic]       Training topic (e.g. "tactics", "endgame", "general_play").
- * [difficulty]  Difficulty in the range 0.0–1.0.
- * [format]      Training format ("puzzle", "drill", "game", "explanation").
- * [expectedGain] Estimated rating gain from completing the recommended task.
- */
-@Serializable
-data class TrainingRecommendation(
-    val topic: String = "",
-    val difficulty: Float = 0.5f,
-    val format: String = "",
-    @SerialName("expected_gain") val expectedGain: Float = 0f,
 )
 
 // ── /game/history ─────────────────────────────────────────────────────────────

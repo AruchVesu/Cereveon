@@ -44,7 +44,6 @@ class AdaptiveEngineWiringTest {
     private fun fakeApiClient(opponentElo: Int): GameApiClient = object : GameApiClient {
         override suspend fun startGame(playerId: String): ApiResult<GameStartResponse> = ApiResult.HttpError(501)
         override suspend fun finishGame(req: GameFinishRequest): ApiResult<GameFinishResponse> = ApiResult.HttpError(501)
-        override suspend fun getNextTraining(playerId: String): ApiResult<TrainingRecommendation> = ApiResult.HttpError(501)
         override suspend fun getPlayerProgress(): ApiResult<PlayerProgressResponse> {
             val current = ProgressCurrentDto(
                 rating = 1200f, confidence = 0.5f, skillVector = emptyMap(),
@@ -63,7 +62,6 @@ class AdaptiveEngineWiringTest {
     private fun failingApiClient(): GameApiClient = object : GameApiClient {
         override suspend fun startGame(playerId: String): ApiResult<GameStartResponse> = ApiResult.HttpError(501)
         override suspend fun finishGame(req: GameFinishRequest): ApiResult<GameFinishResponse> = ApiResult.HttpError(501)
-        override suspend fun getNextTraining(playerId: String): ApiResult<TrainingRecommendation> = ApiResult.HttpError(501)
         override suspend fun getPlayerProgress(): ApiResult<PlayerProgressResponse> = ApiResult.HttpError(500)
     }
 

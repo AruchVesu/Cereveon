@@ -61,10 +61,8 @@ from llm.rag.validators.explain_response_schema import (
     ExplainSchemaError,
 )
 from llm.rag.prompts.input_sanitizer import sanitize_user_query
-from llm.seca.learning.skill_update import SkillState
 from llm.seca.adaptation.coupling import compute_adaptation
 from llm.seca.curriculum.scheduler import CurriculumScheduler
-from llm.seca.curriculum.types import Weakness
 from llm.seca.storage.db import init_db
 from llm.seca.world_model.safe_stub import SafeWorldModel
 from llm.seca.explainer.safe_explainer import SafeExplainer
@@ -694,7 +692,6 @@ app.include_router(
     tags=["seca-inference"],
     dependencies=[Depends(verify_api_key)],
 )
-player_skill_memory: dict[str, SkillState] = {}
 scheduler: CurriculumScheduler | None = None
 world_model: SafeWorldModel | None = None
 safe_explainer = SafeExplainer()
@@ -1451,31 +1448,16 @@ def engine_eval(
     return {"score": score_cp, "best_move": best_move, "source": "engine"}
 
 
-@app.get("/next-training/{player_id}")
-def next_training(player_id: str, player=Depends(get_current_player)):
-    if len(player_id) > 100:
-        raise HTTPException(status_code=422, detail="player_id too long (max 100 chars)")
-    if player_id != str(player.id):
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot access another player's training",
-        )
-    skill = player_skill_memory.get(player_id, SkillState())
-
-    # demo weaknesses (later from analyzer)
-    weaknesses = [
-        Weakness("tactics", severity=0.7, confidence=0.9),
-        Weakness("endgame", severity=0.4, confidence=0.8),
-    ]
-
-    task = scheduler.next_task(weaknesses, skill.rating)
-
-    return {
-        "topic": task.topic,
-        "difficulty": task.difficulty,
-        "format": task.format,
-        "expected_gain": task.expected_gain,
-    }
+# /next-training/{player_id} RETIRED in PR 26 (2026-05-15).  Was a
+# placeholder implementation with hardcoded "demo weaknesses" that
+# never advanced past the comment in the source.  Android always
+# called POST /curriculum/next first (the SECA-driven authoritative
+# path); /next-training was the fallback that ran when
+# /curriculum/next failed — but the fallback was showing fake-data
+# recommendations, not a real signal.  Removed alongside the
+# Android-side ``getNextTraining`` method + ``TrainingRecommendation``
+# DTO + ``GameSummaryBottomSheetTrainingTest`` + the schema-conflict
+# pin in test_api_contract_validation.py.
 
 
 @app.post("/game/start")

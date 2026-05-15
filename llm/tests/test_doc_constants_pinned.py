@@ -439,7 +439,8 @@ class TestApiContractsAndroidCoverage:
         "/game/history": "`GET /game/history`",
         "/game/coach-feedback": "`POST /game/coach-feedback`",
         # Training + analytics
-        "/next-training/{player_id}": "`GET /next-training/{player_id}`",
+        # /next-training/{player_id} retired in PR 26 (2026-05-15) alongside
+        # the Android-side getNextTraining method.
         "/curriculum/next": "`POST /curriculum/next`",
         "/player/progress": "`GET /player/progress`",
         # SECA / engine

@@ -26,8 +26,8 @@ import org.junit.Test
  * 11.  ACTION_BADGE_EMPTY:               actionBadgeLabel "" → "COACH".
  * 12.  ACTION_BADGE_CASE_INSENSITIVE:    actionBadgeLabel "drill" → "DRILL".
  * 13.  FORMAT_TOPIC_CAPITALISED:         formatTopic capitalises first letter, replaces underscores.
- * 14.  FORMAT_FORMAT_CAPITALISED:        formatFormat capitalises first letter.
- * 15.  FORMAT_GAIN_POSITIVE:             formatGain adds "+" prefix.
+ * 14.  RETIRED in PR 26: FORMAT_FORMAT_CAPITALISED (formatFormat helper deleted).
+ * 15.  RETIRED in PR 26: FORMAT_GAIN_POSITIVE (formatGain helper deleted).
  * 16.  DIFFICULTY_PROGRESS_MIDPOINT:     difficultyProgress 0.7 → 70.
  * 17.  DIFFICULTY_PROGRESS_BOUNDS:       difficultyProgress clamps outside 0–1.
  * 18.  BUNDLE_ARGS_NULL_COACH_ACTION:    GameFinishResponse with null weakness/reason doesn't crash.
@@ -142,7 +142,7 @@ class GameSummaryBottomSheetTest {
     }
 
     // ------------------------------------------------------------------
-    // 13–14  formatTopic / formatFormat
+    // 13  formatTopic
     // ------------------------------------------------------------------
 
     @Test
@@ -151,21 +151,11 @@ class GameSummaryBottomSheetTest {
         assertEquals("Topic: Tactics", GameSummaryBottomSheet.formatTopic("tactics"))
     }
 
-    @Test
-    fun `formatFormat capitalises first letter`() {
-        assertEquals("Format: Puzzle", GameSummaryBottomSheet.formatFormat("puzzle"))
-        assertEquals("Format: Drill", GameSummaryBottomSheet.formatFormat("drill"))
-    }
-
-    // ------------------------------------------------------------------
-    // 15  formatGain
-    // ------------------------------------------------------------------
-
-    @Test
-    fun `formatGain adds plus prefix`() {
-        assertEquals("+14 Elo", GameSummaryBottomSheet.formatGain(14f))
-        assertEquals("+0 Elo", GameSummaryBottomSheet.formatGain(0f))
-    }
+    // 14–15 RETIRED in PR 26 (2026-05-15): formatFormat / formatGain
+    // companion helpers deleted alongside the /next-training fallback path
+    // that was their sole caller.  /curriculum/next uses ``exerciseType`` +
+    // ``difficulty`` directly, inline-formatted at the GameSummaryBottomSheet
+    // call site.
 
     // ------------------------------------------------------------------
     // 16–17  difficultyProgress
