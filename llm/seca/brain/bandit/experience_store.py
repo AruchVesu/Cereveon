@@ -7,16 +7,13 @@ class ExperienceStore:
         self.db = db
 
     def log(self, player_id, context, action, reward):
-        self.db.execute(text("""
-                CREATE TABLE IF NOT EXISTS bandit_experiences (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    player_id TEXT,
-                    context_json TEXT,
-                    action TEXT,
-                    reward REAL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """))
+        # Schema is owned by ``llm.seca.brain.models.BanditExperience`` and
+        # created via ``Base.metadata.create_all`` at startup
+        # (``llm/seca/db.py`` and ``llm/seca/auth/router.py:init_schema``).
+        # Earlier revisions issued a raw ``CREATE TABLE IF NOT EXISTS ...
+        # AUTOINCREMENT ...`` here, which Postgres rejects at parse time
+        # (SQLite-only DDL) and which aborted the outer transaction in
+        # ``finish_game`` — see the 2026-05-15 prod incident.
         self.db.execute(
             text("""
                 INSERT INTO bandit_experiences
