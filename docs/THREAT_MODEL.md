@@ -18,12 +18,17 @@ this document is intent and design, not findings.
 (ESV → RAG → prompt → LLM → validators), the Stockfish engine pool, the
 JWT-authenticated player model, and the telemetry sink.
 
-**Out of scope.** Physical access to the Hetzner host, supply-chain
-compromise of pinned dependencies (covered by pip-audit + Trivy in CI),
-compromise of the managed DeepSeek API beyond what the validator gates
-catch (the LLM is treated as untrusted by the architecture — see A4
-below), Android-side reverse-engineering of the APK (`COACH_API_KEY` is
-treated as a rate-limit shield, not a secret — see `docs/DEPLOYMENT.md`).
+**Out of scope.** Physical access to the Hetzner host **including
+any process or person able to read `SECRET_KEY` from the prod
+environment** (`/opt/chesscoach/.env.prod`, the api container's env,
+shell history, etc.) — see § T2 third residual for the JWT
+consequence of this exclusion. Also out of scope: supply-chain
+compromise of pinned dependencies (covered by pip-audit + Trivy in
+CI), compromise of the managed DeepSeek API beyond what the
+validator gates catch (the LLM is treated as untrusted by the
+architecture — see A4 below), Android-side reverse-engineering of
+the APK (`COACH_API_KEY` is treated as a rate-limit shield, not a
+secret — see `docs/DEPLOYMENT.md`).
 
 ## 2. Adversaries
 
@@ -112,6 +117,35 @@ accepted. The trade-off was deferred when this document was written:
 adding `CertificatePinner` would close the gap but costs an ops
 procedure — a Caddy / Let's Encrypt cert rotation would brick every
 Android client that hasn't shipped an update with the new pin.
+
+Residual risk (signing-key disclosure): **JWT is HS256 with a single
+`SECRET_KEY`** that is both the signer and the verifier
+(`llm/seca/auth/tokens.py:19`: `ALGORITHM = "HS256"`; the same
+`SECRET_KEY` is passed to `jwt.encode` and `jwt.decode`). Anyone who
+can read the secret — operator on the Hetzner host, anyone who can
+`cat /opt/chesscoach/.env.prod`, any process that inherits the api
+container's env, shell history on a shared admin session —
+**can forge a JWT for any `player_id`** for the full 24 h token
+lifetime, and no key-rotation procedure exists today. This is the
+JWT consequence of the § 1 "host access" out-of-scope clause.
+Accepted residual for the current product (single small VPS, no
+machine-to-machine federation, no third-party integrations).
+**Revisit when:**
+
+- A second backend service must verify but not sign tokens
+  (asymmetric — RS256 / ES256 — is the right migration: public key
+  out, private key isolated).
+- A managed service issues tokens on Cereveon's behalf (must not
+  see the signing key).
+- Compliance posture or a customer security questionnaire asks
+  how signing keys are isolated from verifier processes.
+- A second player-facing endpoint outside the current single-tenant
+  api process needs to authenticate the same JWTs.
+
+A release-key holder reading this section should NOT infer any
+asymmetric-signing property from "HMAC secret" alone. Symmetric is
+the current posture and the cost of an env-read disclosure is
+"forge tokens at will until manual rotation."
 
 ### T3 — Engine-pool DoS (A1, A2)
 

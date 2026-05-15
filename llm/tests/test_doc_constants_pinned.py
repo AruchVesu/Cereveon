@@ -157,6 +157,56 @@ class TestThreatModelConstants:
             code_origin="llm/server.py::_MAX_BODY_BYTES",
         )
 
+    def test_symmetric_jwt_residual_documented(self):
+        """§ T2 — symmetric-JWT residual.
+
+        Bidirectional pin (same shape as
+        ``test_no_tls_pinning_residual_documented``): asserts
+        ``tokens.py::ALGORITHM == "HS256"`` matches the doc's claim
+        about HS256, and asserts the residual paragraph names the
+        consequence ("forge a JWT for any `player_id`") + the
+        secret-disclosure framing.
+
+        If a future PR migrates the algorithm to RS256 / ES256 / etc.,
+        this test fails with a pointer that the residual paragraph
+        must be rewritten — the asymmetric posture has a different
+        consequence (public key in api container, private key
+        isolated in a secret manager) that the doc must reflect
+        before the test passes again.
+        """
+        from llm.seca.auth.tokens import ALGORITHM
+
+        if ALGORITHM != "HS256":
+            raise AssertionError(
+                f"\n  DOC DRIFT — JWT algorithm changed.\n"
+                f"    tokens.py::ALGORITHM:  {ALGORITHM}\n"
+                f"    THREAT_MODEL.md § T2:  still names 'HS256' as a residual\n"
+                f"    Resolution: rewrite the symmetric-JWT residual\n"
+                f"    paragraph in T2 to reflect the new (likely asymmetric)\n"
+                f"    posture — what's signed, what's verified, where the\n"
+                f"    private key lives, what the rotation procedure is."
+            )
+
+        # HS256 — the residual paragraph must explicitly name the
+        # algorithm, the symmetric property, and the consequence.
+        # Each needle is a phrase that appears on a single line in
+        # the doc (substring matching doesn't cross line wraps).
+        _assert_doc_pin(
+            doc=_THREAT_MODEL,
+            needle=f"`ALGORITHM = \"{ALGORITHM}\"`",
+            code_origin="llm/seca/auth/tokens.py::ALGORITHM",
+        )
+        _assert_doc_pin(
+            doc=_THREAT_MODEL,
+            needle="both the signer and the verifier",
+            code_origin="llm/seca/auth/tokens.py (symmetric: same SECRET_KEY signs + verifies)",
+        )
+        _assert_doc_pin(
+            doc=_THREAT_MODEL,
+            needle="forge a JWT for any `player_id`",
+            code_origin="llm/seca/auth/tokens.py (consequence of symmetric HS256 + env-readable SECRET_KEY)",
+        )
+
     def test_no_tls_pinning_residual_documented(self):
         """§ T2 — Android-side no-cert-pinning residual.
 
