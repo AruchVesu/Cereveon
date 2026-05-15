@@ -100,7 +100,10 @@ class TestAut02DeadPlayerRouterNotIncluded(unittest.TestCase):
     def test_server_py_does_not_import_dangerous_router(self):
         import llm.server as srv
         src = inspect.getsource(srv)
-        # The safe top-level llm/player_api.py is fine — only flag the seca path
+        # The top-level llm/player_api.py was retired in PR 22 (2026-05-15).
+        # This guard remains for the SECA-prefixed variant that never lived
+        # in the live tree — protecting against a future reintroduction
+        # that would mount an unauthenticated ``/player/...`` router.
         self.assertNotIn(
             "from llm.seca.player.player_api",
             src,

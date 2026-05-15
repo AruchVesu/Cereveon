@@ -127,13 +127,13 @@ def test_avh_03_seca_status_response_carries_version(client) -> None:
 def test_avh_04_coaching_response_carries_version(client) -> None:
     """AVH_04: a coaching request that succeeds carries the version
     header on the way back too."""
-    # /analyze accepts an API-key + a FEN-only body and returns the
-    # engine signal — no JWT needed, deterministic, fast.  ``stockfish_json``
-    # was removed in PR 9 (trust-boundary fix; the ESV builder no
-    # longer accepts client-supplied JSON), so the request body is
-    # just ``{"fen": ...}``.
+    # /engine/eval accepts an API-key + a FEN-only body and returns the
+    # engine eval (score + best_move).  No JWT needed, deterministic,
+    # fast.  Originally this test used /analyze; that route was retired
+    # in PR 22 (no Android caller), so the X-API-Version coverage moved
+    # to /engine/eval which has the same auth shape.
     resp = client.post(
-        "/analyze",
+        "/engine/eval",
         headers={"X-Api-Key": "ci-test-key"},
         json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},
     )
@@ -147,7 +147,7 @@ def test_avh_05_missing_header_is_lenient(client) -> None:
     compatibility with old in-the-field clients while the new clients
     roll out."""
     resp = client.post(
-        "/analyze",
+        "/engine/eval",
         headers={"X-Api-Key": "ci-test-key"},
         json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},
     )
@@ -157,7 +157,7 @@ def test_avh_05_missing_header_is_lenient(client) -> None:
 
 def test_avh_06_matching_header_is_accepted(client) -> None:
     resp = client.post(
-        "/analyze",
+        "/engine/eval",
         headers={"X-Api-Key": "ci-test-key", "X-API-Version": "1"},
         json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},
     )
@@ -169,7 +169,7 @@ def test_avh_07_mismatched_header_is_rejected(client) -> None:
     on mismatch.  The detail message must name both versions so the
     operator sees what's wrong without grepping the source."""
     resp = client.post(
-        "/analyze",
+        "/engine/eval",
         headers={"X-Api-Key": "ci-test-key", "X-API-Version": "999"},
         json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},
     )
@@ -187,7 +187,7 @@ def test_avh_08_mismatch_response_carries_server_version(client) -> None:
     on the next release without needing to re-query a discovery
     endpoint."""
     resp = client.post(
-        "/analyze",
+        "/engine/eval",
         headers={"X-Api-Key": "ci-test-key", "X-API-Version": "999"},
         json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},
     )
@@ -298,7 +298,7 @@ def test_avh_14_error_detail_names_supported_range(client) -> None:
     constant without needing to inspect the headers separately.
     """
     resp = client.post(
-        "/analyze",
+        "/engine/eval",
         headers={"X-Api-Key": "ci-test-key", "X-API-Version": "999"},
         json={"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"},
     )

@@ -21,11 +21,6 @@ from llm.seca.shared_limiter import limiter
 from dotenv import load_dotenv
 from pydantic import BaseModel, field_validator
 
-try:
-    from .player_api import router as player_router
-except ImportError:
-    # Supports top-level module execution (e.g. `uvicorn server:app`)
-    from player_api import router as player_router
 from llm.seca.auth.router import (
     router as auth_router,
     get_current_player,
@@ -70,7 +65,6 @@ from llm.rag.validators.explain_response_schema import (
     ExplainSchemaError,
 )
 from llm.rag.prompts.input_sanitizer import sanitize_user_query
-from llm.seca.learning.outcome_tracker import ExplanationOutcomeTracker
 from llm.seca.learning.skill_update import SkillState
 from llm.seca.adaptation.coupling import compute_adaptation
 from llm.seca.adaptation.dynamic_mode import DynamicModeRegistry
@@ -92,8 +86,6 @@ from llm.seca.storage.repo import (
     get_active_game,
     get_or_create_auto_game,
     log_move,
-    log_explanation,
-    update_learning_score,
 )
 from llm import observability
 
@@ -741,7 +733,6 @@ DEFAULT_PREWARM_FENS = [
 ]
 
 
-app.include_router(player_router)
 app.include_router(auth_router)
 app.include_router(game_router)
 app.include_router(curriculum_router)
@@ -753,7 +744,6 @@ app.include_router(
     tags=["seca-inference"],
     dependencies=[Depends(verify_api_key)],
 )
-tracker = ExplanationOutcomeTracker()
 player_skill_memory: dict[str, SkillState] = {}
 scheduler: CurriculumScheduler | None = None
 world_model: SafeWorldModel | None = None
@@ -1084,50 +1074,6 @@ class StartGameRequest(BaseModel):
     def validate_player_id(cls, v: str | None) -> str | None:
         if v is not None and len(v) > 100:
             raise ValueError("player_id too long (max 100 chars)")
-        return v
-
-
-class OutcomeRequest(BaseModel):
-    explanation_id: str
-    moves_analyzed: int
-    avg_cpl: float
-    blunder_rate: float
-    tactic_success: bool
-    confidence_delta: float
-
-    @field_validator("explanation_id")
-    @classmethod
-    def validate_explanation_id(cls, v: str) -> str:
-        if len(v) > 200:
-            raise ValueError("explanation_id too long (max 200 chars)")
-        return v
-
-    @field_validator("moves_analyzed")
-    @classmethod
-    def validate_moves_analyzed(cls, v: int) -> int:
-        if not (0 <= v <= 10_000):
-            raise ValueError("moves_analyzed must be 0–10000")
-        return v
-
-    @field_validator("avg_cpl")
-    @classmethod
-    def validate_avg_cpl(cls, v: float) -> float:
-        if not (-3_000.0 <= v <= 3_000.0):
-            raise ValueError("avg_cpl must be in [-3000, 3000]")
-        return v
-
-    @field_validator("blunder_rate")
-    @classmethod
-    def validate_blunder_rate(cls, v: float) -> float:
-        if not (0.0 <= v <= 1.0):
-            raise ValueError("blunder_rate must be in [0.0, 1.0]")
-        return v
-
-    @field_validator("confidence_delta")
-    @classmethod
-    def validate_confidence_delta(cls, v: float) -> float:
-        if not (-1.0 <= v <= 1.0):
-            raise ValueError("confidence_delta must be in [-1.0, 1.0]")
         return v
 
 
@@ -1836,17 +1782,6 @@ async def live_move(
     return response
 
 
-# ------------------------------------------------------------------
-# Analyze endpoint (engine signal only)
-# ------------------------------------------------------------------
-
-
-@app.post("/analyze")
-@limiter.limit("30/minute")
-def analyze(req: AnalyzeRequest, request: Request, _: None = Depends(verify_api_key)):
-    return {"engine_signal": build_engine_signal(req)}
-
-
 # ``/engine/eval`` — Android's per-move Stockfish score + best-move
 # endpoint.  Returns ``{"score": <centipawns>, "best_move": <uci>,
 # "source": "engine"}``, matching ``HttpEngineEvalClient.parseResponse``.
@@ -2117,26 +2052,6 @@ def explain(req: AnalyzeRequest, request: Request, player=Depends(get_current_pl
     }
     validate_explain_response(response)
     return response
-
-
-@app.post("/explanation_outcome")
-@limiter.limit("20/minute")
-def report_outcome(req: OutcomeRequest, request: Request, player=Depends(get_current_player)):
-    # record_outcome() raises ValueError("Unknown explanation_id") when the id
-    # is not already registered via record_explanation().  Nothing in the live
-    # request path currently registers ids, so every call landed here would
-    # otherwise propagate as 500 with a logged stack trace — a free way for
-    # any API-key holder to spam the log pipeline (TRK-01).  Catch it and
-    # return a clean 400 with a generic message that does not reveal whether
-    # any specific id is or isn't present in the tracker.
-    try:
-        tracker.record_outcome(**req.model_dump())
-    except ValueError:
-        raise HTTPException(status_code=400, detail="invalid explanation_id")
-
-    score = tracker.compute_learning_score(req.explanation_id)
-
-    return {"learning_score": score}
 
 
 # ------------------------------------------------------------------

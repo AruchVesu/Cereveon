@@ -330,11 +330,9 @@ the server at startup when `SECA_ENV=prod` — by design.
 | GET | `/debug/engine` | API key | — | Engine pool depth |
 | POST | `/move` | JWT | 30/min | Request opponent move |
 | POST | `/live/move` | JWT | 30/min | Real-time coaching hint on player move |
-| POST | `/analyze` | API key | 30/min | Engine signal only (no LLM) |
 | POST | `/explain` | API key | — | Deterministic SAFE_V1 explanation (no LLM) — see note below |
 | POST | `/chat` | API key | 10/min | Multi-turn coaching conversation |
 | POST | `/chat/stream` | API key | 10/min | SSE-streamed chat |
-| POST | `/explanation_outcome` | API key | 20/min | Post-explanation learning outcome |
 | POST | `/adaptation/mode` | JWT | — | Set adaptation mode for a player |
 | GET | `/adaptation/mode` | JWT | — | Read current adaptation mode |
 | GET | `/next-training/{player_id}` | JWT | — | Curriculum next-task recommendation |

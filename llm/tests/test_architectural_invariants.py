@@ -340,21 +340,11 @@ class TestInv05GameLogicIndependentOfLlm:
             "Autonomous RL implementation is prohibited (Project Rule 3)."
         )
 
-    def test_explanation_outcome_tracker_does_not_affect_move_choice(self):
-        """
-        ExplanationOutcomeTracker tracks learning signals; it must not
-        influence the move generation pool or the game state directly.
-        """
-        from llm.seca.learning import outcome_tracker as ot_module
-        import inspect
-
-        src = inspect.getsource(ot_module)
-        assert "StockfishEnginePool" not in src, (
-            "ExplanationOutcomeTracker must not reference StockfishEnginePool"
-        )
-        assert "fast_fallback_move" not in src, (
-            "ExplanationOutcomeTracker must not call fast_fallback_move"
-        )
+    # ExplanationOutcomeTracker invariant test retired in PR 22 (2026-05-15)
+    # alongside outcome_tracker.py + /explanation_outcome.  The module
+    # the test referenced no longer exists; the invariant it pinned
+    # (the tracker must not touch StockfishEnginePool or
+    # fast_fallback_move) is moot.
 
 
 # ---------------------------------------------------------------------------
@@ -435,20 +425,9 @@ class TestInv06AnalyzeExplainFenOnly:
             "PR 9 trust-boundary fix removed that path."
         )
 
-    def test_analyze_handler_does_not_read_stockfish_json(self):
-        """Symmetric pin: the /analyze handler must also not read
-        req.stockfish_json.  Without this, a future contributor could
-        re-add the field AND inline ``extract_engine_signal(req.stockfish_json, ...)``
-        inside ``analyze()`` without tripping the existing INV-06
-        pins (which only cover the model, the helper, and the
-        /explain handler).
-        """
-        from llm import server as server_module
-        import inspect
-
-        src = inspect.getsource(server_module.analyze)
-        assert "req.stockfish_json" not in src, (
-            "/analyze handler must not read req.stockfish_json — the "
-            "PR 9 trust-boundary fix forces FEN-only ESV computation "
-            "via build_engine_signal."
-        )
+    # test_analyze_handler_does_not_read_stockfish_json retired in PR 22
+    # (2026-05-15).  The /analyze HTTP route was removed; there's no
+    # handler to source-check.  The remaining INV-06 pins (model,
+    # helper, /explain handler) still guard the trust-boundary
+    # property on /explain — the surviving SAFE_V1 deterministic
+    # surface that uses AnalyzeRequest + build_engine_signal.

@@ -11,13 +11,13 @@ state-mutating route in the application is rate-limited:
     /auth/change-password      5/minute
     /move                     30/minute
     /live/move                30/minute
-    /analyze                  30/minute
     /game/start               20/minute
     /explain                  30/minute
-    /explanation_outcome      20/minute
     /chat, /chat/stream       10/minute
     /adaptation/mode          30/minute
     /next-training/{id}       (no decorator, but JWT-bound + cross-tenant)
+
+    (``/analyze`` and ``/explanation_outcome`` retired in PR 22.)
 
 /game/finish writes a GameEvent, runs SkillUpdater (which mutates rating
 and confidence), and creates RatingUpdate / ConfidenceUpdate rows.  Without

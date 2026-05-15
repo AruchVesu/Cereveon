@@ -32,7 +32,9 @@ BUG-10 global_bandit.py     GlobalLinUCB.select() same three issues (test class
                              removed — brain/bandit/global_bandit.py deleted in PR 7)
 BUG-11 meta_bandit.py       LinUCB.select_action() same three issues (test class
                              removed — brain/meta/meta_bandit.py deleted in PR 7)
-BUG-12 outcome_tracker.py:130 4 score components divided by 3.0; max reachable = 1.167 > 1.0
+BUG-12 outcome_tracker.py:130 4 score components divided by 3.0 (test class
+                             removed — outcome_tracker.py + /explanation_outcome
+                             HTTP surface deleted in PR 22)
 
 Retired test classes for BUG-1/2/3/4a/4b/9/10/11 are not reinstated:
 the bug-fix patches landed years ago, the rest of the freeze guard's
@@ -236,8 +238,7 @@ class TestRepoConnectionNotLeaked:
         import inspect
         from llm.seca.storage import repo as repo_module
 
-        for fn_name in ("ensure_player", "create_game", "finish_game",
-                        "log_move", "log_explanation", "update_learning_score"):
+        for fn_name in ("ensure_player", "create_game", "finish_game", "log_move"):
             fn = getattr(repo_module, fn_name)
             src = inspect.getsource(fn)
             assert "finally" in src, (
@@ -266,52 +267,10 @@ class TestRepoConnectionNotLeaked:
 
 
 # ---------------------------------------------------------------------------
-# BUG-12  outcome_tracker.py — 4 components ÷ 3.0 → score exceeds [-1, 1]
+# BUG-12  RETIRED in PR 22 (2026-05-15).  The outcome_tracker.py module was
+# deleted alongside the /explanation_outcome HTTP surface (no Android caller
+# ever emerged; the handler always returned 400 since no callsite ever
+# called record_explanation to register an id).  The score-normalisation
+# invariant the test pinned is no longer load-bearing because the
+# code it pinned no longer exists.
 # ---------------------------------------------------------------------------
-
-
-class TestOutcomeTrackerNormalization:
-    """BUG-12: compute_learning_score must always return a value in [-1, 1]."""
-
-    def _inject_outcome(self, tracker, avg_cpl, blunder_rate, tactic_success, confidence_delta):
-        from llm.seca.learning.outcome_tracker import OutcomeMetrics
-        import uuid
-        eid = str(uuid.uuid4())
-        tracker.outcomes[eid] = OutcomeMetrics(
-            explanation_id=eid,
-            moves_analyzed=10,
-            avg_cpl=avg_cpl,
-            blunder_rate=blunder_rate,
-            tactic_success=tactic_success,
-            confidence_delta=confidence_delta,
-        )
-        return eid
-
-    def test_perfect_game_does_not_exceed_one(self):
-        """
-        Perfect performance: CPL=0, no blunders, tactic success, conf_delta=1.0
-        → raw = 3.5; ÷3.0 = 1.167 (was wrong); ÷3.5 = 1.0 (correct).
-        """
-        from llm.seca.learning.outcome_tracker import ExplanationOutcomeTracker
-
-        tracker = ExplanationOutcomeTracker()
-        eid = self._inject_outcome(tracker, 0.0, 0.0, True, 1.0)
-        score = tracker.compute_learning_score(eid)
-        assert score <= 1.0, f"Perfect game score {score:.4f} > 1.0"
-        assert score >= -1.0
-
-    def test_worst_game_does_not_go_below_minus_one(self):
-        from llm.seca.learning.outcome_tracker import ExplanationOutcomeTracker
-
-        tracker = ExplanationOutcomeTracker()
-        eid = self._inject_outcome(tracker, 300.0, 1.0, False, -2.0)
-        score = tracker.compute_learning_score(eid)
-        assert score >= -1.0, f"Worst-case score {score:.4f} < -1.0"
-
-    def test_mid_range_score_in_bounds(self):
-        from llm.seca.learning.outcome_tracker import ExplanationOutcomeTracker
-
-        tracker = ExplanationOutcomeTracker()
-        eid = self._inject_outcome(tracker, 50.0, 0.2, False, 0.0)
-        score = tracker.compute_learning_score(eid)
-        assert -1.0 <= score <= 1.0, f"Mid-range score {score:.4f} out of [-1, 1]"

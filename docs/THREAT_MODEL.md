@@ -12,11 +12,16 @@ this document is intent and design, not findings.
 
 ## 1. Scope
 
-**In scope.** The HTTP API surface (`/move`, `/live/move`, `/analyze`,
-`/explain`, `/chat`, `/chat/stream`, `/auth/*`, `/explanation_outcome`,
+**In scope.** The HTTP API surface (`/move`, `/live/move`,
+`/explain`, `/chat`, `/chat/stream`, `/auth/*`,
 `/seca/status`, `/health`, `/debug/engine`), the Mode-2 explanation pipeline
 (ESV → RAG → prompt → LLM → validators), the Stockfish engine pool, the
 JWT-authenticated player model, and the telemetry sink.
+
+`/analyze` and `/explanation_outcome` were retired in PR 22 (2026-05-15)
+after the SECA-Android wiring audit confirmed no Android caller had ever
+emerged; their threat-surface analysis lived under T3 (engine-pool DoS)
+and an `OutcomeTracker` defence (record-only) respectively.
 
 **Out of scope.** Physical access to the Hetzner host **including
 any process or person able to read `SECRET_KEY` from the prod
@@ -149,8 +154,10 @@ the current posture and the cost of an env-read disclosure is
 
 ### T3 — Engine-pool DoS (A1, A2)
 
-A player floods `/move` or `/analyze` to exhaust Stockfish processes,
-starving legitimate users.
+A player floods `/move` to exhaust Stockfish processes, starving
+legitimate users. (`/analyze` carried the same threat pre-PR-22; the
+endpoint is now retired so the surface is gone, but the engine-pool
+mitigations below still defend the remaining engine-driven routes.)
 
 Mitigation:
 
@@ -167,9 +174,8 @@ Mitigation:
   serves repeat positions from memory or Redis without touching the
   engine. Predictive pre-caching warms follow-up positions
   asynchronously after each move.
-- **Per-IP rate limit.** `slowapi` enforces 30/min on `/move`, 30/min on
-  `/analyze`. Test coverage:
-  `test_security_game_finish_rate_limit.py`,
+- **Per-IP rate limit.** `slowapi` enforces 30/min on `/move`. Test
+  coverage: `test_security_game_finish_rate_limit.py`,
   `test_engine_pool_exhaustion.py`.
 - **Process recovery.** A crashed Stockfish child is detached but never
   recycled mid-handle (the worker call raises and the engine is

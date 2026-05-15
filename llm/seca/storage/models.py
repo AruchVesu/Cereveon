@@ -110,8 +110,17 @@ class Move(Base):
 
 
 class Explanation(Base):
-    """One row per explanation served, tracked for the
-    ``/explanation_outcome`` learning-score loop."""
+    """One row per explanation served — historical schema preserved.
+
+    The ``/explanation_outcome`` HTTP endpoint and the
+    ``log_explanation`` / ``update_learning_score`` writers were
+    retired in PR 22 (2026-05-15) after the SECA-Android wiring
+    audit confirmed no Android caller had ever emerged.  The class
+    is kept so existing production databases that have the
+    ``explanations`` table aren't disturbed; new deployments still
+    create the table via ``Base.metadata.create_all`` but nothing
+    writes to or reads from it.  Schema retirement is a separate
+    migration concern."""
 
     __tablename__ = "explanations"
 

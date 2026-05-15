@@ -51,7 +51,6 @@ from sqlalchemy.orm import Session
 
 from llm.seca.storage.models import (
     BanditWeights,
-    Explanation,
     Game,
     Move,
     Repertoire,
@@ -104,10 +103,10 @@ def ensure_player(player_id: str) -> None:
     values that can never collide with a real-user value (the leading
     ``__placeholder__::`` prefix is reserved).
 
-    Production callers reach this helper only via ``/move`` /
-    ``/explanation_outcome`` for authenticated users — so by the time
-    we get here a real ``players`` row already exists for the JWT subject
-    and the INSERT path is skipped.  The placeholder logic exists for
+    Production callers reach this helper only via ``/move`` for
+    authenticated users — so by the time we get here a real
+    ``players`` row already exists for the JWT subject and the
+    INSERT path is skipped.  The placeholder logic exists for
     test fixtures that exercise ``create_game(some-fake-id)`` without
     going through registration.
     """
@@ -634,47 +633,11 @@ def log_move(game_id: str, ply: int, fen: str, uci: str, san: str, eval: float |
 
 
 # -------------------------------------------------
-# Explanations
-# -------------------------------------------------
-
-
-def log_explanation(
-    game_id: str,
-    ply: int,
-    explanation_type: str,
-    confidence: float,
-) -> int | None:
-    """Insert an ``explanations`` row and return its primary key.
-
-    Pre-migration this returned the ``cur.lastrowid`` from raw sqlite3.
-    SQLAlchemy populates the ``id`` attribute on flush, so the
-    semantics carry over identically — same Integer PK, same
-    monotonically-increasing identifier.
-    """
-    sess = _session()
-    try:
-        explanation = Explanation(
-            game_id=game_id,
-            ply=ply,
-            explanation_type=explanation_type,
-            confidence=float(confidence),
-        )
-        sess.add(explanation)
-        sess.commit()
-        sess.refresh(explanation)
-        return explanation.id
-    finally:
-        sess.close()
-
-
-def update_learning_score(explanation_id: int, score: float) -> None:
-    """Set the learning_score on an existing explanations row."""
-    sess = _session()
-    try:
-        explanation = sess.get(Explanation, explanation_id)
-        if explanation is None:
-            return
-        explanation.learning_score = float(score)
-        sess.commit()
-    finally:
-        sess.close()
+# Explanations — RETIRED in PR 22 (2026-05-15).  ``log_explanation`` /
+# ``update_learning_score`` had no live callers anywhere in the repo
+# after ``/explanation_outcome`` retirement (no production path ever
+# called ``log_explanation`` to register an id, so every call to the
+# HTTP endpoint already returned 400).  Functions deleted; the
+# ``Explanation`` SQLAlchemy class remains in ``models.py`` so the
+# table on existing production databases isn't disturbed — schema
+# retirement is a separate migration concern.

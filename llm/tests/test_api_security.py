@@ -25,24 +25,12 @@ Tests are split into three tiers to stay CI-safe (no live Stockfish / DB):
 
 Invariants pinned
 -----------------
- 1. SEC_ANALYZE_AUTH_APPLIED        /analyze endpoint has verify_api_key dependency.
- 2. SEC_OUTCOME_AUTH_APPLIED        /explanation_outcome has verify_api_key dependency.
- 3. SEC_LIVEMOVE_AUTH_APPLIED       /live/move has get_current_player dependency (player session required).
- 3b. SEC_MOVE_AUTH_APPLIED          /move has get_current_player dependency (player session required).
- 3c. SEC_PROGRESS_AUTH_APPLIED      /player/progress has get_current_player dependency.
- 4. SEC_DEBUG_ENGINE_AUTH_APPLIED   /debug/engine has verify_api_key dependency.
- 5. SEC_LOGOUT_WRAPS_DECODE_TOKEN   logout wraps decode_token in try/except.
- 6. SEC_OUTCOME_NEG_MOVES           moves_analyzed < 0 → ValidationError.
- 7. SEC_OUTCOME_LARGE_MOVES         moves_analyzed > 10000 → ValidationError.
- 8. SEC_OUTCOME_BLUNDER_LOW         blunder_rate < 0.0 → ValidationError.
- 9. SEC_OUTCOME_BLUNDER_HIGH        blunder_rate > 1.0 → ValidationError.
-10. SEC_OUTCOME_CPL_LOW             avg_cpl < -3000 → ValidationError.
-11. SEC_OUTCOME_CPL_HIGH            avg_cpl > 3000 → ValidationError.
-12. SEC_OUTCOME_DELTA_LOW           confidence_delta < -1.0 → ValidationError.
-13. SEC_OUTCOME_DELTA_HIGH          confidence_delta > 1.0 → ValidationError.
-14. SEC_OUTCOME_ID_TOO_LONG        explanation_id > 200 chars → ValidationError.
-15. SEC_OUTCOME_VALID_ACCEPTED      Valid OutcomeRequest passes validation.
-16. SEC_LIVEMOVE_BAD_FEN            Invalid FEN in LiveMoveRequest → ValidationError.
+ 1. SEC_LIVEMOVE_AUTH_APPLIED       /live/move has get_current_player dependency (player session required).
+ 1b. SEC_MOVE_AUTH_APPLIED          /move has get_current_player dependency (player session required).
+ 1c. SEC_PROGRESS_AUTH_APPLIED      /player/progress has get_current_player dependency.
+ 2. SEC_DEBUG_ENGINE_AUTH_APPLIED   /debug/engine has verify_api_key dependency.
+ 3. SEC_LOGOUT_WRAPS_DECODE_TOKEN   logout wraps decode_token in try/except.
+ 4. SEC_LIVEMOVE_BAD_FEN            Invalid FEN in LiveMoveRequest → ValidationError.
 17. SEC_LIVEMOVE_SHORT_UCI          UCI < 4 chars → ValidationError.
 18. SEC_LIVEMOVE_LONG_UCI           UCI > 5 chars → ValidationError.
 19. SEC_LIVEMOVE_LONG_PLAYER_ID     player_id > 100 chars → ValidationError.
@@ -126,27 +114,10 @@ class TestAstEndpointProtection:
         self._server = _parse(_SERVER_PY)
         self._funcs = _get_decorated_functions(self._server)
 
-    def test_analyze_has_verify_api_key(self):
-        """SEC_ANALYZE_AUTH_APPLIED: /analyze endpoint has verify_api_key dependency."""
-        func = self._funcs.get("analyze")
-        assert func is not None, "analyze() function not found in server.py"
-        assert _depends_on(
-            func, "verify_api_key"
-        ), "POST /analyze must have Depends(verify_api_key) — endpoint is unauthenticated"
-
-    def test_explanation_outcome_requires_player_session(self):
-        """SEC_OUTCOME_AUTH_APPLIED: /explanation_outcome must require a player session.
-
-        T3 unified auth: /explanation_outcome now requires Depends(get_current_player)
-        — outcome reporting is per-player learning state, so the authenticated
-        player.id is the trust anchor (replacing the shared X-Api-Key).
-        """
-        func = self._funcs.get("report_outcome")
-        assert func is not None, "report_outcome() not found in server.py"
-        assert _depends_on(func, "get_current_player"), (
-            "POST /explanation_outcome must have Depends(get_current_player) — "
-            "outcome reporting writes per-player learning state"
-        )
+    # SEC_ANALYZE_AUTH_APPLIED + SEC_OUTCOME_AUTH_APPLIED retired in PR 22
+    # (2026-05-15) alongside the /analyze and /explanation_outcome HTTP
+    # routes.  No Android caller had ever emerged for either; the auth
+    # invariant tests had no remaining handler to assert against.
 
     def test_live_move_requires_player_session(self):
         """SEC_LIVEMOVE_AUTH_APPLIED: /live/move requires get_current_player (player session).
@@ -266,7 +237,6 @@ try:
     os.environ.setdefault("SECA_API_KEY", "ci-test-key")
     os.environ.setdefault("SECA_ENV", "dev")
 
-    from llm.server import OutcomeRequest as _OutcomeRequest
     from llm.server import LiveMoveRequest as _LiveMoveRequest
 
     _MODELS_IMPORTED = True
@@ -283,49 +253,6 @@ except Exception:
         if len(parts) != 6 or len(stripped) > 100:
             raise ValueError("invalid FEN")
         return v
-
-    class _OutcomeRequest(BaseModel):  # type: ignore[no-redef]
-        explanation_id: str
-        moves_analyzed: int
-        avg_cpl: float
-        blunder_rate: float
-        tactic_success: bool
-        confidence_delta: float
-
-        @_fv("explanation_id")
-        @classmethod
-        def validate_explanation_id(cls, v: str) -> str:
-            if len(v) > 200:
-                raise ValueError("explanation_id too long (max 200 chars)")
-            return v
-
-        @_fv("moves_analyzed")
-        @classmethod
-        def validate_moves_analyzed(cls, v: int) -> int:
-            if not (0 <= v <= 10_000):
-                raise ValueError("moves_analyzed must be 0–10000")
-            return v
-
-        @_fv("avg_cpl")
-        @classmethod
-        def validate_avg_cpl(cls, v: float) -> float:
-            if not (-3_000.0 <= v <= 3_000.0):
-                raise ValueError("avg_cpl must be in [-3000, 3000]")
-            return v
-
-        @_fv("blunder_rate")
-        @classmethod
-        def validate_blunder_rate(cls, v: float) -> float:
-            if not (0.0 <= v <= 1.0):
-                raise ValueError("blunder_rate must be in [0.0, 1.0]")
-            return v
-
-        @_fv("confidence_delta")
-        @classmethod
-        def validate_confidence_delta(cls, v: float) -> float:
-            if not (-1.0 <= v <= 1.0):
-                raise ValueError("confidence_delta must be in [-1.0, 1.0]")
-            return v
 
     class _LiveMoveRequest(BaseModel):  # type: ignore[no-redef]
         fen: str
@@ -354,19 +281,6 @@ except Exception:
     _MODELS_IMPORTED = False
 
 
-def _valid_outcome(**overrides) -> dict:
-    base = {
-        "explanation_id": "expl-001",
-        "moves_analyzed": 10,
-        "avg_cpl": 25.0,
-        "blunder_rate": 0.1,
-        "tactic_success": True,
-        "confidence_delta": 0.05,
-    }
-    base.update(overrides)
-    return base
-
-
 def _valid_live_move(**overrides) -> dict:
     base = {
         "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
@@ -377,58 +291,11 @@ def _valid_live_move(**overrides) -> dict:
     return base
 
 
-class TestOutcomeRequestValidation:
-
-    def test_negative_moves_analyzed_rejected(self):
-        """SEC_OUTCOME_NEG_MOVES: moves_analyzed < 0 → ValidationError."""
-        with pytest.raises(ValidationError):
-            _OutcomeRequest(**_valid_outcome(moves_analyzed=-1))
-
-    def test_excess_moves_analyzed_rejected(self):
-        """SEC_OUTCOME_LARGE_MOVES: moves_analyzed > 10000 → ValidationError."""
-        with pytest.raises(ValidationError):
-            _OutcomeRequest(**_valid_outcome(moves_analyzed=10_001))
-
-    def test_blunder_rate_below_zero_rejected(self):
-        """SEC_OUTCOME_BLUNDER_LOW: blunder_rate < 0.0 → ValidationError."""
-        with pytest.raises(ValidationError):
-            _OutcomeRequest(**_valid_outcome(blunder_rate=-0.1))
-
-    def test_blunder_rate_above_one_rejected(self):
-        """SEC_OUTCOME_BLUNDER_HIGH: blunder_rate > 1.0 → ValidationError."""
-        with pytest.raises(ValidationError):
-            _OutcomeRequest(**_valid_outcome(blunder_rate=1.01))
-
-    def test_avg_cpl_too_low_rejected(self):
-        """SEC_OUTCOME_CPL_LOW: avg_cpl < -3000 → ValidationError."""
-        with pytest.raises(ValidationError):
-            _OutcomeRequest(**_valid_outcome(avg_cpl=-3_001.0))
-
-    def test_avg_cpl_too_high_rejected(self):
-        """SEC_OUTCOME_CPL_HIGH: avg_cpl > 3000 → ValidationError."""
-        with pytest.raises(ValidationError):
-            _OutcomeRequest(**_valid_outcome(avg_cpl=3_001.0))
-
-    def test_confidence_delta_too_low_rejected(self):
-        """SEC_OUTCOME_DELTA_LOW: confidence_delta < -1.0 → ValidationError."""
-        with pytest.raises(ValidationError):
-            _OutcomeRequest(**_valid_outcome(confidence_delta=-1.01))
-
-    def test_confidence_delta_too_high_rejected(self):
-        """SEC_OUTCOME_DELTA_HIGH: confidence_delta > 1.0 → ValidationError."""
-        with pytest.raises(ValidationError):
-            _OutcomeRequest(**_valid_outcome(confidence_delta=1.01))
-
-    def test_explanation_id_too_long_rejected(self):
-        """SEC_OUTCOME_ID_TOO_LONG: explanation_id > 200 chars → ValidationError."""
-        with pytest.raises(ValidationError):
-            _OutcomeRequest(**_valid_outcome(explanation_id="x" * 201))
-
-    def test_valid_outcome_request_accepted(self):
-        """SEC_OUTCOME_VALID_ACCEPTED: All valid fields pass validation."""
-        req = _OutcomeRequest(**_valid_outcome())
-        assert req.moves_analyzed == 10
-        assert req.blunder_rate == 0.1
+# TestOutcomeRequestValidation retired in PR 22 (2026-05-15) alongside
+# the OutcomeRequest model + /explanation_outcome HTTP route.  Pydantic
+# field bounds the test pinned (moves_analyzed, avg_cpl, blunder_rate,
+# confidence_delta, explanation_id) defended a model that no longer
+# exists.
 
 
 class TestLiveMoveRequestValidation:
