@@ -531,6 +531,134 @@ class TestApiContractsAndroidCoverage:
         )
 
 
+class TestApiContractsErrorTaxonomy:
+    """Pin the error-response taxonomy in ``docs/API_CONTRACTS.md``
+    against the actual server emissions.
+
+    The API uses two distinct error-body shapes for historical reasons
+    (Shape A: ``{"detail": ...}`` from FastAPI / HTTPException;
+    Shape B: ``{"error": ...}`` from the body-size middleware + slowapi
+    rate-limit handler).  Both shapes are part of the contract Android
+    has to parse.  Documenting them in API_CONTRACTS.md is one half of
+    the fix; this test is the other half — it pins that the exact
+    error strings the doc cites still appear verbatim in the source
+    that emits them.
+
+    Drift class caught: someone reword the rate-limit message in
+    server.py without updating the doc, and Android's diagnostic
+    surface starts showing a string the contract claims isn't
+    possible.  Or vice versa: a future doc edit re-styles a message
+    that the live middleware still emits in its old form.
+    """
+
+    _SERVER_PY = _REPO_ROOT / "llm" / "server.py"
+
+    # Each entry: doc claim → (file, expected substring in source).
+    # ``server.py`` covers the middleware + rate-limit handler; the
+    # FastAPI / HTTPException paths use ``detail=`` strings that the
+    # individual route handlers emit (those are sampled, not exhaustively
+    # pinned — the doc treats them as a representative list, not a
+    # closed set).
+    SHAPE_B_MESSAGES = {
+        # _LimitBodySize middleware
+        "Content-Length header required": "_LimitBodySize 411 path",
+        "Request body too large": "_LimitBodySize 413 path",
+        "Invalid Content-Length": "_LimitBodySize 400 path (parse failure)",
+        # rate_limit_handler
+        "Too many requests": "rate_limit_handler 429 path",
+    }
+
+    # Each entry: doc-cited message → (file relative to llm/, doc context).
+    # Shape-A messages are scattered across handlers — server.py, the SECA
+    # auth router, the events router, etc.  The test scans the named file
+    # for the literal string.
+    SHAPE_A_REPRESENTATIVE_MESSAGES = {
+        # api_version_gate middleware (server.py)
+        "X-API-Version mismatch": ("server.py", "api_version_gate 400 path"),
+        # /game/{id}/checkpoint conflict (server.py)
+        "game already finished": ("server.py", "/game/{id}/checkpoint 409 path"),
+        # /game/active (server.py)
+        "no active game": ("server.py", "/game/active 404 path"),
+        # auth router
+        "Invalid or expired token": ("seca/auth/router.py", "/auth/logout 401 path"),
+        "Missing token": ("seca/auth/router.py", "/auth/logout 401 path (missing header)"),
+        "Invalid credentials": ("seca/auth/router.py", "/auth/login 401 path"),
+    }
+
+    def test_shape_b_messages_appear_in_server_source(self):
+        """Each Shape-B error string the doc cites must appear in
+        server.py.  Catches the doc-out-of-date case where someone
+        reworded the middleware message without updating the table.
+        """
+        source = self._SERVER_PY.read_text(encoding="utf-8")
+        missing = [
+            (msg, ctx)
+            for msg, ctx in self.SHAPE_B_MESSAGES.items()
+            if msg not in source
+        ]
+        assert not missing, (
+            "\n  DOC DRIFT — API_CONTRACTS.md Shape-B table cites strings\n"
+            "  not found in llm/server.py:\n"
+            + "\n".join(f"    {msg!r}  (doc context: {ctx})" for msg, ctx in missing)
+            + "\n  Resolution: either update llm/server.py to emit the doc string,\n"
+            "  or update the doc's Shape-B status-code table to match the code."
+        )
+
+    def test_shape_a_representative_messages_appear_in_server_source(self):
+        """Each Shape-A representative string the doc cites must appear
+        in its named source file.  The doc treats Shape-A messages as a
+        sampled set rather than a closed contract (every ``raise
+        HTTPException`` path is its own message), so this pins only the
+        ones the doc names explicitly + scopes each pin to the file
+        that owns the raise.
+        """
+        llm_root = _REPO_ROOT / "llm"
+        missing: list[tuple[str, str, str]] = []
+        for msg, (relpath, ctx) in self.SHAPE_A_REPRESENTATIVE_MESSAGES.items():
+            source = (llm_root / relpath).read_text(encoding="utf-8")
+            if msg not in source:
+                missing.append((msg, relpath, ctx))
+        assert not missing, (
+            "\n  DOC DRIFT — API_CONTRACTS.md Shape-A table cites strings\n"
+            "  not found in their named source file:\n"
+            + "\n".join(
+                f"    {msg!r}  (expected in llm/{path}; doc context: {ctx})"
+                for msg, path, ctx in missing
+            )
+            + "\n  Resolution: either reword the corresponding raise\n"
+            "  HTTPException in the named file to match the doc, or\n"
+            "  update the doc's Shape-A example column."
+        )
+
+    def test_shape_b_keys_are_error_not_detail(self):
+        """The body-size middleware + rate-limit handler must use
+        ``{"error": ...}``, not ``{"detail": ...}``.  Catches a
+        well-intentioned future "consolidate on shape A" patch that
+        forgets to update the doc + Android client at the same time.
+        """
+        source = self._SERVER_PY.read_text(encoding="utf-8")
+        # Each Shape-B message must appear in a ``content={"error": ...}``
+        # JSONResponse — pin both halves so a refactor that drops the
+        # ``"error"`` key surfaces here.
+        for msg in self.SHAPE_B_MESSAGES:
+            # Soft-match the JSONResponse content kwarg.  The exact
+            # whitespace varies (one or two newlines between status_code=
+            # and content=), so we just assert both pieces appear within
+            # 200 characters of each other.
+            idx = source.find(repr(msg).strip('"'))
+            if idx == -1:
+                # Already caught by the previous test; skip here.
+                continue
+            window = source[max(0, idx - 200):idx + 200]
+            assert '"error"' in window or "'error'" in window, (
+                f"\n  Shape-B key contract: {msg!r} no longer emitted with\n"
+                f"  the ``{{\"error\": ...}}`` shape.  If the migration to\n"
+                f"  shape A is intentional, update API_CONTRACTS.md's\n"
+                f"  'Error responses' section and the Android client's\n"
+                f"  fallback recipe.  Surrounding window:\n{window}"
+            )
+
+
 class TestApiContractsConstants:
     """Pin numeric claims in ``docs/API_CONTRACTS.md`` against code."""
 
