@@ -27,7 +27,6 @@ from llm.seca.coach.live_controller import (
 )
 from llm.seca.events.models import GameEvent
 from llm.seca.coach.executor import CoachContent, CoachExecutor
-from llm.seca.runtime.safe_mode import SAFE_MODE
 from llm.seca.analysis.pgn_accuracy import (
     AccuracyAnalysis,
     compute_accuracy_from_pgn,
@@ -576,15 +575,15 @@ def finish_game(
             payload={},
         )
 
-    if SAFE_MODE:
-        learning_result = {"status": "safe_mode"}
-    else:
-        learner = request.app.state.seca_learner if request else None
-        try:
-            learning_result = learner.train_step() if learner else {"status": "no_learner"}
-        except Exception:
-            logger.exception("Learner train_step failed")
-            learning_result = {"status": "learner_error"}
+    # SAFE_MODE is True in every supported deployment (prod sets
+    # SECA_ENV=prod which the freeze guard requires; dev keeps
+    # SAFE_MODE True by default and crashes with
+    # SECA_ENABLE_ONLINE_LEARNING=1).  No code path sets
+    # ``request.app.state.seca_learner``, so the pre-PR-20 ``else``
+    # branch was unreachable twice over.  Retired here to remove the
+    # appearance of a live online-learning seam; revival path is
+    # documented in [[project-seca-freeze-policy]].
+    learning_result = {"status": "safe_mode"}
 
     # ---- historical analysis + training recommendations (deterministic, no RL) ----
     analysis_recommendations = []
