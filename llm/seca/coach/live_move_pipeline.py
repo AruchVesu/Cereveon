@@ -224,10 +224,22 @@ def _build_hint(
     # Evaluation context sentence (plain, used by simple style)
     phase = engine_signal.get("phase", "")
     if eval_type == "mate":
-        # "forced" satisfies validate_mode_2_semantic's mate-decisiveness gate
-        # ("inevitable" or "forced" required when eval_type == 'mate').
-        # Avoids the FORBIDDEN_ENGINE_SPECULATION token "engine".
-        eval_sentence = f"This is a forced mate — {side} secures the decisive outcome."
+        # "inevitable" satisfies validate_mode_2_semantic's mate-decisiveness
+        # gate (the gate accepts EITHER "inevitable" OR "forced" when
+        # eval_type == 'mate').  We MUST NOT use the two-word phrase
+        # "forced mate" because that matches MATE_CLAIM_PATTERNS in
+        # mode_2_negative — the lexical filter rejects the exact regex
+        # `\bforce(?:d)? mate\b` regardless of engine corroboration.
+        # The two validators previously contradicted each other: semantic
+        # required "forced" or "inevitable" anywhere, lexical forbade
+        # "forced mate" as a phrase.  Saying "Mate is inevitable" threads
+        # the needle — single-word "inevitable" satisfies the require,
+        # no "force(d) mate" adjacent pair triggers the lexical reject.
+        # Prior phrasing 500'd /live/move on every mate-ending game
+        # because the boundary re-validator at server.py:1357 rejected
+        # the fallback and the handler intentionally surfaces that as
+        # a "structural bug" (and it was).  Caught on-device 2026-05-15.
+        eval_sentence = f"Mate is inevitable — {side} secures the decisive outcome."
     elif band == "equal":
         # Pre-Sprint-5.A wording read "The engine evaluation is equal." —
         # "engine" is on validate_mode_2_semantic's

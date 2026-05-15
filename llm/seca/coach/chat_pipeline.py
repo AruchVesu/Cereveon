@@ -480,10 +480,13 @@ def _format_engine_context(engine_signal: dict) -> str:
     delta = engine_signal.get("eval_delta", "stable")
 
     if eval_type == "mate":
-        # "forced" satisfies validate_mode_2_semantic's mate-decisiveness gate
-        # ("inevitable" or "forced" required when eval_type == 'mate').
-        # Avoids the FORBIDDEN_ENGINE_SPECULATION token "engine".
-        eval_sentence = f"This is a forced mate — {side} secures the decisive outcome."
+        # See identical comment in live_move_pipeline.py — "Mate is
+        # inevitable" satisfies the semantic mate-decisiveness require
+        # (the gate accepts "inevitable" OR "forced") without triggering
+        # the lexical MATE_CLAIM_PATTERNS forbid on `\bforce(?:d)? mate\b`.
+        # Kept identical to live_move_pipeline so both deterministic
+        # paths share the same engine-truth phrasing — see PR #167.
+        eval_sentence = f"Mate is inevitable — {side} secures the decisive outcome."
     elif band == "equal":
         # Equal-band: avoid the "{side} has equal" phrasing (awkward) and
         # the "Evaluation:" prefix (reads as engine readout).  The
