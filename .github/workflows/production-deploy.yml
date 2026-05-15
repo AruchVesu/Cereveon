@@ -166,6 +166,13 @@ jobs:
             # ── 6a. Healthy: deploy done ────────────────────────────────────
             if [ "$STATUS" = "healthy" ]; then
               echo "Deployment complete."
+              # Prune stale unused images — see the long comment in
+              # fly-deploy.yml's deploy step for rationale.  Same shape:
+              # --filter until=72h keeps the previous deploy's image for
+              # quick rollback; -af removes everything else not in use;
+              # `|| true` keeps a transient docker hiccup from failing
+              # an otherwise-healthy hotfix deploy.
+              docker image prune -af --filter "until=72h" || true
               exit 0
             fi
 

@@ -797,6 +797,23 @@ jobs:
             # ── 6a. Healthy: deploy done ──────────────────────────────────────
             if [ "$STATUS" = "healthy" ]; then
               echo "Deployment complete."
+              # Prune stale unused images.  Without this, every merge to main
+              # leaves prior cereveon-llm-api digests on disk; on the 38 GB
+              # Hetzner box the / volume fills after ~30-50 merges and the
+              # next deploy's SCP step fails with the misleading
+              # "error copy file to dest: ***" signature (4 consecutive
+              # deploys stuck on 2026-05-15 before `docker image prune -af`
+              # unblocked it).  See feedback memory "Hetzner production
+              # deploy gotchas" #4 for the full incident.
+              #
+              # --filter "until=72h" keeps the previous deploy's image so a
+              # manual rollback skips the GHCR round-trip; -af removes
+              # everything else not currently in use (the running api's
+              # image is referenced and therefore safe).  Errors do not
+              # fail the deploy — `|| true` keeps an otherwise-healthy
+              # rollout from being marked failed by a transient docker
+              # hiccup during prune.
+              docker image prune -af --filter "until=72h" || true
               exit 0
             fi
 
