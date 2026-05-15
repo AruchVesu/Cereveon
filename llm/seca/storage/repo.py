@@ -52,7 +52,6 @@ from sqlalchemy.orm import Session
 from llm.seca.storage.models import (
     BanditWeights,
     Game,
-    Move,
     Repertoire,
 )
 
@@ -605,31 +604,13 @@ def reset_bandit_weights(player_id: str, action: str | None = None) -> None:
 
 
 # -------------------------------------------------
-# Moves
+# Moves — RETIRED in PR 24 (2026-05-15).  ``log_move`` had no live
+# callers anywhere in the repo after the /move HTTP endpoint was
+# retired in PR 23.  Function deleted; the ``Move`` SQLAlchemy class
+# remains in ``models.py`` so the ``moves`` table on existing
+# production databases isn't disturbed — schema retirement is a
+# separate migration concern (same handling as ``Explanation``).
 # -------------------------------------------------
-
-
-def log_move(game_id: str, ply: int, fen: str, uci: str, san: str, eval: float | None) -> None:
-    """Append a per-ply move row.
-
-    Argument name ``eval`` shadows the Python builtin to preserve the
-    pre-migration signature; the function does not call ``eval``.
-    """
-    sess = _session()
-    try:
-        sess.add(
-            Move(
-                game_id=game_id,
-                ply=ply,
-                fen=fen,
-                uci=uci,
-                san=san,
-                eval=eval,
-            )
-        )
-        sess.commit()
-    finally:
-        sess.close()
 
 
 # -------------------------------------------------

@@ -117,62 +117,11 @@ class TestExplainEndpointWiring:
 
 
 # ===========================================================================
-# WIRE-03  _record_move_stat() zero-guard is after increment (dead code, safe)
+# WIRE-03  RETIRED in PR 24 (2026-05-15) alongside ``_record_move_stat`` +
+# ``move_stats`` + ``move_stats_lock``.  The helper was only called from
+# the /move handler retired in PR 23; the WIRE-03 zero-guard invariant
+# defended a function that no longer exists.
 # ===========================================================================
-
-
-class TestRecordMoveStatDivisionSafe:
-    """WIRE-03: _record_move_stat must never produce ZeroDivisionError.
-
-    The function increments total before the division, so total is always ≥1
-    when the division executes.  This test documents the invariant so that a
-    refactor that moves the increment or adds early-return paths will fail CI.
-    """
-
-    def test_record_move_stat_never_zero_divides(self):
-        """After increment, total ≥1; division is always safe."""
-        import sys, importlib, types
-
-        # Import without triggering FastAPI / SQLAlchemy startup
-        import os
-        os.environ.setdefault("SECA_API_KEY", "ci-test-key")
-        os.environ.setdefault("SECA_ENV", "dev")
-        os.environ.setdefault("SECRET_KEY", "ci-secret-key-that-is-32-chars-long!!")
-
-        from llm.server import _record_move_stat, move_stats
-
-        original_total = move_stats["total"]
-        original_hits = move_stats["cache_hits"]
-        try:
-            # Call with total starting from 0 to check no ZeroDivisionError
-            move_stats["total"] = 0
-            move_stats["cache_hits"] = 0
-            rate_miss = _record_move_stat(cache_hit=False)
-            assert rate_miss == 0.0, f"Expected 0.0 hit rate on first miss, got {rate_miss}"
-            rate_hit = _record_move_stat(cache_hit=True)
-            assert 0.0 <= rate_hit <= 1.0, f"Hit rate {rate_hit} out of [0, 1]"
-        finally:
-            move_stats["total"] = original_total
-            move_stats["cache_hits"] = original_hits
-
-    def test_record_move_stat_hit_rate_bounded(self):
-        """Hit rate returned by _record_move_stat must always be in [0.0, 1.0]."""
-        from llm.server import _record_move_stat, move_stats
-
-        original_total = move_stats["total"]
-        original_hits = move_stats["cache_hits"]
-        try:
-            move_stats["total"] = 0
-            move_stats["cache_hits"] = 0
-            for _ in range(10):
-                rate = _record_move_stat(cache_hit=True)
-                assert 0.0 <= rate <= 1.0
-            for _ in range(5):
-                rate = _record_move_stat(cache_hit=False)
-                assert 0.0 <= rate <= 1.0
-        finally:
-            move_stats["total"] = original_total
-            move_stats["cache_hits"] = original_hits
 
 
 # ===========================================================================

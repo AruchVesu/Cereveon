@@ -8,9 +8,7 @@ import shutil
 import chess
 import httpx
 import time
-import threading
 from contextlib import asynccontextmanager
-from functools import lru_cache
 from typing import Literal
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,9 +43,7 @@ import llm.seca.events.models
 
 from llm.seca.engines.stockfish.pool import (
     EnginePoolSettings,
-    FenMoveCache,
     StockfishEnginePool,
-    engine_config_fingerprint,
 )
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
 # NOTE (PR 10): ``generate_validated_explanation`` was previously
@@ -84,7 +80,6 @@ from llm.seca.storage.repo import (
     create_game,
     get_active_game,
     get_or_create_auto_game,
-    log_move,
 )
 from llm import observability
 
@@ -232,8 +227,7 @@ if (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global engine_pool, move_cache, scheduler
-    global world_model, async_predict_enabled, async_predict_plies, async_predict_movetime_ms
+    global engine_pool, scheduler, world_model
 
     # Install JSON log formatter when SECA_ENV=prod or COACH_LOG_JSON=1.
     # Must run AFTER uvicorn has set up its loggers (which uvicorn does
@@ -285,39 +279,6 @@ async def lifespan(app: FastAPI):
         # client-trust gap documented in docs/SECA.md "Trust
         # property of the reward signal").
         app.state.engine_pool = engine_pool
-        move_cache = FenMoveCache(
-            redis_url=os.getenv("REDIS_URL"),
-            ttl_seconds=_env_int("MOVE_CACHE_TTL_SECONDS", 3600),
-            max_memory_items=max(1, _env_int("MOVE_CACHE_L1_MAX_ITEMS", 500)),
-            # Engine-config fingerprint participates in every move-cache key
-            # so changing ENGINE_SKILL_LEVEL / ENGINE_THREADS / movetime
-            # defaults / the Stockfish path automatically invalidates the
-            # previously-cached engine output. See pool.engine_config_fingerprint
-            # and docs/OPERATIONS.md > Cache invalidation.
-            engine_config_fingerprint=engine_config_fingerprint(settings),
-        )
-        async_predict_enabled = _env_bool("ENGINE_ASYNC_PREDICT_ENABLED", True)
-        async_predict_plies = max(0, _env_int("ENGINE_ASYNC_PREDICT_PLIES", 2))
-        async_predict_movetime_ms = max(
-            20,
-            _env_int("ENGINE_ASYNC_PREDICT_MOVETIME_MS", 20),
-        )
-        prewarm_fens = _env_fens("ENGINE_PREWARM_FENS")
-        prewarm_modes = _env_csv("ENGINE_PREWARM_MODES", "blitz")
-        if prewarm_fens and prewarm_modes:
-            warmed = 0
-            for mode in prewarm_modes:
-                warmed += engine_pool.prewarm_cache(
-                    move_cache=move_cache,
-                    fens=prewarm_fens,
-                    mode=mode,
-                )
-            logger.info(
-                "Move cache prewarmed (entries=%d, positions=%d, modes=%s)",
-                warmed,
-                len(prewarm_fens),
-                ",".join(prewarm_modes),
-            )
         scheduler = CurriculumScheduler()
 
         # Register the engine pool snapshot provider for Prometheus
@@ -344,7 +305,6 @@ async def lifespan(app: FastAPI):
         if engine_pool:
             engine_pool.close()
         engine_pool = None
-        move_cache = None
         # Keep app.state in sync with the global so any route that
         # late-binds via getattr(request.app.state, "engine_pool", None)
         # falls back cleanly when startup failed mid-way.
@@ -723,15 +683,6 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     )
 
 
-DEFAULT_PREWARM_FENS = [
-    chess.STARTING_FEN,
-    "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",  # 1.e4 e5
-    "rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",  # 1.d4 d5
-    "r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 2 3",
-    "r2q1rk1/pp2bppp/2n1bn2/2pp4/3P4/2PBPN2/PP1N1PPP/R1BQ1RK1 w - - 0 9",
-]
-
-
 app.include_router(auth_router)
 app.include_router(game_router)
 app.include_router(curriculum_router)
@@ -753,12 +704,6 @@ safe_explainer = SafeExplainer()
 # ------------------------------------------------------------------
 
 engine_pool: StockfishEnginePool | None = None
-move_cache: FenMoveCache | None = None
-move_stats = {"total": 0, "cache_hits": 0}
-move_stats_lock = threading.Lock()
-async_predict_enabled = True
-async_predict_plies = 2
-async_predict_movetime_ms = 20
 
 
 def _env_int(name: str, default: int) -> int:
@@ -766,13 +711,6 @@ def _env_int(name: str, default: int) -> int:
         return int(os.getenv(name, str(default)))
     except (TypeError, ValueError):
         return default
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _env_int_first(names: list[str], default: int) -> int:
@@ -787,127 +725,9 @@ def _env_int_first(names: list[str], default: int) -> int:
     return default
 
 
-def _env_csv(name: str, default_csv: str) -> list[str]:
-    raw = os.getenv(name, default_csv)
-    return [part.strip().lower() for part in raw.split(",") if part.strip()]
-
-
-def _normalize_fen(fen: str) -> str:
-    if fen.strip().lower() == "startpos":
-        return chess.STARTING_FEN
-    return fen
-
-
-def _cache_line_key(moves_uci: list[str] | None) -> str | None:
-    if not moves_uci:
-        return None
-    return moves_uci[-1]
-
-
-def _record_move_stat(cache_hit: bool) -> float:
-    with move_stats_lock:
-        move_stats["total"] += 1
-        if cache_hit:
-            move_stats["cache_hits"] += 1
-        if move_stats["total"] == 0:
-            return 0.0
-        return move_stats["cache_hits"] / move_stats["total"]
-
-
-def _env_fens(name: str) -> list[str]:
-    raw = os.getenv(name, "")
-    if not raw.strip():
-        return list(DEFAULT_PREWARM_FENS)
-    return [_normalize_fen(part.strip()) for part in raw.split("||") if part.strip()]
-
-
-@lru_cache(maxsize=4096)
-def _fen_board(fen: str) -> chess.Board:
-    return chess.Board(_normalize_fen(fen))
-
-
-def _board_from_payload(fen: str, moves_uci: list[str] | None) -> chess.Board:
-    normalized_fen = _normalize_fen(fen)
-    board = _fen_board(normalized_fen).copy(stack=False)
-    if not moves_uci:
-        return board
-
-    candidate = chess.Board()
-    try:
-        for move_uci in moves_uci:
-            candidate.push_uci(move_uci)
-        if candidate.fen() == normalized_fen:
-            return candidate
-    except ValueError:
-        return board
-
-    return board
-
-
-def _predictive_cache_followups(
-    *,
-    seed_fen: str,
-    mode: str,
-    target_elo: int | None,
-) -> None:
-    if not async_predict_enabled or engine_pool is None or move_cache is None:
-        return
-
-    try:
-        board = chess.Board(seed_fen)
-    except ValueError:
-        return
-
-    line_key: str | None = None
-    for _ in range(max(0, async_predict_plies)):
-        if board.is_game_over():
-            return
-
-        cached = move_cache.get(
-            fen=board.fen(),
-            mode=mode,
-            movetime_ms=async_predict_movetime_ms,
-            target_elo=target_elo,
-            line_key=line_key,
-        )
-        if cached:
-            try:
-                mv = chess.Move.from_uci(cached)
-                if mv in board.legal_moves:
-                    board.push(mv)
-                    line_key = mv.uci()
-                    continue
-            except ValueError:
-                pass
-
-        try:
-            mv = engine_pool.select_move(
-                fen=board.fen(),
-                board=board,
-                mode=mode,
-                movetime_ms=async_predict_movetime_ms,
-                queue_timeout_ms=25,
-                target_elo=target_elo,
-            )
-            move_cache.set(
-                fen=board.fen(),
-                mode=mode,
-                movetime_ms=async_predict_movetime_ms,
-                target_elo=target_elo,
-                move_uci=mv.uci(),
-                line_key=line_key,
-            )
-            board.push(mv)
-            line_key = mv.uci()
-        except Exception:
-            return
-
-
 # ------------------------------------------------------------------
 # Schemas
 # ------------------------------------------------------------------
-
-_VALID_MODES = {"default", "blitz", "analysis", "training"}
 
 
 def _validate_fen_field(v: str) -> str:
@@ -922,11 +742,6 @@ def _validate_fen_field(v: str) -> str:
     except ValueError:
         raise ValueError("invalid FEN")
     return v
-
-
-_MOVES_UCI_MAX_ENTRIES = 500
-_MOVES_UCI_MAX_ELEMENT_LEN = 5
-_UCI_RE = re.compile(r"^[a-h][1-8][a-h][1-8][qrbnQRBN]?$")
 
 
 class AnalyzeRequest(BaseModel):

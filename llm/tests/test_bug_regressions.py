@@ -238,7 +238,7 @@ class TestRepoConnectionNotLeaked:
         import inspect
         from llm.seca.storage import repo as repo_module
 
-        for fn_name in ("ensure_player", "create_game", "finish_game", "log_move"):
+        for fn_name in ("ensure_player", "create_game", "finish_game"):
             fn = getattr(repo_module, fn_name)
             src = inspect.getsource(fn)
             assert "finally" in src, (

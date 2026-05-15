@@ -87,11 +87,21 @@ class Game(Base):
 
 
 class Move(Base):
-    """One row per ply logged via ``log_move()``.
+    """One row per ply — historical schema preserved.
+
+    The ``log_move`` writer + the ``/move`` HTTP endpoint that
+    consumed it were retired in PR 23 / PR 24 (2026-05-15) after
+    the SECA-Android wiring audit confirmed no Android caller had
+    ever exercised the per-move logging path.  The class is kept so
+    existing production databases that have the ``moves`` table
+    aren't disturbed; new deployments still create the table via
+    ``Base.metadata.create_all`` but nothing writes to or reads
+    from it.  Schema retirement is a separate migration concern
+    (same handling as ``Explanation``).
 
     Surrogate integer PK (was ``INTEGER PRIMARY KEY AUTOINCREMENT`` in
-    schema.sql) — SQLAlchemy maps this to ``SERIAL`` on Postgres
-    automatically.
+    the pre-2026-05 schema.sql) — SQLAlchemy maps this to ``SERIAL``
+    on Postgres automatically.
     """
 
     __tablename__ = "moves"
