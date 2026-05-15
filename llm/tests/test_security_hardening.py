@@ -29,7 +29,8 @@ Stable test IDs (do NOT rename):
   SH_13c change_password accepts a valid change
   SH_14  check_db.py iterates over hardcoded allowlist (no dynamic table names)
   SH_15  repo.py contains no f-string SQL interpolation
-  SH_15b event_store.py contains no f-string SQL interpolation
+  SH_15b event_store.py must NOT exist on disk (file retired in PR 20; the
+         class was unused and shadowed the live ``events/storage.EventStorage``)
   SH_16  seca_doctor.py defines _ALLOWED_TABLES before any SQL execution
   SH_16b seca_doctor.py references _ALLOWED_TABLES in its body
   SH_17  /auth/register has @limiter.limit rate-limiting decorator
@@ -549,11 +550,29 @@ class TestSQLSafety:
             "Use parameterised queries (?) to prevent SQL injection."
         )
 
-    def test_sh15b_event_store_no_fstring_sql(self):
-        """SH_15b: event_store.py must not interpolate variables into SQL via f-strings."""
-        source = _read("seca/storage/event_store.py")
-        hits = self._FSTRING_SQL.findall(source)
-        assert not hits, f"event_store.py contains f-string SQL: {hits}"
+    def test_sh15b_event_store_file_is_gone(self):
+        """SH_15b: ``llm/seca/storage/event_store.py`` must NOT exist on disk.
+
+        The file held an unused ``EventStore`` class that shadowed the
+        live ``events/storage.EventStorage`` in naming and was retired
+        in PR 20 (2026-05-15) as part of the SECA-layer hygiene sweep.
+        Same deletion-discipline pattern as the dormant-cluster
+        retirements in PR #140 / PR 7: assert the file stays gone, so
+        a future contributor who re-adds it as part of a stale-import
+        revert sees an immediate test failure with the rationale in
+        this docstring.
+        """
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[2]
+        path = repo_root / "llm" / "seca" / "storage" / "event_store.py"
+        assert not path.exists(), (
+            f"{path} must not exist post-PR-20. If you re-added it as "
+            "part of a revert, the live event surface lives at "
+            "llm/seca/events/storage.py (EventStorage). The retired "
+            "EventStore class had no callers anywhere in the repo and "
+            "its name shadowed the live class confusingly."
+        )
 
     def test_sh15c_db_py_no_fstring_sql(self):
         """SH_15c: storage/db.py must not interpolate variables into SQL via f-strings."""

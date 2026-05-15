@@ -83,7 +83,6 @@ FORMAT_TARGETS = [
     "llm/seca/shared_limiter.py",
     "llm/seca/storage/db.py",
     "llm/seca/storage/event_storage.py",
-    "llm/seca/storage/event_store.py",
     "llm/seca/storage/models.py",
     "llm/seca/storage/repo.py",
     "llm/seca/world_model/safe_stub.py",
@@ -155,7 +154,6 @@ PYLINT_TARGETS = [
     "llm/seca/skills/updater.py",
     "llm/seca/storage/db.py",
     "llm/seca/storage/event_storage.py",
-    "llm/seca/storage/event_store.py",
     "llm/seca/storage/models.py",
     "llm/seca/storage/repo.py",
     "llm/seca/world_model/safe_stub.py",
@@ -239,7 +237,6 @@ MYPY_TARGETS = [
     "llm/seca/skills/updater.py",
     "llm/seca/storage/db.py",
     "llm/seca/storage/event_storage.py",
-    "llm/seca/storage/event_store.py",
     "llm/seca/storage/repo.py",
 ]
 

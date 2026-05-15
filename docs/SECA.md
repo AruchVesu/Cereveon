@@ -174,9 +174,15 @@ path:
 | **brain** (allowlisted) | `seca/brain/bandit/{context_builder, experience_store, decision}` + `seca/brain/{models, training/models}` | Context builder, LinUCB head, experience store, plus SQLAlchemy schema modules. Everything else under `brain/` is dormant. |
 | **learning** (allowlisted) | `seca/learning/{player_embedding, outcome_tracker, skill_update}` | Player embedding encoder + outcome tracker + skill-state utilities. |
 | **inference** | `seca/inference/` | `POST /seca/explain` — deterministic ESV → SafeExplainer pipeline (SAFE_V1, no LLM). The Mode-2 LLM path is reachable via `/chat`; this route is the free, CI-friendly deterministic counterpart. |
+| **explainer** | `seca/explainer/` | `SafeExplainer` — deterministic ESV-to-prose templates (SAFE_V1, no LLM). Consumed by `inference/` for `/seca/explain` and used as the deterministic fallback by the coach Mode-2 pipelines. |
+| **chat** | `seca/chat/` | `ChatTurn` ORM + `repo.save_exchange` / `repo.get_recent_history` — server-authoritative chat history backing `POST /chat` and `GET /chat/history`. |
+| **curriculum** | `seca/curriculum/` | Personalised practice-task generator: `policy.CurriculumPolicy` selects topic from skill vector + dominant mistake category, `generator` renders the task, `scheduler` paces presentation; backs `GET /curriculum/next`. |
+| **repertoire** | `seca/repertoire/` | `GET /repertoire` + `POST /repertoire/{entry,drill_result}` HTTP surface; default fallback list when a fresh user has no saved entries; mastery EMA update on drill completion. |
+| **performance** | `seca/performance/` | `GamePerformance` + `compute_confidence` — closed-form confidence-from-performance arithmetic. Consumed by `seca/analysis/` to roll up player history. |
 | **engines** | `seca/engines/stockfish/` | Stockfish process pool + FEN move cache. |
 | **safety** | `seca/safety/` | Freeze guard — runtime enforcement of the no-retraining policy. |
 | **runtime** | `seca/runtime/` | `SAFE_MODE` constant + `assert_safe()` import-time gate. |
+| **world_model** | `seca/world_model/` | `SafeWorldModel` stub — the type-identity target of the freeze guard's `type(world_model) is SafeWorldModel` check (`safety/freeze.py`). |
 
 ---
 
@@ -278,7 +284,7 @@ violations (39 test cases).
 | `POST /game/{id}/checkpoint` | `storage/repo.checkpoint_game` | (cross-device resume) |
 | `GET /game/active` | `storage/repo.get_active_game` | (cross-device resume) |
 | `GET /game/history` | `events/storage.EventStorage.get_recent_games` | (read-only history) |
-| `GET /repertoire` | `storage/repo.list_repertoire` (+ default fallback) | (study material) |
+| `GET /repertoire`, `POST /repertoire/{entry,drill_result}` | `repertoire/router.py` → `storage/repo.list_repertoire` (+ default fallback) + mastery EMA update on drill | (study material) |
 | `POST /seca/explain` | `inference/router.py` → `extract_engine_signal({}, fen)` → `SafeExplainer` | (SAFE_V1 deterministic, no LLM; not the SECA loop) |
 | `POST /chat`, `POST /chat/stream` | `coach/chat_pipeline.py` (Mode-2 LLM explainer with RAG + validators) | (Mode-2, not the SECA loop) |
 

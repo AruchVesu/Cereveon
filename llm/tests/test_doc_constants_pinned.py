@@ -268,6 +268,102 @@ class TestThreatModelConstants:
 # ---------------------------------------------------------------------------
 
 
+class TestSecaLayersTableCoverage:
+    """Pin SECA.md's live-layers table against the actual ``seca/`` filesystem.
+
+    Drift class caught: a new ``seca/<dir>/`` lands in code with at
+    least one external importer in ``llm/``, but the live-layers table
+    in ``docs/SECA.md`` never gets updated to describe it.  The next
+    reviewer trying to map endpoints to layers reads an inaccurate
+    table.  Closes the same class of doc-vs-reality drift as the rest
+    of this file, with a Boolean reality (subpackage exists + has
+    external importers) instead of a numeric constant.
+
+    The ``KNOWN_LIVE_SUBPACKAGES`` list below is this test's source
+    of truth.  When adding a new live ``seca/`` layer, the contributor
+    updates the list AND adds a row to SECA.md's live-layers table.
+    When retiring a layer, remove from the list (the doc edit happens
+    naturally as part of the retirement PR).
+    """
+
+    KNOWN_LIVE_SUBPACKAGES = (
+        # Original 14 layers (pre-PR-20):
+        "auth",
+        "events",
+        "storage",
+        "skills",
+        "adaptation",
+        "coach",
+        "analytics",
+        "analysis",
+        "brain",
+        "learning",
+        "inference",
+        "engines",
+        "safety",
+        "runtime",
+        # Added 2026-05-15 in PR 20 — verified live by external-importer grep:
+        "chat",  # imported by chat_pipeline.py, test_chat_persistence.py
+        "curriculum",  # imported by auth/router.py + test_curriculum_next_contract.py
+        "explainer",  # imported by inference/pipeline.py + coach Mode-2 pipelines
+        "performance",  # imported by analysis/performance_builder.py + game_analyzer.py
+        "repertoire",  # mounts /repertoire router from server.py
+        "world_model",  # imported by server.py:80 + safety/freeze.py for SafeWorldModel
+    )
+
+    # Subpackages on disk that are intentionally NOT in the live-layers
+    # table because they have zero external importers in ``llm/`` (as of
+    # PR 20).  Documented here so a contributor reading the test sees the
+    # known dormant cluster without spelunking.
+    KNOWN_DORMANT_SUBPACKAGES = (
+        "data",  # feature_builder / pgn_loader / timeline_builder — zero importers
+        "ratings",  # elo.py — zero importers (skill update uses its own ratings math)
+    )
+
+    def test_every_known_live_subpackage_has_a_doc_row(self):
+        """Each KNOWN_LIVE_SUBPACKAGES entry must appear as a row
+        in SECA.md's live-layers table, identified by the
+        ``| **<name>**`` pattern (markdown table row + bold layer
+        identifier).  Allows for trailing annotations like
+        ``(allowlisted)`` after the bold name, so the test doesn't
+        rot when a layer's doc framing changes.
+        """
+        doc_text = _SECA.read_text(encoding="utf-8")
+        missing = [
+            name
+            for name in self.KNOWN_LIVE_SUBPACKAGES
+            if f"| **{name}**" not in doc_text
+        ]
+        assert not missing, (
+            f"\n  DOC DRIFT — SECA.md live-layers table missing live subpackage row(s):\n"
+            f"    {missing}\n"
+            f"    Resolution: add a `| **<name>** | seca/<name>/ | <responsibility> |`\n"
+            f"    row in docs/SECA.md, then re-run.  If the subpackage is no\n"
+            f"    longer live (zero external importers in llm/), remove its name\n"
+            f"    from KNOWN_LIVE_SUBPACKAGES and add it to KNOWN_DORMANT_SUBPACKAGES."
+        )
+
+    def test_every_known_live_subpackage_exists_on_disk(self):
+        """Catches the inverse drift: KNOWN_LIVE_SUBPACKAGES says a
+        layer is live, but the directory was retired without updating
+        the list.  The doc-pin test above would still pass (the row
+        is in the doc), but the test below fails loudly so the list
+        + doc + filesystem stay in sync.
+        """
+        seca_root = _REPO_ROOT / "llm" / "seca"
+        gone = [
+            name
+            for name in self.KNOWN_LIVE_SUBPACKAGES
+            if not (seca_root / name).is_dir()
+        ]
+        assert not gone, (
+            f"\n  KNOWN_LIVE_SUBPACKAGES references missing dir(s): {gone}\n"
+            f"  Resolution: remove from KNOWN_LIVE_SUBPACKAGES and update\n"
+            f"  SECA.md (likely by removing the corresponding row, or moving\n"
+            f"  it to the 'What's dormant on disk and why' section)."
+        )
+
+
 class TestSecaDocConstants:
     """Pin numeric claims in ``docs/SECA.md`` against code."""
 
