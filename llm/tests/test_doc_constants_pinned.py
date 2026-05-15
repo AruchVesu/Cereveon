@@ -403,6 +403,134 @@ class TestSecaDocConstants:
 # ---------------------------------------------------------------------------
 
 
+class TestApiContractsAndroidCoverage:
+    """Source-pin: every endpoint the Android client calls must appear
+    as a section heading in ``docs/API_CONTRACTS.md``.
+
+    Drift class caught: a new server route lands and Android starts
+    calling it, but the contract doc is never updated.  The next
+    integrator looking at API_CONTRACTS.md reads an inaccurate
+    inventory and ships a wrong client.  Closes the same drift class
+    as PR #157's ``TestSecaLayersTableCoverage`` (live-layers table),
+    but for the Android-facing API surface.
+
+    The ``KNOWN_ANDROID_ENDPOINTS`` mapping below is the source of
+    truth.  When adding a new endpoint that Android will call,
+    update this map AND add a section to API_CONTRACTS.md.  When
+    retiring an endpoint, remove from the map (the doc edit happens
+    naturally as part of the retirement PR).
+    """
+
+    # Each entry: path → (method, expected heading fragment).
+    # The heading fragment is the part after ``## N. `` in
+    # API_CONTRACTS.md so the test is robust to section renumbering.
+    KNOWN_ANDROID_ENDPOINTS = {
+        # Auth
+        "/auth/register": "`POST /auth/register`",
+        "/auth/login": "`POST /auth/login`",
+        "/auth/logout": "`POST /auth/logout`",
+        "/auth/me": "`GET /auth/me` / `PATCH /auth/me`",
+        "/auth/change-password": "`POST /auth/change-password`",
+        # Game lifecycle
+        "/game/start": "`POST /game/start`",
+        "/game/finish": "`POST /game/finish`",
+        "/game/{game_id}/checkpoint": "`POST /game/{game_id}/checkpoint`",
+        "/game/active": "`GET /game/active`",
+        "/game/history": "`GET /game/history`",
+        "/game/coach-feedback": "`POST /game/coach-feedback`",
+        # Training + analytics
+        "/next-training/{player_id}": "`GET /next-training/{player_id}`",
+        "/curriculum/next": "`POST /curriculum/next`",
+        "/player/progress": "`GET /player/progress`",
+        # SECA / engine
+        "/seca/status": "`GET /seca/status`",
+        "/engine/eval": "`POST /engine/eval`",
+        "/live/move": "`POST /live/move`",
+        # Chat
+        "/chat": "`POST /chat`",
+        "/chat/stream": "`POST /chat/stream`",
+        "/chat/history": "`GET /chat/history`",
+        # Repertoire
+        "/repertoire": "`GET /repertoire`",
+        "/repertoire (POST)": "`POST /repertoire`",
+        "/repertoire/{eco}": "`DELETE /repertoire/{eco}`",
+        "/repertoire/{eco}/active": "`POST /repertoire/{eco}/active`",
+        "/repertoire/{eco}/drill-result": "`POST /repertoire/{eco}/drill-result`",
+    }
+
+    def test_every_android_endpoint_has_a_doc_section(self):
+        """Each KNOWN_ANDROID_ENDPOINTS value must appear as a section
+        heading in API_CONTRACTS.md, identified by ``## N. <fragment>``.
+        """
+        doc_text = _API_CONTRACTS.read_text(encoding="utf-8")
+        missing = [
+            (path, fragment)
+            for path, fragment in self.KNOWN_ANDROID_ENDPOINTS.items()
+            if fragment not in doc_text
+        ]
+        assert not missing, (
+            "\n  DOC DRIFT — API_CONTRACTS.md is missing section(s) for:\n"
+            + "\n".join(f"    {path} → expected heading fragment {frag!r}" for path, frag in missing)
+            + "\n  Resolution: add a `## N. <method+path>` section in "
+            "docs/API_CONTRACTS.md with the canonical request/response "
+            "shape, then re-run.  If the endpoint is no longer called "
+            "from Android, remove it from KNOWN_ANDROID_ENDPOINTS in "
+            "this test."
+        )
+
+    def test_known_endpoints_actually_referenced_by_android(self):
+        """Catches the inverse drift: KNOWN_ANDROID_ENDPOINTS lists an
+        endpoint, but no Android source file references the path.
+
+        Implementation: greps the Android source tree for the path's
+        URL prefix (the part before any ``{var}`` placeholder).
+        A stale entry in the doc-pin list would otherwise let an
+        Android-side retirement go uncaught — the next API_CONTRACTS.md
+        editor would maintain a section nobody calls.
+        """
+        android_src = _REPO_ROOT / "android" / "app" / "src" / "main"
+        if not android_src.exists():
+            import pytest
+
+            pytest.skip("android/app/src/main not present in this checkout")
+
+        kt_blob_parts: list[str] = []
+        for py in android_src.rglob("*.kt"):
+            try:
+                kt_blob_parts.append(py.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                continue
+        blob = "\n".join(kt_blob_parts)
+
+        # For each declared path, take the literal URL prefix up to the
+        # first ``{`` placeholder.  Android emits placeholders as
+        # ``$variable`` or ``${expr}`` interpolations, so a substring
+        # match on the literal prefix is sufficient evidence the path
+        # is in use.
+        unreferenced: list[str] = []
+        for path in self.KNOWN_ANDROID_ENDPOINTS:
+            # Strip the (POST) disambiguator if present.
+            url = path.split(" ", 1)[0]
+            literal_prefix = url.split("{", 1)[0].rstrip("/")
+            # Bare prefix is dangerous (e.g. ``/repertoire`` would match
+            # ``/repertoire/{eco}``), so require the prefix appear as
+            # a closed string in a Kotlin literal: surrounded by `"`
+            # or terminated by `/{` / `/$`.
+            if (
+                f'"{literal_prefix}"' not in blob
+                and f"{literal_prefix}/$" not in blob
+                and f'"{literal_prefix}/' not in blob
+            ):
+                unreferenced.append(path)
+        assert not unreferenced, (
+            f"\n  KNOWN_ANDROID_ENDPOINTS references path(s) with no Android caller:\n"
+            f"    {unreferenced}\n"
+            f"  Resolution: remove from KNOWN_ANDROID_ENDPOINTS and consider\n"
+            f"  retiring the corresponding API_CONTRACTS.md section if no\n"
+            f"  other client uses the route."
+        )
+
+
 class TestApiContractsConstants:
     """Pin numeric claims in ``docs/API_CONTRACTS.md`` against code."""
 
