@@ -94,11 +94,10 @@ data class CurriculumRecommendation(
     val payload: Map<String, String> = emptyMap(),
 )
 
-/** Request body for POST /curriculum/next. */
-@Serializable
-data class CurriculumNextRequest(
-    @SerialName("player_id") val playerId: String,
-)
+// CurriculumNextRequest retired in PR 27 (2026-05-15).  POST /curriculum/next
+// is body-less now — the server derives the player from the JWT.  Pre-PR-27
+// Android sent `{"player_id": ...}` which the server silently dropped
+// (wire-noise flagged in the SECA-Android wiring audit § C-1).
 
 // ── /game/history ─────────────────────────────────────────────────────────────
 

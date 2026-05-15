@@ -275,7 +275,7 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
         val client = gameApiClient
         if (client != null) {
             lifecycleScope.launch {
-                val curriculumResult = client.getNextCurriculum(playerId)
+                val curriculumResult = client.getNextCurriculum()
                 if (curriculumResult is ApiResult.Success) {
                     val rec = curriculumResult.data
 

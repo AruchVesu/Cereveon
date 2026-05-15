@@ -655,7 +655,7 @@ Returns the next curriculum task driven by (a) game-history-derived dominant mis
 
 ### Request body
 
-**None.** The route signature is `(player=Depends(get_current_player), db=Depends(get_db))` — no body parameter. The Android client currently sends `{"player_id": "<id>"}` (wire-noise, ignored server-side). The body is **not** authenticated against the bearer token; the `player_id` is derived from `get_current_player`, so a spoofed body field has no authority.
+**None.** The route signature is `(player=Depends(get_current_player), db=Depends(get_db))` — no body parameter. The player identity is derived from the bearer token. Pre-PR-27 (2026-05-15) the Android client sent `{"player_id": "<id>"}` here which the server silently dropped; the wire-noise was removed when this section's contract was re-pinned.
 
 ### Response
 

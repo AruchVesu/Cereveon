@@ -13,16 +13,15 @@ interface GameApiClient {
      * Fetch the SECA curriculum recommendation from POST /curriculum/next.
      *
      * Requires Bearer token authentication (uses the configured [tokenProvider]).
-     * Returns a [CurriculumRecommendation] driven by real per-player history
-     * — the authoritative training recommendation engine.  Replaced the
-     * legacy GET /next-training/{player_id} demo endpoint, which was
-     * retired in PR 26 (2026-05-15) along with its placeholder
-     * implementation (hardcoded "demo weaknesses").
+     * The server derives the player identity from the JWT — no body is sent
+     * (pre-PR-27 this method sent `{"player_id": ...}` which the server
+     * silently dropped).  Returns a [CurriculumRecommendation] driven by
+     * real per-player history.
      *
      * Default implementation returns [ApiResult.HttpError(501)] so that test
      * fakes implementing only the other methods do not need to override this.
      */
-    suspend fun getNextCurriculum(playerId: String): ApiResult<CurriculumRecommendation> =
+    suspend fun getNextCurriculum(): ApiResult<CurriculumRecommendation> =
         ApiResult.HttpError(501)
 
     /**
@@ -228,14 +227,14 @@ class HttpGameApiClient(
             )
         }
 
-    override suspend fun getNextCurriculum(playerId: String): ApiResult<CurriculumRecommendation> =
+    override suspend fun getNextCurriculum(): ApiResult<CurriculumRecommendation> =
         http.request(
             path = "/curriculum/next",
             method = "POST",
-            // Bearer-only; X-Api-Key is intentionally omitted here to
-            // match the pre-refactor wire shape.
+            // Bearer-only; X-Api-Key is intentionally omitted here.
+            // No body — pre-PR-27 this sent `{"player_id": ...}` which the
+            // server silently ignored (it derives the player from the JWT).
             headers = authHeaders(includeApiKey = false),
-            body = ApiJson.encodeToString(CurriculumNextRequest(playerId = playerId)),
             onResponse = refreshOnSuccess(),
             parse = { body -> ApiJson.decodeFromString<CurriculumRecommendation>(body) },
         )

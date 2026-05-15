@@ -89,25 +89,21 @@ class GameApiClientCurriculumTest {
     @Test
     fun `INT_CURR_METHOD - request uses HTTP POST`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody(CURRICULUM_OK_BODY))
-        client().getNextCurriculum("player1")
+        client().getNextCurriculum()
         assertEquals("POST", server.takeRequest(10, TimeUnit.SECONDS)!!.method)
     }
 
     @Test
     fun `INT_CURR_PATH - request path is slash curriculum slash next`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody(CURRICULUM_OK_BODY))
-        client().getNextCurriculum("player1")
+        client().getNextCurriculum()
         assertEquals("/curriculum/next", server.takeRequest(10, TimeUnit.SECONDS)!!.path)
     }
 
-    @Test
-    fun `INT_CURR_CONTENT_TYPE - Content-Type is application slash json`() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(200).setBody(CURRICULUM_OK_BODY))
-        client().getNextCurriculum("player1")
-        val ct = server.takeRequest(10, TimeUnit.SECONDS)!!.getHeader("Content-Type") ?: ""
-        assertTrue("Content-Type must contain application/json, was: $ct",
-            "application/json" in ct)
-    }
+    // INT_CURR_CONTENT_TYPE retired in PR 27 (2026-05-15).  BaseHttpClient
+    // only sets Content-Type: application/json when a body is present;
+    // /curriculum/next is body-less since PR 27, so the header is absent.
+    // INT_CURR_EMPTY_BODY below is the inverse pin.
 
     // ─────────────────────────────────────────────────────────────────────────
     // 4  Auth header
@@ -116,21 +112,27 @@ class GameApiClientCurriculumTest {
     @Test
     fun `INT_CURR_BEARER - Authorization Bearer header sent from tokenProvider`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody(CURRICULUM_OK_BODY))
-        client(token = "my-bearer-token").getNextCurriculum("player1")
+        client(token = "my-bearer-token").getNextCurriculum()
         val auth = server.takeRequest(10, TimeUnit.SECONDS)!!.getHeader("Authorization")
         assertEquals("Bearer my-bearer-token", auth)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 5  Request body
+    // 5  Request body (empty since PR 27 — server derives player from JWT)
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `INT_CURR_PLAYER_ID_BODY - player_id serialised in request body`() = runBlocking {
+    fun `INT_CURR_EMPTY_BODY - request body is empty after PR-27 wire-noise removal`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody(CURRICULUM_OK_BODY))
-        client().getNextCurriculum("alice-player")
-        val body = JSONObject(server.takeRequest(10, TimeUnit.SECONDS)!!.body.readUtf8())
-        assertEquals("alice-player", body.getString("player_id"))
+        client().getNextCurriculum()
+        // Pre-PR-27 Android sent {"player_id": "..."}; server silently
+        // dropped it (used get_current_player from JWT instead).  The
+        // wire-noise was removed in PR 27 — body must now be empty.
+        val rawBody = server.takeRequest(10, TimeUnit.SECONDS)!!.body.readUtf8()
+        assertTrue(
+            "Body must be empty (was: \"$rawBody\"); /curriculum/next derives player from JWT",
+            rawBody.isEmpty(),
+        )
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -140,7 +142,7 @@ class GameApiClientCurriculumTest {
     @Test
     fun `INT_CURR_TOPIC_PARSED - topic field deserialised correctly`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody(CURRICULUM_OK_BODY))
-        val result = client().getNextCurriculum("player1")
+        val result = client().getNextCurriculum()
         assertTrue(result is ApiResult.Success<*>)
         val rec = (result as ApiResult.Success<*>).data as CurriculumRecommendation
         assertEquals("endgame_technique", rec.topic)
@@ -149,7 +151,7 @@ class GameApiClientCurriculumTest {
     @Test
     fun `INT_CURR_DIFFICULTY_PARSED - difficulty field deserialised as float`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody(CURRICULUM_OK_BODY))
-        val result = client().getNextCurriculum("player1")
+        val result = client().getNextCurriculum()
         assertTrue(result is ApiResult.Success<*>)
         val rec = (result as ApiResult.Success<*>).data as CurriculumRecommendation
         assertEquals(0.65f, rec.difficulty, 0.001f)
@@ -158,7 +160,7 @@ class GameApiClientCurriculumTest {
     @Test
     fun `INT_CURR_EXERCISE_TYPE - exercise_type field deserialised not format`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody(CURRICULUM_OK_BODY))
-        val result = client().getNextCurriculum("player1")
+        val result = client().getNextCurriculum()
         assertTrue(result is ApiResult.Success<*>)
         val rec = (result as ApiResult.Success<*>).data as CurriculumRecommendation
         assertEquals("drill", rec.exerciseType)
@@ -167,7 +169,7 @@ class GameApiClientCurriculumTest {
     @Test
     fun `INT_CURR_PAYLOAD_PARSED - payload object entries are deserialised`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody(CURRICULUM_OK_BODY))
-        val result = client().getNextCurriculum("player1")
+        val result = client().getNextCurriculum()
         assertTrue(result is ApiResult.Success<*>)
         val rec = (result as ApiResult.Success<*>).data as CurriculumRecommendation
         assertNotNull("payload must be non-null", rec.payload)
@@ -182,7 +184,7 @@ class GameApiClientCurriculumTest {
     fun `INT_CURR_HTTP_401 - 401 returns HttpError 401`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(401)
             .setBody("""{"detail":"Unauthorized"}"""))
-        val result = client().getNextCurriculum("player1")
+        val result = client().getNextCurriculum()
         assertTrue("Expected HttpError, got: $result", result is ApiResult.HttpError)
         assertEquals(401, (result as ApiResult.HttpError).code)
     }
@@ -199,7 +201,7 @@ class GameApiClientCurriculumTest {
                 .setBodyDelay(500, TimeUnit.MILLISECONDS)
                 .setBody(CURRICULUM_OK_BODY),
         )
-        val result = client(readTimeoutMs = 1).getNextCurriculum("player1")
+        val result = client(readTimeoutMs = 1).getNextCurriculum()
         assertTrue("Expected Timeout, got: $result", result is ApiResult.Timeout)
     }
 
@@ -211,7 +213,7 @@ class GameApiClientCurriculumTest {
     fun `INT_CURR_EMPTY_PAYLOAD - empty payload object produces empty map without crash`() =
         runBlocking {
             server.enqueue(MockResponse().setResponseCode(200).setBody(CURRICULUM_EMPTY_PAYLOAD))
-            val result = client().getNextCurriculum("player1")
+            val result = client().getNextCurriculum()
             assertTrue(result is ApiResult.Success<*>)
             val rec = (result as ApiResult.Success<*>).data as CurriculumRecommendation
             assertTrue("payload must be empty map", rec.payload.isEmpty())
