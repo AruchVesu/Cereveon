@@ -680,6 +680,19 @@ def generate_chat_reply(
     # --- LLM path with retry ---
     if _LLM_AVAILABLE and not force_deterministic:
         retry_hint = ""
+        # Track the most-recent validator failure so the natural-
+        # exhaustion path (no `break`, just AssertionError / Mode2Violation
+        # firing _CHAT_MAX_RETRIES+1 times in a row) can emit a WARNING
+        # that mirrors live_move_pipeline's exhaustion log.  Before this
+        # was added, chat could silently fall through to the deterministic
+        # reply with no operator signal — Mode-1 logged it, Mode-2 didn't,
+        # which was the diagnostic gap exposed by the 2026-05-15 live
+        # device test (user saw templated chat replies; no warning told
+        # operators *why* the LLM path bailed).  Captured as `last_*`
+        # rather than raised so the retry loop keeps its existing
+        # control flow (retry on validator failure, break only on
+        # firewall / transport / unknown).
+        last_validator_exc: Exception | None = None
         for attempt in range(_CHAT_MAX_RETRIES + 1):
             if attempt > 0:
                 time.sleep(_CHAT_RETRY_DELAY_SECONDS)
@@ -698,17 +711,19 @@ def generate_chat_reply(
                 # adversarial users don't fill production logs.
                 logger.debug("Chat LLM blocked by output firewall; using deterministic fallback")
                 break
-            except AssertionError:
+            except AssertionError as exc:
                 # Mode-2 negative OR structure validator failed — retry
                 # with stricter hint; the retry path is the right one
                 # because LLMs often recover when re-asked with explicit
                 # rules.
+                last_validator_exc = exc
                 retry_hint = _CHAT_RETRY_HINT
-            except _Mode2Violation:
+            except _Mode2Violation as exc:
                 # Mode-2 semantic violation (equal-band drift, mate
                 # misframing, invented tactic).  Same retry behaviour as
                 # AssertionError above so the LLM gets a second chance
                 # with the stricter system prompt addition.
+                last_validator_exc = exc
                 retry_hint = _CHAT_RETRY_HINT
             except Exception as exc:  # noqa: BLE001
                 # Production-impacting: Ollama unreachable, model not
@@ -723,6 +738,21 @@ def generate_chat_reply(
                     exc,
                 )
                 break
+        else:
+            # for...else: ran when the loop exited via natural exhaustion
+            # (every `break` path skips this clause).  If we got here AND
+            # we have a recorded validator exception, retries were
+            # exhausted by repeated validator rejections — mirror
+            # live_move_pipeline.py's exhaustion WARNING so operators
+            # have a single greppable phrase ("Mode-{1,2} LLM failed
+            # after N attempts") across both pipelines.
+            if last_validator_exc is not None:
+                logger.warning(
+                    "Mode-2 LLM failed after %d attempts (%s: %s); using deterministic fallback",
+                    _CHAT_MAX_RETRIES + 1,
+                    type(last_validator_exc).__name__,
+                    last_validator_exc,
+                )
 
     # --- Deterministic fallback ---
     base_explanation = _safe_explainer.explain(engine_signal)

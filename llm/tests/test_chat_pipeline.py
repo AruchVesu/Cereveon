@@ -40,6 +40,11 @@ Invariants pinned
 30. CHAT_RETRY_ON_ASSERTION:    AssertionError from _validate_neg triggers retry (not hard fail).
 31. CHAT_HARD_FAIL_ON_FIREWALL: OutputFirewallError from _check_output is not retried.
 32. CHAT_ESV_SCHEMA_VALIDATED:  EngineSignalSchema.model_validate() called on LLM path.
+33. CHAT_EXHAUSTION_WARNING:    retry exhaustion via repeated AssertionError /
+                                Mode2Violation emits a WARNING that mirrors
+                                live_move_pipeline's exhaustion log format,
+                                closing the observability gap that hid the
+                                Mode-2 fallback path from operators (2026-05-15).
 """
 
 from __future__ import annotations
@@ -537,6 +542,141 @@ class TestRetryAndSchemaValidation:
         assert received_hints[0] == "", "First attempt must have empty retry_hint"
         assert received_hints[1] != "", "Second attempt must carry a non-empty retry_hint"
         assert "MODE-2" in received_hints[1], "Retry hint must reference MODE-2 rules"
+
+
+# ---------------------------------------------------------------------------
+# Invariant 33: retry-exhaustion observability
+#
+# Context: the chat retry loop used to fall through to the deterministic
+# fallback SILENTLY when AssertionError / Mode2Violation fired
+# _CHAT_MAX_RETRIES+1 times in a row — there was no WARNING log to tell
+# operators that the LLM path bailed.  live_move_pipeline.py logged its
+# exhaustion path; chat_pipeline.py didn't.  That asymmetry hid the
+# Mode-2 fallback from production observability — operators saw the
+# templated deterministic reply with no signal that the LLM path had
+# failed, leaving users perceiving Mode-2 as "always templated" with no
+# operator-visible cause (caught 2026-05-15 on-device).
+#
+# PR #168 added a for/else clause to the retry loop that emits a WARNING
+# matching live_move_pipeline's format ("Mode-{1,2} LLM failed after N
+# attempts (Type: msg); using deterministic fallback") on natural
+# exhaustion via validator rejection.  The break-paths (firewall block,
+# transport error) keep their existing log levels.
+# ---------------------------------------------------------------------------
+
+
+class TestExhaustionWarning:
+    """When the chat retry loop exhausts via repeated validator
+    rejection, a WARNING must surface so operators can correlate
+    'templated chat reply' user complaints with their root cause."""
+
+    def test_CHAT_EXHAUSTION_WARNING_assertion_error_path(self, caplog):
+        """AssertionError on every attempt → WARNING fired, format
+        matches live_move_pipeline's exhaustion log."""
+        import logging
+
+        turns = _make_turns(("user", "What is my plan?"))
+
+        with (
+            patch(f"{_MODULE}._LLM_AVAILABLE", True),
+            patch(
+                f"{_MODULE}._build_chat_llm",
+                side_effect=AssertionError("Forbidden MODE-2 pattern detected: pattern `\\bforce(?:d)? mate\\b`"),
+            ),
+            patch(f"{_MODULE}._EngineSignalSchema") as mock_schema,
+            patch(f"{_MODULE}._CHAT_RETRY_DELAY_SECONDS", 0),
+            caplog.at_level(logging.WARNING, logger=_MODULE),
+        ):
+            mock_schema.model_validate.return_value = None
+            result = generate_chat_reply(_STARTING_FEN, turns)
+
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert warnings, (
+            "Expected at least one WARNING after AssertionError exhausted the "
+            "chat retry loop, got none.  Without this log, operators have no "
+            "signal that Mode-2 silently fell through to the deterministic "
+            "fallback — the 2026-05-15 observability gap is back."
+        )
+        msg = warnings[-1].getMessage()
+        assert "Mode-2 LLM failed after" in msg, (
+            f"WARNING message must contain 'Mode-2 LLM failed after' for "
+            f"log-grep parity with live_move_pipeline; got: {msg!r}"
+        )
+        assert "AssertionError" in msg, (
+            f"WARNING message must surface the exception type so operators "
+            f"can correlate with the lexical/semantic validator that rejected "
+            f"the LLM output; got: {msg!r}"
+        )
+        assert "using deterministic fallback" in msg, (
+            f"WARNING message must explicitly say 'using deterministic "
+            f"fallback' for cross-pipeline log-grep parity; got: {msg!r}"
+        )
+        # Sanity: the deterministic fallback DID fire and produced a reply.
+        assert isinstance(result.reply, str) and result.reply.strip()
+        assert result.mode == "CHAT_V1"
+
+    def test_CHAT_EXHAUSTION_WARNING_mode2violation_path(self, caplog):
+        """Mode2Violation on every attempt → same WARNING fires."""
+        import logging
+
+        from llm.rag.validators.mode_2_semantic import Mode2Violation
+
+        turns = _make_turns(("user", "What is my plan?"))
+
+        with (
+            patch(f"{_MODULE}._LLM_AVAILABLE", True),
+            patch(
+                f"{_MODULE}._build_chat_llm",
+                side_effect=Mode2Violation("Mate not described as forced/inevitable"),
+            ),
+            patch(f"{_MODULE}._EngineSignalSchema") as mock_schema,
+            patch(f"{_MODULE}._CHAT_RETRY_DELAY_SECONDS", 0),
+            caplog.at_level(logging.WARNING, logger=_MODULE),
+        ):
+            mock_schema.model_validate.return_value = None
+            generate_chat_reply(_STARTING_FEN, turns)
+
+        warnings = [
+            r for r in caplog.records
+            if r.levelname == "WARNING" and "Mode-2 LLM failed after" in r.getMessage()
+        ]
+        assert warnings, (
+            "Mode2Violation exhaustion must also fire the WARNING — both "
+            "validator-rejection exception types (AssertionError, "
+            "Mode2Violation) drive the same fallback path."
+        )
+        msg = warnings[-1].getMessage()
+        assert "Mode2Violation" in msg, (
+            f"WARNING must surface the Mode2Violation type so operators can "
+            f"distinguish semantic rejections from lexical ones; got: {msg!r}"
+        )
+
+    def test_CHAT_EXHAUSTION_WARNING_not_fired_on_success(self, caplog):
+        """If the LLM path succeeds on any attempt, the exhaustion
+        WARNING must NOT fire — only the natural-exhaustion path emits
+        it.  Locks against future regressions where the WARNING
+        accidentally fires on every chat call."""
+        import logging
+
+        turns = _make_turns(("user", "What is my plan?"))
+
+        with (
+            patch(f"{_MODULE}._LLM_AVAILABLE", True),
+            patch(f"{_MODULE}._build_chat_llm", return_value="A valid LLM reply."),
+            patch(f"{_MODULE}._EngineSignalSchema") as mock_schema,
+            caplog.at_level(logging.WARNING, logger=_MODULE),
+        ):
+            mock_schema.model_validate.return_value = None
+            generate_chat_reply(_STARTING_FEN, turns)
+
+        spurious = [
+            r for r in caplog.records
+            if "Mode-2 LLM failed after" in r.getMessage()
+        ]
+        assert not spurious, (
+            f"Exhaustion WARNING must not fire when the LLM path succeeds; "
+            f"got: {[r.getMessage() for r in spurious]}"
+        )
 
 
 # ---------------------------------------------------------------------------
