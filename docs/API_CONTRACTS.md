@@ -943,18 +943,106 @@ Same shape as §14 — full updated list.
 
 ## Error responses
 
-All endpoints return standard FastAPI error shapes:
+The API emits **two distinct error-body shapes** that any client (the
+Android app, server-to-server callers, future SDKs) must handle.  The
+duality is historical — the body-size middleware and slowapi
+rate-limit handler predate the API_CONTRACTS work and use a different
+key from the FastAPI standard.  Until they're consolidated (a
+coordinated Android release is needed), both shapes are part of the
+contract.
+
+### Shape A — FastAPI / Pydantic standard
 
 ```json
-{ "detail": <string | object> }
+{ "detail": <string | object | array> }
 ```
 
-| HTTP Status | Meaning |
-|-------------|---------|
-| 400 | Validation error (bad input) |
-| 401 | Missing or invalid auth |
-| 403 | Authenticated but insufficient permission |
-| 409 | Conflict (e.g. checkpointing a finished game) |
-| 413 | Request body exceeds 512 KB |
-| 422 | Pydantic validation failure |
-| 429 | Rate limit exceeded |
+- `detail` is a **string** for most `raise HTTPException(...)` paths
+  (e.g., `{"detail": "invalid FEN"}`).
+- `detail` is an **array of `{loc, msg, type}` records** for Pydantic
+  422 failures — one entry per failed field.  Example:
+
+  ```json
+  { "detail": [{"loc": ["body", "fen"], "msg": "invalid FEN", "type": "value_error"}] }
+  ```
+
+- `detail` is a **string** with a structured one-line message for
+  API-version mismatches: `{"detail": "X-API-Version mismatch: client
+  sent 'X', server supports [Y] (current: 'Z'). Update the client to a
+  supported version."}`.
+
+### Shape B — Custom-middleware shape
+
+```json
+{ "error": <string> }
+```
+
+Used only by three surfaces, all of which run as middleware or as a
+slowapi exception handler — i.e., never via `raise HTTPException(...)`:
+
+- `_LimitBodySize` middleware (`llm/server.py`) — 411 / 413 / 400 for
+  Content-Length-related rejection.
+- `rate_limit_handler` (`llm/server.py`) — 429 for slowapi rate-limit
+  exceedance.
+
+### Status-code → shape mapping
+
+| HTTP | Shape | Body example | Trigger |
+|------|-------|--------------|---------|
+| 400 | A | `{"detail": "invalid FEN"}` | `raise HTTPException(400)` paths: bad FEN / game_id / eco / text-field constraints. |
+| 400 | A | `{"detail": "X-API-Version mismatch: …"}` | `api_version_gate` middleware: client `X-API-Version` not in `API_VERSIONS_SUPPORTED`. |
+| 400 | B | `{"error": "Invalid Content-Length"}` | `_LimitBodySize` middleware: Content-Length header doesn't parse as int. |
+| 401 | A | `{"detail": "Invalid or expired token"}` / `{"detail": "Missing token"}` / `{"detail": "Invalid credentials"}` | `get_current_player` / `logout` / `login` failures; raw `Authorization` header parse on `/auth/logout`. |
+| 403 | A | `{"detail": "not your game"}` | Authenticated player operating on another player's resource (game lifecycle). |
+| 404 | A | `{"detail": "no active game"}` / `{"detail": "game not found"}` / `{"detail": "opening not found"}` | Resource-not-found across `/game/*`, `/repertoire/*`. |
+| 409 | A | `{"detail": "game already finished"}` | Game-lifecycle conflict (checkpointing a finished game). |
+| 411 | B | `{"error": "Content-Length header required"}` | `_LimitBodySize` middleware: POST/PUT/PATCH without `Content-Length`. |
+| 413 | B | `{"error": "Request body too large"}` | `_LimitBodySize` middleware: Request body exceeds 512 KB (the `_MAX_BODY_BYTES` cap; applies on every endpoint). |
+| 422 | A | `{"detail": [{"loc": [...], "msg": "...", "type": "..."}, …]}` | Pydantic validation failure (FastAPI default). |
+| 429 | B | `{"error": "Too many requests"}` | `rate_limit_handler` (slowapi). |
+| 500 | A | `{"detail": "Internal Server Error"}` / `{"detail": "Server misconfiguration"}` | Unhandled server error (FastAPI default).  See "Errors that DON'T propagate" below for the Mode-2 pipeline cases that look like 500s but never reach Android. |
+
+### Client parsing recipe
+
+For both shapes the message lives behind exactly one of two keys.
+Android's HTTP layer should try `body["detail"]` first; on absence,
+fall back to `body["error"]`; on absence of both, surface the HTTP
+status code itself.  Pydantic 422's array form is the only case where
+`detail` is structured rather than scalar — clients that want
+field-level error reporting can iterate when `isinstance(detail, list)`.
+
+### Errors that DON'T propagate to Android
+
+These exception classes exist on the server and would surface as 500
+if not handled, but the live request paths catch and recover before
+the bytes leave the route:
+
+- **`ExplainSchemaError`** (`llm/rag/validators/explain_response_schema.py`) —
+  raised by `validate_chat_response` / `validate_live_move_response`
+  when the LLM pipeline's output drifts from the boundary schema.  The
+  `/chat`, `/chat/stream`, `/live/move` handlers catch it and re-run
+  the pipeline with `force_deterministic=True`, which is constructed
+  to pass every gate by construction.  Net effect on Android: the
+  response is a deterministic-fallback string in the normal `200`
+  shape, not a 500.  Closes the cascading-401 lockout pinned by
+  `[[project-token-rotation-post-2xx]]`.
+- **`OutputFirewallError`** (`llm/rag/safety/output_firewall.py`) —
+  raised by `check_output` for PII / identity / prompt-leak / harmful
+  patterns in LLM output.  Caught inside `chat_pipeline._build_chat_llm`
+  and `rag/deploy/embedded.py`; the offending reply is replaced with
+  `"I cannot process this request."` before the route returns.
+
+### Headers on error responses
+
+All error responses (4xx and 5xx) carry the same security headers as
+successful responses (CSP, HSTS, X-Frame-Options, etc., from
+`add_security_headers` middleware).  Additionally:
+
+- **`X-API-Version`** — always present (set by `api_version_gate` /
+  `rate_limit_handler` for the 400-on-mismatch and 429 paths
+  explicitly; via the standard response pipeline elsewhere).
+- **`X-API-Versions-Supported`** — same as the success response.
+- **`X-Auth-Token`** rotation — **NOT** emitted on failure paths
+  (401 / 403 / 422 / 5xx).  Defends against a hostile client harvesting
+  tokens by probing.  See `commit_pending_auth_rotation` middleware
+  rationale in §10 of this document.
