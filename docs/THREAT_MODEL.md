@@ -97,6 +97,22 @@ Residual risk: theft within a single token's lifetime. Accepted; the
 mitigation is operator-driven token revocation (a future enhancement
 tracked outside this document).
 
+Residual risk (capture vector): **no TLS certificate pinning** in the
+Android client. The release `network_security_config.xml` rejects
+user-installed CAs (Settings → Security → Install certificate) and the
+release build refuses a non-`https://` `COACH_API_BASE` at configuration
+time, but the client does NOT pin a specific server public key. A device
+with a corporate-managed CA in the **system** trust store, or a rooted
+device with a MITM proxy installed at the system-CA level, terminates
+HTTPS to `cereveon.com` cleanly and captures the JWT in plaintext.
+Compile-time HTTPS enforcement
+(`test_build_gradle_kts_release_enforces_https_and_obfuscation`) closes
+the cleartext path; **system-store CA compromise is in scope** and
+accepted. The trade-off was deferred when this document was written:
+adding `CertificatePinner` would close the gap but costs an ops
+procedure — a Caddy / Let's Encrypt cert rotation would brick every
+Android client that hasn't shipped an update with the new pin.
+
 ### T3 — Engine-pool DoS (A1, A2)
 
 A player floods `/move` or `/analyze` to exhaust Stockfish processes,
