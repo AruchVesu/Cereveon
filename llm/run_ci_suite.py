@@ -167,9 +167,6 @@ TEST_TARGETS = [
     # Server wiring invariants: events/router.py no-print, /explain→SafeExplainer,
     # _record_move_stat safety, log_move call site, unused-model guard.
     "llm/tests/test_server_wiring.py",
-    # Dynamic adaptation mode: registry unit tests, Pydantic validation,
-    # AST wiring, HTTP stub layer (DA-01 – DA-30 + ELO constant contract).
-    "llm/tests/test_dynamic_adaptation.py",
     # SECA integration: SafeExplainer schema alignment, live-pipeline quality
     # passthrough, confidence_language_controller wiring, SkillUpdater action
     # derivation, dynamic-mode ELO convergence, and end-to-end ESV chain.

@@ -12,16 +12,18 @@ this document is intent and design, not findings.
 
 ## 1. Scope
 
-**In scope.** The HTTP API surface (`/move`, `/live/move`,
+**In scope.** The HTTP API surface (`/live/move`,
 `/explain`, `/chat`, `/chat/stream`, `/auth/*`,
 `/seca/status`, `/health`, `/debug/engine`), the Mode-2 explanation pipeline
 (ESV → RAG → prompt → LLM → validators), the Stockfish engine pool, the
 JWT-authenticated player model, and the telemetry sink.
 
-`/analyze` and `/explanation_outcome` were retired in PR 22 (2026-05-15)
-after the SECA-Android wiring audit confirmed no Android caller had ever
-emerged; their threat-surface analysis lived under T3 (engine-pool DoS)
-and an `OutcomeTracker` defence (record-only) respectively.
+`/analyze` and `/explanation_outcome` were retired in PR 22 (2026-05-15);
+`/move` and `POST`/`GET /adaptation/mode` (the dynamic-adaptation
+calibration cluster) were retired in PR 23 (2026-05-15). All five had
+no Android caller; their threat surfaces are gone with them. The
+engine-pool mitigations under T3 below still defend `/live/move` (the
+sole engine-driven coaching route that survived).
 
 **Out of scope.** Physical access to the Hetzner host **including
 any process or person able to read `SECRET_KEY` from the prod
@@ -101,7 +103,7 @@ Mitigation:
   `COACH_API_BASE` at build time
   (`test_build_gradle_kts_release_enforces_https_and_obfuscation`).
 - **Per-player rate limit.** Even a successful replay is rate-limited to
-  30/min on `/move` and `/live/move`, 10/min on `/chat` (slowapi).
+  30/min on `/live/move`, 10/min on `/chat` (slowapi).
 
 Residual risk: theft within a single token's lifetime. Accepted; the
 mitigation is operator-driven token revocation (a future enhancement
@@ -154,10 +156,12 @@ the current posture and the cost of an env-read disclosure is
 
 ### T3 — Engine-pool DoS (A1, A2)
 
-A player floods `/move` to exhaust Stockfish processes, starving
-legitimate users. (`/analyze` carried the same threat pre-PR-22; the
-endpoint is now retired so the surface is gone, but the engine-pool
-mitigations below still defend the remaining engine-driven routes.)
+A player floods `/live/move` (the surviving engine-driven coaching
+route) to exhaust Stockfish processes, starving legitimate users.
+(`/analyze` carried the same threat pre-PR-22 and `/move` pre-PR-23;
+both are now retired so those surfaces are gone, but the engine-pool
+mitigations below still defend `/live/move` and the internal
+position-evaluation paths.)
 
 Mitigation:
 
@@ -174,7 +178,7 @@ Mitigation:
   serves repeat positions from memory or Redis without touching the
   engine. Predictive pre-caching warms follow-up positions
   asynchronously after each move.
-- **Per-IP rate limit.** `slowapi` enforces 30/min on `/move`. Test
+- **Per-IP rate limit.** `slowapi` enforces 30/min on `/live/move`. Test
   coverage: `test_security_game_finish_rate_limit.py`,
   `test_engine_pool_exhaustion.py`.
 - **Process recovery.** A crashed Stockfish child is detached but never

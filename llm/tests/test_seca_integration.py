@@ -263,53 +263,11 @@ class TestChatPipelineEngineSignalContract:
 
 
 # ---------------------------------------------------------------------------
-# SINT-13..14  Dynamic mode ELO convergence
+# SINT-13..14  RETIRED in PR 23 (2026-05-15) alongside dynamic_mode.py.
+# DynamicModeRegistry was deleted with the rest of the dynamic-adaptation
+# cluster (/move, /adaptation/mode, _dynamic_registry); the ELO-convergence
+# invariants the tests pinned defended a module that no longer exists.
 # ---------------------------------------------------------------------------
-
-
-class TestDynamicModeEloConvergence:
-    """DynamicModeRegistry ELO must shift when actual quality labels are recorded."""
-
-    def test_sint13_elo_decreases_after_blunder(self):
-        from llm.seca.adaptation.dynamic_mode import DynamicModeRegistry
-
-        registry = DynamicModeRegistry()
-        registry.set_mode("p1", enabled=True, base_elo=1200)
-        registry.record_move_quality("p1", "blunder")
-        state = registry.get_state("p1")
-        assert state.current_elo < 1200, (
-            f"ELO must decrease after blunder; got {state.current_elo}"
-        )
-
-    def test_sint14_elo_does_not_shift_for_unknown_quality(self):
-        from llm.seca.adaptation.dynamic_mode import DynamicModeRegistry
-
-        registry = DynamicModeRegistry()
-        registry.set_mode("p2", enabled=True, base_elo=1200)
-        registry.record_move_quality("p2", "unknown")
-        state = registry.get_state("p2")
-        assert state.current_elo == 1200, (
-            f"ELO must not shift for unknown quality; got {state.current_elo}"
-        )
-
-    def test_sint14b_elo_convergence_series(self):
-        """Several good moves followed by blunders should converge toward a lower ELO."""
-        from llm.seca.adaptation.dynamic_mode import DynamicModeRegistry
-
-        registry = DynamicModeRegistry()
-        registry.set_mode("p3", enabled=True, base_elo=1500)
-
-        for _ in range(3):
-            registry.record_move_quality("p3", "blunder")
-        for _ in range(3):
-            registry.record_move_quality("p3", "good")
-
-        state = registry.get_state("p3")
-        # 3 blunders (-40 each = -120) + 3 good (+10 each = +30) → net -90 → 1410
-        assert state.current_elo < 1500, (
-            f"ELO should be below 1500 after net-negative series; got {state.current_elo}"
-        )
-        assert state.move_count == 6
 
 
 # ---------------------------------------------------------------------------

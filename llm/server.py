@@ -12,7 +12,7 @@ import threading
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import Literal
-from fastapi import FastAPI, HTTPException, Depends, Header, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from slowapi.errors import RateLimitExceeded
@@ -67,7 +67,6 @@ from llm.rag.validators.explain_response_schema import (
 from llm.rag.prompts.input_sanitizer import sanitize_user_query
 from llm.seca.learning.skill_update import SkillState
 from llm.seca.adaptation.coupling import compute_adaptation
-from llm.seca.adaptation.dynamic_mode import DynamicModeRegistry
 from llm.seca.curriculum.scheduler import CurriculumScheduler
 from llm.seca.curriculum.types import Weakness
 from llm.seca.storage.db import init_db
@@ -748,7 +747,6 @@ player_skill_memory: dict[str, SkillState] = {}
 scheduler: CurriculumScheduler | None = None
 world_model: SafeWorldModel | None = None
 safe_explainer = SafeExplainer()
-_dynamic_registry = DynamicModeRegistry()
 
 # ------------------------------------------------------------------
 # Engine lifecycle
@@ -931,45 +929,6 @@ _MOVES_UCI_MAX_ELEMENT_LEN = 5
 _UCI_RE = re.compile(r"^[a-h][1-8][a-h][1-8][qrbnQRBN]?$")
 
 
-class MoveRequest(BaseModel):
-    fen: str
-    moves_uci: list[str] | None = None
-    mode: str | None = "default"
-    movetime_ms: int | None = None
-
-    @field_validator("fen")
-    @classmethod
-    def validate_fen(cls, v: str) -> str:
-        return _validate_fen_field(v)
-
-    @field_validator("moves_uci")
-    @classmethod
-    def validate_moves_uci(cls, v: list[str] | None) -> list[str] | None:
-        if v is not None:
-            if len(v) > _MOVES_UCI_MAX_ENTRIES:
-                raise ValueError(f"moves_uci too many entries (max {_MOVES_UCI_MAX_ENTRIES})")
-            for move in v:
-                if len(move) > _MOVES_UCI_MAX_ELEMENT_LEN:
-                    raise ValueError(
-                        f"moves_uci element too long (max {_MOVES_UCI_MAX_ELEMENT_LEN} chars)"
-                    )
-        return v
-
-    @field_validator("mode")
-    @classmethod
-    def validate_mode(cls, v: str | None) -> str | None:
-        if v is not None and v.lower() not in _VALID_MODES:
-            raise ValueError(f"mode must be one of {_VALID_MODES}")
-        return v
-
-    @field_validator("movetime_ms")
-    @classmethod
-    def validate_movetime(cls, v: int | None) -> int | None:
-        if v is not None and not (1 <= v <= 60_000):
-            raise ValueError("movetime_ms must be 1–60000")
-        return v
-
-
 class AnalyzeRequest(BaseModel):
     """Request shape for ``/analyze`` and ``/explain``.
 
@@ -1094,22 +1053,6 @@ class GameFinishRequest(BaseModel):
 class GameFinishClosedLoopRequest(BaseModel):
     player_id: int
     game_id: int
-
-
-class AdaptationModeRequest(BaseModel):
-    """Request body for POST /adaptation/mode."""
-
-    enabled: bool
-    base_elo: int | None = None
-
-    @field_validator("base_elo")
-    @classmethod
-    def validate_base_elo(cls, v: int | None) -> int | None:
-        from llm.seca.adaptation.dynamic_mode import ELO_MIN, ELO_MAX
-
-        if v is not None and not (ELO_MIN <= v <= ELO_MAX):
-            raise ValueError(f"base_elo must be in [{ELO_MIN}, {ELO_MAX}]")
-        return v
 
 
 class ChatTurnModel(BaseModel):
@@ -1486,192 +1429,16 @@ def engine_debug(_: None = Depends(verify_api_key)):
 
 
 # ------------------------------------------------------------------
-# Dynamic adaptation mode
+# /move + /adaptation/mode + dynamic-adaptation cluster RETIRED in
+# PR 23 (2026-05-15) after the SECA-Android wiring audit confirmed
+# no Android caller ever emerged.  The four surfaces (POST /move,
+# POST /adaptation/mode, GET /adaptation/mode, and the in-process
+# ``_dynamic_registry`` / DynamicModeRegistry / dynamic_mode.py
+# module) were a connected feature for first-play skill-assessment
+# sessions that never landed in the client.  /live/move's
+# previous ``_dynamic_registry.record_move_quality`` /
+# ``dynamic_adaptation`` integration is also gone below.
 # ------------------------------------------------------------------
-
-
-@app.post("/adaptation/mode")
-@limiter.limit("30/minute")
-def set_adaptation_mode(
-    req: AdaptationModeRequest,
-    request: Request,
-    player=Depends(get_current_player),
-):
-    """Enable or disable dynamic adaptation mode for the authenticated player.
-
-    When enabled the engine's target ELO shifts each move based on observed
-    move quality, converging toward the player's actual skill level.  Use this
-    during first-play / skill-assessment sessions.
-
-    Request body::
-
-        {"enabled": true, "base_elo": 1200}   # base_elo optional
-
-    If ``base_elo`` is omitted the player's current computed adaptation ELO is
-    used as the starting point.
-    """
-    base_elo = req.base_elo
-    if base_elo is None and req.enabled:
-        adaptation = compute_adaptation(float(player.rating), float(player.confidence))
-        base_elo = adaptation["opponent"]["target_elo"]
-
-    state = _dynamic_registry.set_mode(
-        str(player.id),
-        enabled=req.enabled,
-        base_elo=base_elo,
-    )
-    return {
-        "enabled": state.enabled,
-        "current_elo": state.current_elo,
-        "move_count": state.move_count,
-    }
-
-
-@app.get("/adaptation/mode")
-def get_adaptation_mode(player=Depends(get_current_player)):
-    """Return the current dynamic adaptation state for the authenticated player."""
-    state = _dynamic_registry.get_state(str(player.id))
-    return {
-        "enabled": state.enabled,
-        "current_elo": state.current_elo,
-        "move_count": state.move_count,
-    }
-
-
-# ------------------------------------------------------------------
-# Move endpoint (pooled stockfish)
-# ------------------------------------------------------------------
-
-
-@app.post("/move")
-@limiter.limit("30/minute")
-def move(
-    req: MoveRequest,
-    request: Request,
-    background_tasks: BackgroundTasks,
-    player=Depends(get_current_player),
-):
-    request_started = time.perf_counter()
-    if engine_pool is None:
-        return {"error": "engine pool unavailable"}
-
-    normalized_fen = _normalize_fen(req.fen)
-    board = _board_from_payload(normalized_fen, req.moves_uci)
-    adaptation = compute_adaptation(player.rating, player.confidence)
-    target_elo = adaptation["opponent"]["target_elo"]
-    dynamic_elo = _dynamic_registry.get_elo(str(player.id))
-    if dynamic_elo is not None:
-        target_elo = dynamic_elo
-
-    mode = (req.mode or "default").lower()
-    resolved_movetime_ms = engine_pool.resolve_movetime_ms(mode, req.movetime_ms)
-    line_key = _cache_line_key(req.moves_uci)
-
-    cache_hit = False
-    fallback_used = False
-    engine_time_ms = 0.0
-    mv: chess.Move | None = None
-
-    if move_cache:
-        cached_uci = move_cache.get(
-            fen=normalized_fen,
-            mode=mode,
-            movetime_ms=resolved_movetime_ms,
-            target_elo=target_elo,
-            line_key=line_key,
-        )
-        if cached_uci:
-            try:
-                candidate = chess.Move.from_uci(cached_uci)
-                if candidate in board.legal_moves:
-                    mv = candidate
-                    cache_hit = True
-            except ValueError:
-                mv = None
-
-    if cache_hit and mv is not None:
-        san = board.san(mv)
-        cache_hit_rate = _record_move_stat(cache_hit=True)
-        latency_ms = round((time.perf_counter() - request_started) * 1000.0, 2)
-        return {
-            "uci": mv.uci(),
-            "san": san,
-            "opponent_elo": target_elo,
-            "mode": mode,
-            "movetime_ms": resolved_movetime_ms,
-            "cache_hit": True,
-            "fallback_used": False,
-            "telemetry": {
-                "latency_ms": latency_ms,
-                "engine_time_ms": 0.0,
-                "cache_hit_rate": round(cache_hit_rate, 4),
-                "queue_depth": engine_pool.qsize(),
-            },
-        }
-
-    try:
-        engine_started = time.perf_counter()
-        mv = engine_pool.select_move(
-            fen=normalized_fen,
-            board=board,
-            moves_uci=req.moves_uci,
-            mode=mode,
-            movetime_ms=resolved_movetime_ms,
-            target_elo=target_elo,
-        )
-        engine_time_ms = round((time.perf_counter() - engine_started) * 1000.0, 2)
-    except RuntimeError:
-        mv = engine_pool.fast_fallback_move(board)
-        fallback_used = True
-        engine_time_ms = round((time.perf_counter() - request_started) * 1000.0, 2)
-
-    if move_cache and not fallback_used:
-        move_cache.set(
-            fen=normalized_fen,
-            mode=mode,
-            movetime_ms=resolved_movetime_ms,
-            target_elo=target_elo,
-            move_uci=mv.uci(),
-            line_key=line_key,
-        )
-
-    san = board.san(mv)
-    ply = board.fullmove_number * 2 - (0 if board.turn else 1)
-    log_move(
-        game_id=get_or_create_auto_game(str(player.id)),
-        ply=ply,
-        fen=normalized_fen,
-        uci=mv.uci(),
-        san=san,
-        eval=None,
-    )
-    board_after = board.copy(stack=False)
-    board_after.push(mv)
-    if async_predict_enabled and not fallback_used:
-        background_tasks.add_task(
-            _predictive_cache_followups,
-            seed_fen=board_after.fen(),
-            mode=mode,
-            target_elo=target_elo,
-        )
-    cache_hit_rate = _record_move_stat(cache_hit=cache_hit)
-    latency_ms = round((time.perf_counter() - request_started) * 1000.0, 2)
-
-    return {
-        "uci": mv.uci(),
-        "san": san,
-        "opponent_elo": target_elo,
-        "mode": mode,
-        "movetime_ms": resolved_movetime_ms,
-        "cache_hit": cache_hit,
-        "fallback_used": fallback_used,
-        "telemetry": {
-            "latency_ms": latency_ms,
-            "engine_time_ms": engine_time_ms,
-            "cache_hit_rate": round(cache_hit_rate, 4),
-            "queue_depth": engine_pool.qsize(),
-        },
-    }
 
 
 # ------------------------------------------------------------------
@@ -1736,15 +1503,12 @@ async def live_move(
         adaptation["teaching"]["style"],
         stockfish_json,
     )
-    if _dynamic_registry.get_state(str(player.id)).enabled:
-        _dynamic_registry.record_move_quality(str(player.id), result.move_quality)
     response = {
         "status": "ok",
         "hint": result.hint,
         "engine_signal": result.engine_signal,
         "move_quality": result.move_quality,
         "mode": result.mode,
-        "dynamic_adaptation": _dynamic_registry.get_state(str(player.id)).enabled,
     }
     try:
         validate_live_move_response(response)

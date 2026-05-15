@@ -133,18 +133,9 @@ class TestAstEndpointProtection:
             "player session required for adaptive coaching hints"
         )
 
-    def test_move_requires_player_session(self):
-        """SEC_MOVE_AUTH_APPLIED: /move requires get_current_player (player session).
-
-        /move was upgraded from API-key auth to player session auth so that
-        the opponent ELO adapts to the authenticated player's rating and confidence.
-        """
-        func = self._funcs.get("move")
-        assert func is not None, "move() not found in server.py"
-        assert _depends_on(func, "get_current_player"), (
-            "POST /move must have Depends(get_current_player) — "
-            "player session required for adaptive opponent ELO"
-        )
+    # SEC_MOVE_AUTH_APPLIED retired in PR 23 (2026-05-15) alongside the
+    # /move HTTP route — the auth invariant has no handler to assert
+    # against.  /live/move's session-auth coverage above remains.
 
     def test_debug_engine_has_verify_api_key(self):
         """SEC_DEBUG_ENGINE_AUTH_APPLIED: /debug/engine has verify_api_key dependency."""

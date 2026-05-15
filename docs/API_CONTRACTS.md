@@ -202,8 +202,7 @@ invalid Bearer returns 401)
   "hint":               <string>,
   "engine_signal":      <object>,
   "move_quality":       <string>,
-  "mode":               "LIVE_V1",
-  "dynamic_adaptation": <bool>
+  "mode":               "LIVE_V1"
 }
 ```
 
@@ -214,15 +213,20 @@ invalid Bearer returns 401)
 | `engine_signal` | `object` | Structured evaluation context (see `EngineSignalDto`) |
 | `move_quality` | `string` | Quality label: `"good"`, `"inaccuracy"`, `"mistake"`, `"blunder"` |
 | `mode` | `string` | Always `"LIVE_V1"` for this endpoint |
-| `dynamic_adaptation` | `bool` | Per-player dynamic-adaptation flag from `_dynamic_registry.get_state(player_id).enabled`. Always present in the response. Drives the client-side adaptation indicator only — does not change the engine signal, the validators, or the LLM trust boundary. |
+
+The previous response carried a `dynamic_adaptation` boolean from the
+in-process `_dynamic_registry`. That registry + its `/adaptation/mode`
+control surface + the related `/move` endpoint were retired in PR 23
+(2026-05-15) after the SECA-Android wiring audit confirmed no Android
+caller had ever exercised any of them. The `validate_live_move_response`
+Pydantic schema was already lenient to the extra field, so the removal
+is wire-backward-compatible with any unknown client.
 
 ### Notes
 - `hint` must be preserved as-is by clients even when empty; clients must not
   substitute `null` for an empty string.
 - Tested end-to-end by `LiveMoveApiClientIntegrationTest` (Android) and
-  `test_live_move_pipeline.py` (backend); `dynamic_adaptation` contract pinned by
-  `test_dynamic_adaptation.py` and the `validate_live_move_response` schema
-  validator in `llm/rag/validators/explain_response_schema.py`.
+  `test_live_move_pipeline.py` (backend).
 
 ---
 

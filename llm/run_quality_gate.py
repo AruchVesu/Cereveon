@@ -42,7 +42,6 @@ FORMAT_TARGETS = [
     "llm/rag/validators/mode_2_structure.py",
     "llm/rag/validators/sanitize.py",
     "llm/seca/adaptation/coupling.py",
-    "llm/seca/adaptation/dynamic_mode.py",
     "llm/seca/adaptation/opponent_policy.py",
     "llm/seca/adaptation/skill_profile.py",
     "llm/seca/adaptation/teaching_policy.py",
@@ -109,7 +108,6 @@ PYLINT_TARGETS = [
     "llm/rag/validators/mode_2_structure.py",
     "llm/rag/validators/sanitize.py",
     "llm/seca/adaptation/coupling.py",
-    "llm/seca/adaptation/dynamic_mode.py",
     "llm/seca/adaptation/opponent_policy.py",
     "llm/seca/adaptation/skill_profile.py",
     "llm/seca/adaptation/teaching_policy.py",
@@ -182,7 +180,6 @@ MYPY_TARGETS = [
     # coach/__init__.py (live LLM pipeline imports with looser typing) are
     # deferred to a follow-up sprint that migrates those bases.
     "llm/seca/adaptation/coupling.py",
-    "llm/seca/adaptation/dynamic_mode.py",
     "llm/seca/adaptation/opponent_policy.py",
     "llm/seca/adaptation/skill_profile.py",
     "llm/seca/adaptation/teaching_policy.py",

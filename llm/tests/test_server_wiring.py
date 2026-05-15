@@ -176,44 +176,13 @@ class TestRecordMoveStatDivisionSafe:
 
 
 # ===========================================================================
-# WIRE-04  server.py calls log_move with all required arguments
+# WIRE-04  RETIRED in PR 23 (2026-05-15) alongside the /move HTTP route.
+# log_move() was only called from the /move handler; after that retirement
+# there is no log_move call site for the wiring test to pin.  The
+# Move SQLAlchemy class + log_move repo helper were also removed (no
+# remaining callers); the ``moves`` table on existing production databases
+# is preserved by leaving the schema migration as a separate concern.
 # ===========================================================================
-
-
-class TestLogMoveCallSite:
-    """WIRE-04: server.py must call log_move() with the required arguments.
-
-    log_move() is the persistence entry-point for every move played through /move.
-    If the call site drifts from the function signature (game_id, ply, fen, uci,
-    san, eval) the DB write will fail silently or raise TypeError.
-    """
-
-    def test_log_move_call_exists_in_server(self):
-        source = _SERVER_PY.read_text(encoding="utf-8")
-        assert "log_move(" in source, (
-            "server.py must call log_move() to persist moves to the database. "
-            "The call site was removed or renamed."
-        )
-
-    def test_log_move_called_with_game_id_kwarg(self):
-        """log_move must be called with the game_id keyword argument."""
-        source = _SERVER_PY.read_text(encoding="utf-8")
-        assert "game_id=" in source, (
-            "log_move() call in server.py must pass game_id= explicitly. "
-            "Positional-only call would break if the signature changes."
-        )
-
-    def test_log_move_uses_player_scoped_game_id(self):
-        """log_move must use get_or_create_auto_game, not the old 'demo' placeholder."""
-        source = _SERVER_PY.read_text(encoding="utf-8")
-        assert 'game_id="demo"' not in source and "game_id='demo'" not in source, (
-            "The hard-coded game_id='demo' placeholder is still present in server.py. "
-            "Replace it with get_or_create_auto_game(str(player.id))."
-        )
-        assert "get_or_create_auto_game" in source, (
-            "server.py must call get_or_create_auto_game() to produce a player-scoped "
-            "game ID for log_move(); the per-player grouping replaced the 'demo' placeholder."
-        )
 
 
 # ===========================================================================
