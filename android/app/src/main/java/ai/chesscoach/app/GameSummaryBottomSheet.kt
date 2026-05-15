@@ -270,7 +270,13 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
         // it was a placeholder with hardcoded "demo weaknesses".  When
         // /curriculum/next fails (auth, network, server outage), the UI
         // surfaces the empty training-card state.
-        val trainingCard  = view.findViewById<LinearLayout>(R.id.trainingCard)
+        // R.id.trainingCard is declared as <ai.chesscoach.app.AtriumCardView> in
+        // bottom_sheet_game_summary.xml (Atrium design-system migration).  An
+        // earlier version of this file cast to LinearLayout and crashed the
+        // post-game summary with ClassCastException (caught on-device
+        // 2026-05-15) — the user got bounced back to HomeActivity because
+        // BottomSheetDialogFragment died before it could render.
+        val trainingCard  = view.findViewById<AtriumCardView>(R.id.trainingCard)
         val trainingEmpty = view.findViewById<TextView>(R.id.txtTrainingEmpty)
         val client = gameApiClient
         if (client != null) {
