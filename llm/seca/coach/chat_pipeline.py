@@ -41,11 +41,8 @@ from dataclasses import dataclass
 
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
 from llm.seca.coach.context_compact import compact_history, should_compact
-from llm.seca.explainer.safe_explainer import SafeExplainer
 
 logger = logging.getLogger(__name__)
-
-_safe_explainer = SafeExplainer()
 
 # ---------------------------------------------------------------------------
 # Optional LLM imports
@@ -514,6 +511,23 @@ def _build_context_block(
     past_mistakes: list[str] | None,
     move_count: int | None = None,
 ) -> str:
+    """LLM-prompt-shaped context block.
+
+    NOT used by the deterministic user-facing reply — see PR #169 —
+    but kept as the unit-testable surface for the F-09 sanitisation
+    defence (every nested player-profile / past-mistakes leaf passes
+    through ``_safe_sanitize`` before assembly).  Production LLM
+    callers consume the same ``_safe_sanitize`` defence inline in
+    ``_build_chat_llm``; this helper stays here so the existing
+    test_prompt_injection.py adversarial-input tests can exercise the
+    sanitiser without spinning up the full prompt-construction path.
+
+    If you find yourself reaching for the output of this helper in
+    user-visible code: stop.  The metadata sentences
+    ("This is move N of the game.", "Player skill level: …",
+    "Recurring mistake areas: …", "Strengths: …", "Recent training
+    focus: …") are LLM-prompt context, not coaching copy.
+    """
     parts = [_format_engine_context(engine_signal)]
 
     if move_count is not None:
@@ -521,8 +535,7 @@ def _build_context_block(
 
     # F-09: every nested player-profile leaf runs through ``_safe_sanitize``
     # (control-char strip + injection-regex) so adversarial text in mistake
-    # tags / strengths / skill / past_mistakes cannot reach the deterministic
-    # context block either.  Same defence as the LLM path in ``_build_chat_llm``.
+    # tags / strengths / skill / past_mistakes cannot reach the LLM prompt.
     if player_profile:
         skill = _safe_sanitize(player_profile.get("skill_estimate", ""), max_len=80)
         mistakes = player_profile.get("common_mistakes", [])
@@ -557,9 +570,7 @@ def _build_context_block(
 
 def _build_reply_deterministic(
     user_query: str,
-    context_block: str,
     engine_signal: dict,
-    base_explanation: str,
     history: list[ChatTurn],
     skill_level: str = "intermediate",
     coach_voice: str | None = None,
@@ -569,9 +580,23 @@ def _build_reply_deterministic(
     The voice setting also shapes this path so the user gets a
     coherent experience when Ollama is unreachable — they shouldn't
     notice the LLM dropped out and suddenly start hearing a different
-    tone.  Engine-derived facts (context_block, base_explanation,
-    last move quality) are present in every voice; only the
-    chatty/connective copy varies.
+    tone.  Engine-derived facts (eval sentence, last move quality)
+    are present in every voice; only the chatty/connective copy varies.
+
+    Earlier revisions of this function appended a LLM-prompt-shaped
+    "context block" that contained internal metadata — "This is move N
+    of the game.", "Player skill level: intermediate.", "Recurring
+    mistake areas: …", etc. — directly into the user-visible reply.
+    On-device test 2026-05-16 exposed this as a UX bug: the user saw
+    raw debug context surfacing in coach replies (see PR #169).  The
+    metadata is still built for the LLM path's prompt by
+    ``_build_chat_llm`` (which sanitises and formats the same fields
+    with full F-09 defence) — it has no business in the deterministic
+    user-facing reply.  Likewise, ``SafeExplainer.explain`` was
+    appended on top of the eval sentence and produced the duplicated
+    "Position is roughly equal." that the user reported.  Both are
+    dropped: the eval sentence alone carries the engine-state framing
+    and the question-type advice carries the actionable coaching.
     """
     voice = coach_voice if coach_voice in ("formal", "terse") else "conversational"
     parts: list[str] = []
@@ -589,14 +614,12 @@ def _build_reply_deterministic(
         else:
             parts.append("Following up on your earlier question:")
 
-    parts.append(context_block)
+    # Engine-state framing — single sentence, no internal metadata.
+    parts.append(_format_engine_context(engine_signal))
 
     move_quality = engine_signal.get("last_move_quality", "")
     if move_quality and move_quality not in ("unknown", ""):
         parts.append(f"Last move quality: {move_quality}.")
-
-    if base_explanation:
-        parts.append(base_explanation)
 
     # Phase tip — Mode-2 includes it by default, but it's exactly the
     # kind of generic filler the user opted out of in terse mode.
@@ -755,19 +778,23 @@ def generate_chat_reply(
                 )
 
     # --- Deterministic fallback ---
-    base_explanation = _safe_explainer.explain(engine_signal)
-    context_block = _build_context_block(
-        engine_signal, player_profile, past_mistakes, move_count
-    )
+    # Note: ``player_profile``, ``past_mistakes``, ``move_count`` are
+    # intentionally NOT threaded into the deterministic reply — those
+    # are LLM-prompt-only context (see ``_build_chat_llm``).  Earlier
+    # revisions concatenated them as raw sentences into the user-visible
+    # reply ("This is move 6 of the game.  Player skill level:
+    # intermediate."), exposing internal metadata as if it were coaching.
+    # See PR #169 / 2026-05-16 on-device test.  ``_safe_explainer.explain``
+    # is also dropped here for the same reason: it duplicated the eval
+    # sentence already produced by ``_format_engine_context`` inside
+    # ``_build_reply_deterministic``.
     user_turns = [t for t in messages if t.role == "user"]
     user_query = user_turns[-1].content if user_turns else ""
     skill_level = _map_skill_level(player_profile)
 
     reply = _build_reply_deterministic(
         user_query=user_query,
-        context_block=context_block,
         engine_signal=engine_signal,
-        base_explanation=base_explanation,
         history=messages,
         skill_level=skill_level,
         coach_voice=coach_voice,

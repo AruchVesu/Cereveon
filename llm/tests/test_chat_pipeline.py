@@ -45,6 +45,21 @@ Invariants pinned
                                 live_move_pipeline's exhaustion log format,
                                 closing the observability gap that hid the
                                 Mode-2 fallback path from operators (2026-05-15).
+34. NO_METADATA_LEAK:           the deterministic Mode-2 reply does NOT
+                                contain raw LLM-prompt context markers
+                                ("Player skill level:", "This is move N of
+                                the game.", "Recurring mistake areas:",
+                                "Strengths:", "Recent training focus:").
+                                Pre-PR-#169 these leaked verbatim into
+                                coach replies (caught on-device 2026-05-16).
+35. NO_DUPLICATE_EVAL_SENTENCE: the deterministic reply does not contain
+                                two near-identical eval sentences — pre-
+                                PR-#169 the SafeExplainer output ("Position
+                                is roughly equal.") was appended on top of
+                                _format_engine_context's eval sentence
+                                ("The position is roughly equal in the
+                                opening.") producing the redundant
+                                phrasing the user reported.
 """
 
 from __future__ import annotations
@@ -192,12 +207,9 @@ class TestPhaseTipPlacement:
         """9. PHASE_TIP_IN_FALLBACK — Mode-2 deterministic reply includes game-phase tip."""
         turns = _make_turns(("user", "What is my plan?"))
         signal = _simple_signal(phase="opening")
-        context = _build_context_block(signal, None, None)
         reply = _build_reply_deterministic(
             user_query="What is my plan?",
-            context_block=context,
             engine_signal=signal,
-            base_explanation="Solid position.",
             history=turns,
         )
         assert any(tip in reply for tip in _PHASE_TIPS)
@@ -244,15 +256,11 @@ class TestLevelDifferentiation:
 
 class TestQuestionTypeDetection:
     def _advice_for_query(self, query: str, skill: str = "intermediate") -> str:
-        profile = {"skill_estimate": skill}
         turns = _make_turns(("user", query))
         signal = _simple_signal()
-        context = _build_context_block(signal, profile, None)
         return _build_reply_deterministic(
             user_query=query,
-            context_block=context,
             engine_signal=signal,
-            base_explanation="",
             history=turns,
             skill_level=skill,
         )
@@ -435,6 +443,14 @@ class TestEngineSignalStructure:
 
 
 class TestContextBlockEnrichment:
+    """Unit tests for ``_build_context_block``.  This helper stays
+    after PR #169 as the F-09 sanitisation surface for
+    ``test_prompt_injection.py`` — its output is consumed by the LLM
+    prompt path only, NOT by the deterministic user-visible reply (PR
+    #169 removed that call site).  TestDeterministicReplyNoMetadataLeak
+    below is the inverse pin that the user-visible reply does not
+    contain this metadata."""
+
     def test_past_mistakes_in_context(self):
         """28. PAST_MISTAKES_IN_CONTEXT"""
         signal = _simple_signal()
@@ -676,6 +692,121 @@ class TestExhaustionWarning:
         assert not spurious, (
             f"Exhaustion WARNING must not fire when the LLM path succeeds; "
             f"got: {[r.getMessage() for r in spurious]}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Invariants 34-35: deterministic-reply UX cleanup (PR #169)
+#
+# On-device test 2026-05-16 surfaced two related UX bugs in the
+# deterministic chat fallback:
+#
+#   1. Raw LLM-prompt context leaked into the user-visible reply —
+#      "This is move 6 of the game. Player skill level: intermediate."
+#      appeared verbatim in coach text.
+#   2. The eval sentence was duplicated — _format_engine_context output
+#      ("The position is roughly equal in the opening.") was followed
+#      by SafeExplainer.explain output ("Position is roughly equal.")
+#      because both were appended.
+#
+# PR #169 deleted _build_context_block (the metadata-emitting helper)
+# and stopped routing _safe_explainer.explain through
+# _build_reply_deterministic.  These tests pin the user-visible reply
+# contract so neither regression can sneak back in.
+# ---------------------------------------------------------------------------
+
+
+class TestDeterministicReplyNoMetadataLeak:
+    """The deterministic Mode-2 reply must NOT expose LLM-prompt-shaped
+    metadata (move counter, skill level, mistakes list, strengths
+    list, training focus) — those are for the LLM prompt path only.
+    The LLM path's own context block (built by _build_chat_llm) is
+    untouched."""
+
+    _METADATA_MARKERS: tuple[str, ...] = (
+        "Player skill level:",
+        "Recurring mistake areas:",
+        "Strengths:",
+        "Recent training focus:",
+    )
+
+    def _reply_with_full_profile(self) -> str:
+        """Build a deterministic reply with every metadata source
+        populated.  If any leak path is reintroduced, the assertions
+        below catch the exact marker."""
+        turns = _make_turns(("user", "What is my plan?"))
+        profile = {
+            "skill_estimate": "intermediate",
+            "common_mistakes": [{"tag": "tactical_vision"}, {"tag": "time_management"}],
+            "strengths": ["endgame_technique", "opening_principles"],
+        }
+        with _patch_llm_unavailable():
+            reply = generate_chat_reply(
+                _STARTING_FEN,
+                turns,
+                player_profile=profile,
+                past_mistakes=["tactical_vision", "endgame_technique"],
+                move_count=6,
+            ).reply
+        return reply
+
+    def test_NO_METADATA_LEAK_known_markers(self):
+        """Pin 34: no known metadata sentence appears in the user-
+        visible reply.  Each marker is tested individually so a
+        failure message names the exact leak."""
+        reply = self._reply_with_full_profile()
+        for marker in self._METADATA_MARKERS:
+            assert marker not in reply, (
+                f"User-visible chat reply contains the LLM-prompt-shaped "
+                f"marker {marker!r}.  Metadata belongs in the LLM prompt "
+                f"(built by _build_chat_llm), not in the deterministic "
+                f"reply.  Reply: {reply!r}"
+            )
+
+    def test_NO_METADATA_LEAK_move_counter(self):
+        """The move counter ("This is move 6 of the game.") was the
+        most user-visible leak in the 2026-05-16 incident.  Pin it
+        specifically — the marker is generic enough that a structural
+        check ("This is move", "of the game") is more robust than
+        the literal full sentence."""
+        reply = self._reply_with_full_profile()
+        assert "This is move" not in reply, (
+            f"Deterministic reply contains the raw move-counter sentence: "
+            f"{reply!r}.  This was the smoking-gun symptom of the PR #169 "
+            f"regression — debug context was being concatenated into user "
+            f"text."
+        )
+        assert "of the game." not in reply, (
+            f"Deterministic reply still contains the move-counter trailer "
+            f"'of the game.' — leak path partially reintroduced.  "
+            f"Reply: {reply!r}"
+        )
+
+
+class TestDeterministicReplyNoDuplicateEvalSentence:
+    """The deterministic reply must not contain two near-identical
+    eval-state sentences.  Pre-PR-#169 the user saw 'The position is
+    roughly equal in the opening. The position is stable. Position is
+    roughly equal.' because _format_engine_context and SafeExplainer
+    both fed the user-facing parts list."""
+
+    def test_NO_DUPLICATE_EVAL_SENTENCE_equal_band(self):
+        """Pin 35: the equal-band trigger phrase 'roughly equal'
+        appears at most once in a deterministic reply for an equal
+        position.  Catches the specific SafeExplainer-vs-
+        _format_engine_context overlap that surfaced on-device."""
+        turns = _make_turns(("user", "How should I play here?"))
+        with _patch_llm_unavailable():
+            reply = generate_chat_reply(_STARTING_FEN, turns).reply
+
+        # Lowercase to absorb sentence-start capitalisation
+        # differences between the two old code paths.
+        occurrences = reply.lower().count("roughly equal")
+        assert occurrences <= 1, (
+            f"Deterministic reply repeats the 'roughly equal' phrase "
+            f"{occurrences} times; pre-PR-#169 SafeExplainer + "
+            f"_format_engine_context both emitted near-identical eval "
+            f"sentences.  Reply: {reply!r}"
         )
 
 

@@ -364,14 +364,15 @@ class TestMode2DeterministicLevelAdaptation:
     """QUAL-23..26: Mode-2 deterministic path adapts to player level."""
 
     def _reply(self, skill_level: str, query: str = "What is the best plan?") -> str:
-        profile = {"skill_estimate": skill_level, "common_mistakes": [], "strengths": []}
-        context_block = _build_context_block(_ESV_EQUAL, profile, None)
+        # PR #169: _build_reply_deterministic no longer takes context_block /
+        # base_explanation parameters — the function now calls
+        # _format_engine_context directly and drops the redundant
+        # SafeExplainer output that produced the duplicate "Position is
+        # roughly equal." reported by the user 2026-05-16.
         history = [ChatTurn(role="user", content=query)]
         return _build_reply_deterministic(
             user_query=query,
-            context_block=context_block,
             engine_signal=_ESV_EQUAL,
-            base_explanation="",
             history=history,
             skill_level=skill_level,
         )
@@ -395,13 +396,10 @@ class TestMode2DeterministicLevelAdaptation:
 
     def test_opening_phase_includes_phase_tip(self):
         """QUAL-25: Mode-2 fallback includes opening phase tip."""
-        context_block = _build_context_block(_ESV_OPENING, None, None)
         history = [ChatTurn(role="user", content="How should I develop?")]
         reply = _build_reply_deterministic(
             user_query="How should I develop?",
-            context_block=context_block,
             engine_signal=_ESV_OPENING,
-            base_explanation="",
             history=history,
             skill_level="intermediate",
         )

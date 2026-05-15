@@ -82,7 +82,14 @@ class SafeExplainer:
 
         # 1) Evaluation
         if eval_type == "mate":
-            parts.append(f"Forced mate — {side} is winning.")
+            # See PR #167: "force(d) mate" trips MATE_CLAIM_PATTERNS in
+            # the Mode-2 lexical filter; "Mate is inevitable" satisfies
+            # the matching MATE_INEVITABILITY_SEMANTIC require without
+            # tripping the lexical forbid.  PR #167 fixed this in the
+            # two coach pipelines; this is the third call site that PR
+            # missed — surfaced via the chat-deterministic-fallback path
+            # which routes through SafeExplainer.
+            parts.append(f"Mate is inevitable — {side} is winning.")
         else:
             band_templates = self._BAND_MESSAGES.get(band, self._BAND_MESSAGES["equal"])
             template = band_templates.get(level, band_templates["intermediate"])
