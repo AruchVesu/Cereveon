@@ -34,9 +34,6 @@ class PlayerProfileCacheTest {
         override suspend fun finishGame(req: GameFinishRequest): ApiResult<GameFinishResponse> =
             ApiResult.HttpError(501)
 
-        override suspend fun getNextTraining(playerId: String): ApiResult<TrainingRecommendation> =
-            ApiResult.HttpError(501)
-
         override suspend fun getPlayerProgress(): ApiResult<PlayerProgressResponse> {
             callCount++
             val current = ProgressCurrentDto(
@@ -168,9 +165,6 @@ class PlayerProfileCacheTest {
                 ApiResult.HttpError(501)
 
             override suspend fun finishGame(req: GameFinishRequest): ApiResult<GameFinishResponse> =
-                ApiResult.HttpError(501)
-
-            override suspend fun getNextTraining(playerId: String): ApiResult<TrainingRecommendation> =
                 ApiResult.HttpError(501)
 
             override suspend fun getPlayerProgress(): ApiResult<PlayerProgressResponse> =

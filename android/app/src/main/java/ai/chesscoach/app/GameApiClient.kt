@@ -10,24 +10,14 @@ interface GameApiClient {
     suspend fun finishGame(req: GameFinishRequest): ApiResult<GameFinishResponse>
 
     /**
-     * Fetch the next training recommendation for [playerId] from
-     * GET /next-training/{player_id}.
-     *
-     * Returns [ApiResult.Success] with a [TrainingRecommendation] on HTTP 200;
-     * [ApiResult.HttpError] on any non-200 response; [ApiResult.Timeout] when
-     * the connect or read deadline is exceeded; [ApiResult.NetworkError]
-     * for all other transport failures.
-     */
-    suspend fun getNextTraining(playerId: String): ApiResult<TrainingRecommendation>
-
-    /**
      * Fetch the SECA curriculum recommendation from POST /curriculum/next.
      *
      * Requires Bearer token authentication (uses the configured [tokenProvider]).
      * Returns a [CurriculumRecommendation] driven by real per-player history
-     * — the authoritative training recommendation engine.
-     *
-     * Schema differs from [getNextTraining]; do not conflate the two responses.
+     * — the authoritative training recommendation engine.  Replaced the
+     * legacy GET /next-training/{player_id} demo endpoint, which was
+     * retired in PR 26 (2026-05-15) along with its placeholder
+     * implementation (hardcoded "demo weaknesses").
      *
      * Default implementation returns [ApiResult.HttpError(501)] so that test
      * fakes implementing only the other methods do not need to override this.
@@ -195,9 +185,9 @@ class HttpGameApiClient(
 
     /**
      * Header set used by most game endpoints: X-Api-Key plus optional
-     * Bearer token from [tokenProvider].  Some endpoints (getNextTraining,
-     * getNextCurriculum, getGameHistory, getPlayerProgress) omit the
-     * X-Api-Key — set [includeApiKey] = false for those.
+     * Bearer token from [tokenProvider].  Some endpoints (getNextCurriculum,
+     * getGameHistory, getPlayerProgress) omit the X-Api-Key — set
+     * [includeApiKey] = false for those.
      */
     private fun authHeaders(includeApiKey: Boolean = true): Map<String, String> = buildMap {
         if (includeApiKey) put("X-Api-Key", apiKey)
@@ -237,14 +227,6 @@ class HttpGameApiClient(
                 parse = { body -> ApiJson.decodeFromString<GameFinishResponse>(body) },
             )
         }
-
-    override suspend fun getNextTraining(playerId: String): ApiResult<TrainingRecommendation> =
-        http.request(
-            path = "/next-training/$playerId",
-            method = "GET",
-            headers = mapOf("X-Api-Key" to apiKey),
-            parse = { body -> ApiJson.decodeFromString<TrainingRecommendation>(body) },
-        )
 
     override suspend fun getNextCurriculum(playerId: String): ApiResult<CurriculumRecommendation> =
         http.request(

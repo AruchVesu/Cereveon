@@ -110,14 +110,6 @@ class GameApiClientIntegrationTest {
     "payload": {"drill_id": "endgame-01"}
   }
 }"""
-
-        private const val NEXT_TRAINING_OK = """
-{
-  "topic": "tactics",
-  "difficulty": 0.6,
-  "format": "puzzle",
-  "expected_gain": 8.5
-}"""
     }
 
     // ---------------------------------------------------------------------------
@@ -367,43 +359,11 @@ class GameApiClientIntegrationTest {
     }
 
     // ---------------------------------------------------------------------------
-    // 23–26  GET /next-training/{player_id}
-    // ---------------------------------------------------------------------------
-
-    @Test
-    fun `INT_TRAINING_METHOD - request uses HTTP GET`() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(200).setBody(NEXT_TRAINING_OK))
-        client().getNextTraining("player1")
-        assertEquals("GET", server.takeRequest(10, TimeUnit.SECONDS)!!.method)
-    }
-
-    @Test
-    fun `INT_TRAINING_PATH - request path contains player_id`() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(200).setBody(NEXT_TRAINING_OK))
-        client().getNextTraining("alice")
-        val path = server.takeRequest(10, TimeUnit.SECONDS)!!.path ?: ""
-        assertTrue("Path must contain player_id 'alice', was: $path",
-            "/next-training/alice" in path)
-    }
-
-    @Test
-    fun `INT_TRAINING_API_KEY - X-Api-Key header sent for next-training`() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(200).setBody(NEXT_TRAINING_OK))
-        client().getNextTraining("player1")
-        assertEquals(apiKey, server.takeRequest(10, TimeUnit.SECONDS)!!.getHeader("X-Api-Key"))
-    }
-
-    @Test
-    fun `INT_TRAINING_ALL_FIELDS - all four response fields deserialised correctly`() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(200).setBody(NEXT_TRAINING_OK))
-        val result = client().getNextTraining("player1")
-        assertTrue("Expected Success, got: $result", result is ApiResult.Success<*>)
-        val rec = (result as ApiResult.Success<*>).data as TrainingRecommendation
-        assertEquals("tactics", rec.topic)
-        assertEquals(0.6f, rec.difficulty, 0.001f)
-        assertEquals("puzzle", rec.format)
-        assertEquals(8.5f, rec.expectedGain, 0.01f)
-    }
+    // 23–26  RETIRED in PR 26 (2026-05-15) alongside the
+    // /next-training/{player_id} endpoint + the ``getNextTraining`` API
+    // method.  Wire-shape pins (HTTP GET, path includes player_id,
+    // X-Api-Key header, four-field deserialisation) defended a
+    // call site that no longer exists.
 
     // ---------------------------------------------------------------------------
     // Cross-device resume — POST /game/{id}/checkpoint + GET /game/active

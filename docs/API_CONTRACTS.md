@@ -61,51 +61,17 @@ contract widening that requires an Android client update in the same release.
 
 ---
 
-## 2. `GET /next-training/{player_id}`
+## 2. `GET /next-training/{player_id}` — RETIRED in PR 26
 
-**Host:** `server.py`
-**Auth:** `X-Api-Key` required
-
-### Path params
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `player_id` | `string` | Player identifier |
-
-### Response
-
-```json
-{
-  "topic":         <string>,
-  "difficulty":    <float>,
-  "format":        <string>,
-  "expected_gain": <float>
-}
-```
-
-| Field | Type | Notes |
-|-------|------|-------|
-| `topic` | `string` | Training topic (e.g. `"tactics"`, `"general_play"`) |
-| `difficulty` | `float` | 0.0–1.0 |
-| `format` | `string` | Training format (e.g. `"game"`, `"puzzle"`) |
-| `expected_gain` | `float` | Estimated rating gain |
-
-### ⚠ Schema conflict with `POST /curriculum/next`
-
-`POST /curriculum/next` is a distinct endpoint (SECA router) with a **different
-response schema**:
-
-```json
-{
-  "topic":         <string>,
-  "difficulty":    <float | string>,
-  "exercise_type": <string>,
-  "payload":       <object>
-}
-```
-
-The fields `format` / `exercise_type` and `expected_gain` / `payload` are not
-interchangeable. Clients MUST NOT assume the two endpoints return the same shape.
+The endpoint was a placeholder implementation with hardcoded "demo
+weaknesses" that never advanced past the comment in the source.
+Android always called `POST /curriculum/next` first (the SECA-driven
+authoritative path); `/next-training` was the fallback that ran when
+`/curriculum/next` failed — but the fallback was showing fake-data
+recommendations, not a real signal.  Retired in PR 26 (2026-05-15)
+alongside the Android-side `getNextTraining` method +
+`TrainingRecommendation` DTO.  See `§18 POST /curriculum/next` for
+the surviving training-recommendation contract.
 
 ---
 
@@ -704,9 +670,15 @@ Returns the next curriculum task driven by (a) game-history-derived dominant mis
 }
 ```
 
-### Coexistence with `GET /next-training/{player_id}`
+### History — `GET /next-training/{player_id}` retired in PR 26
 
-§2 (`GET /next-training/{player_id}`) is a **separate** route with a **different** response shape (`topic`/`difficulty`/`format`/`expected_gain`) — pinned as a documented mismatch in `test_api_contract_validation.py::TestNextTrainingSchemaConflict`. Android calls both. Consolidation is a known follow-up; until then, treat the two as independent contracts.
+§2 used to be a parallel `GET /next-training/{player_id}` route with a different
+response shape.  Both endpoints coexisted because Android called
+`/curriculum/next` first and fell back to `/next-training` on failure — but
+`/next-training`'s "weaknesses" were hardcoded demo data, not a real signal.
+PR 26 (2026-05-15) retired the legacy route + the Android fallback path,
+leaving `POST /curriculum/next` as the sole training-recommendation
+contract.
 
 ---
 

@@ -45,9 +45,6 @@ class SecaSafetyGateTest {
         override suspend fun finishGame(req: GameFinishRequest) =
             ApiResult.HttpError(501)
 
-        override suspend fun getNextTraining(playerId: String) =
-            ApiResult.HttpError(501)
-
         override suspend fun getSecaStatus(): ApiResult<SecaStatusDto> {
             callCount++
             return responses.removeFirst()

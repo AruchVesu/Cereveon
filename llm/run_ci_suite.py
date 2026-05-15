@@ -48,7 +48,6 @@ TEST_TARGETS = [
     "llm/tests/test_historical_pipeline.py",
     "llm/tests/test_api_security.py",
     "llm/tests/test_skill_updater_resilience.py",
-    "llm/tests/test_next_training_after_game.py",
     "llm/tests/test_game_finish_db_integration.py",
     "llm/tests/test_engine_pool_exhaustion.py",
     "llm/tests/test_cache_redis_unavailable.py",

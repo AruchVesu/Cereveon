@@ -157,12 +157,11 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
         fun formatTopic(topic: String): String =
             "Topic: ${topic.replaceFirstChar { it.uppercase() }.replace('_', ' ')}"
 
-        /** Format training format as "Format: Puzzle". */
-        fun formatFormat(format: String): String =
-            "Format: ${format.replaceFirstChar { it.uppercase() }}"
-
-        /** Format expected gain as "+14 Elo". */
-        fun formatGain(gain: Float): String = "+%.0f Elo".format(gain)
+        // ``formatFormat`` and ``formatGain`` retired in PR 26 (2026-05-15)
+        // alongside the /next-training/{player_id} fallback path that was
+        // their sole caller.  ``CurriculumRecommendation`` (the surviving
+        // shape from /curriculum/next) uses ``exerciseType`` + ``difficulty``
+        // directly, formatted inline at the call site.
 
         /** Convert difficulty 0.0–1.0 to ProgressBar integer (0–100). */
         fun difficultyProgress(difficulty: Float): Int =
@@ -266,13 +265,16 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
             .putFloat(MainActivity.PREF_CONFIDENCE, confidence)
             .apply()
 
-        // ── Fetch training recommendation: curriculum first, next-training fallback ──
+        // ── Fetch training recommendation from /curriculum/next ────────────────
+        // PR 26 (2026-05-15) retired the /next-training/{player_id} fallback;
+        // it was a placeholder with hardcoded "demo weaknesses".  When
+        // /curriculum/next fails (auth, network, server outage), the UI
+        // surfaces the empty training-card state.
         val trainingCard  = view.findViewById<LinearLayout>(R.id.trainingCard)
         val trainingEmpty = view.findViewById<TextView>(R.id.txtTrainingEmpty)
         val client = gameApiClient
         if (client != null) {
             lifecycleScope.launch {
-                // Try SECA curriculum endpoint first (Bearer auth); fall back to demo endpoint.
                 val curriculumResult = client.getNextCurriculum(playerId)
                 if (curriculumResult is ApiResult.Success) {
                     val rec = curriculumResult.data
@@ -296,25 +298,9 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
                         difficultyProgress(rec.difficulty)
                     trainingCard.visibility  = View.VISIBLE
                     trainingEmpty.visibility = View.GONE
-                    return@launch
-                }
-
-                // Fallback: /next-training (X-Api-Key, demo weights)
-                when (val result = client.getNextTraining(playerId)) {
-                    is ApiResult.Success -> {
-                        val rec = result.data
-                        view.findViewById<TextView>(R.id.txtTrainingTopic).text  = formatTopic(rec.topic)
-                        view.findViewById<TextView>(R.id.txtTrainingFormat).text = formatFormat(rec.format)
-                        view.findViewById<TextView>(R.id.txtTrainingGain).text   = formatGain(rec.expectedGain)
-                        view.findViewById<ProgressBar>(R.id.progressDifficulty).progress =
-                            difficultyProgress(rec.difficulty)
-                        trainingCard.visibility  = View.VISIBLE
-                        trainingEmpty.visibility = View.GONE
-                    }
-                    else -> {
-                        trainingCard.visibility  = View.GONE
-                        trainingEmpty.visibility = View.VISIBLE
-                    }
+                } else {
+                    trainingCard.visibility  = View.GONE
+                    trainingEmpty.visibility = View.VISIBLE
                 }
             }
         }

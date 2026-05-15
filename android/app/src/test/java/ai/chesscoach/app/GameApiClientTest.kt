@@ -54,18 +54,11 @@ import org.junit.Test
  * 28.  HTTP_CLIENT_API_KEY:             HttpGameApiClient stores apiKey.
  * 29.  HTTP_CLIENT_TOKEN_NULL_DEFAULT:  HttpGameApiClient.tokenProvider defaults to null.
  * 30.  HTTP_CLIENT_TOKEN_STORED:        HttpGameApiClient stores a supplied tokenProvider.
- * 31.  TRAINING_MODEL_FIELDS:           TrainingRecommendation retains all four fields.
- * 32.  TRAINING_MODEL_EQUALITY:         Two identical TrainingRecommendations are equal.
- * 33.  TRAINING_MODEL_INEQUALITY:       TrainingRecommendations differ when topic differs.
- * 34.  FAKE_TRAINING_SUCCESS:           FakeGameApiClient returns configured getNextTraining result.
- * 35.  FAKE_TRAINING_HTTP_ERROR:        FakeGameApiClient returns HttpError for getNextTraining.
- * 36.  FAKE_TRAINING_TIMEOUT:           FakeGameApiClient returns Timeout for getNextTraining.
- * 37.  FAKE_TRAINING_CALL_COUNT:        FakeGameApiClient counts getNextTraining calls.
- * 38.  FAKE_TRAINING_LAST_PLAYER_ID:    FakeGameApiClient records last getNextTraining playerId.
- * 39.  TRAINING_RESPONSE_TOPIC_STRING:  topic field is a non-empty string in success response.
- * 40.  TRAINING_RESPONSE_FORMAT_STRING: format field is a non-empty string in success response.
- * 41.  TRAINING_RESPONSE_DIFFICULTY_RANGE: difficulty is in 0.0..1.0.
- * 42.  TRAINING_RESPONSE_EXPECTED_GAIN_NON_NEGATIVE: expectedGain is >= 0.
+ * 31–42 RETIRED in PR 26 (2026-05-15): TRAINING_MODEL_* / FAKE_TRAINING_* /
+ *       TRAINING_RESPONSE_* invariants defended the ``TrainingRecommendation``
+ *       DTO + ``getNextTraining`` API method, both removed alongside the
+ *       /next-training/{player_id} HTTP endpoint.  CurriculumRecommendation
+ *       contracts are pinned server-side in test_curriculum_next_contract.py.
  */
 class GameApiClientTest {
 
@@ -86,22 +79,11 @@ class GameApiClientTest {
                     coachContent = CoachContentDto("Post-game reflection", "Review your moves."),
                 )
             ),
-        var nextTrainingResult: ApiResult<TrainingRecommendation> =
-            ApiResult.Success(
-                TrainingRecommendation(
-                    topic = "tactics",
-                    difficulty = 0.6f,
-                    format = "puzzle",
-                    expectedGain = 2.5f,
-                )
-            ),
     ) : GameApiClient {
         var startCallCount = 0
         var finishCallCount = 0
-        var trainingCallCount = 0
         var lastPlayerId: String? = null
         var lastFinishRequest: GameFinishRequest? = null
-        var lastTrainingPlayerId: String? = null
 
         override suspend fun startGame(playerId: String): ApiResult<GameStartResponse> {
             startCallCount++
@@ -113,12 +95,6 @@ class GameApiClientTest {
             finishCallCount++
             lastFinishRequest = req
             return nextFinishResult
-        }
-
-        override suspend fun getNextTraining(playerId: String): ApiResult<TrainingRecommendation> {
-            trainingCallCount++
-            lastTrainingPlayerId = playerId
-            return nextTrainingResult
         }
     }
 
@@ -404,119 +380,11 @@ class GameApiClientTest {
     }
 
     // ------------------------------------------------------------------
-    // 31–33  TrainingRecommendation model
+    // 31–42 RETIRED in PR 26 (2026-05-15) alongside the
+    // /next-training/{player_id} endpoint + the ``TrainingRecommendation``
+    // DTO + ``getNextTraining`` API method.  ``CurriculumRecommendation``
+    // (from /curriculum/next) is the surviving training-recommendation
+    // surface; its field contracts are pinned at the server boundary
+    // (test_curriculum_next_contract.py) rather than client-side.
     // ------------------------------------------------------------------
-
-    @Test
-    fun `TrainingRecommendation retains all four fields`() {
-        val rec = TrainingRecommendation(
-            topic = "tactics",
-            difficulty = 0.7f,
-            format = "puzzle",
-            expectedGain = 3.2f,
-        )
-        assertEquals("tactics", rec.topic)
-        assertEquals(0.7f, rec.difficulty)
-        assertEquals("puzzle", rec.format)
-        assertEquals(3.2f, rec.expectedGain)
-    }
-
-    @Test
-    fun `two identical TrainingRecommendations are equal`() {
-        val a = TrainingRecommendation("endgame", 0.5f, "drill", 1.0f)
-        val b = TrainingRecommendation("endgame", 0.5f, "drill", 1.0f)
-        assertEquals(a, b)
-    }
-
-    @Test
-    fun `TrainingRecommendations differ when topic differs`() {
-        val a = TrainingRecommendation("tactics", 0.5f, "puzzle", 1.0f)
-        val b = TrainingRecommendation("endgame", 0.5f, "puzzle", 1.0f)
-        assertNotEquals(a, b)
-    }
-
-    // ------------------------------------------------------------------
-    // 34–36  FakeGameApiClient — getNextTraining result variants
-    // ------------------------------------------------------------------
-
-    @Test
-    fun `FakeGameApiClient returns configured getNextTraining success`() =
-        runBlocking {
-            val rec = TrainingRecommendation("tactics", 0.6f, "puzzle", 2.5f)
-            val fake = FakeGameApiClient(nextTrainingResult = ApiResult.Success(rec))
-            val result = fake.getNextTraining("player-1")
-            assertTrue(result is ApiResult.Success)
-            assertEquals("tactics", (result as ApiResult.Success).data.topic)
-            assertEquals("puzzle", result.data.format)
-        }
-
-    @Test
-    fun `FakeGameApiClient returns HttpError for getNextTraining`() =
-        runBlocking {
-            val fake = FakeGameApiClient(nextTrainingResult = ApiResult.HttpError(401))
-            val result = fake.getNextTraining("player-1")
-            assertTrue(result is ApiResult.HttpError)
-            assertEquals(401, (result as ApiResult.HttpError).code)
-        }
-
-    @Test
-    fun `FakeGameApiClient returns Timeout for getNextTraining`() =
-        runBlocking {
-            val fake = FakeGameApiClient(nextTrainingResult = ApiResult.Timeout)
-            val result = fake.getNextTraining("player-1")
-            assertSame(ApiResult.Timeout, result)
-        }
-
-    // ------------------------------------------------------------------
-    // 37–38  FakeGameApiClient introspection — getNextTraining
-    // ------------------------------------------------------------------
-
-    @Test
-    fun `FakeGameApiClient counts getNextTraining calls independently`() =
-        runBlocking {
-            val fake = FakeGameApiClient()
-            fake.getNextTraining("p1")
-            fake.getNextTraining("p2")
-            fake.startGame("p3")
-            assertEquals(2, fake.trainingCallCount)
-            assertEquals(1, fake.startCallCount)
-        }
-
-    @Test
-    fun `FakeGameApiClient records last getNextTraining playerId`() =
-        runBlocking {
-            val fake = FakeGameApiClient()
-            fake.getNextTraining("first-player")
-            fake.getNextTraining("second-player")
-            assertEquals("second-player", fake.lastTrainingPlayerId)
-        }
-
-    // ------------------------------------------------------------------
-    // 39–42  TrainingRecommendation field contracts
-    // ------------------------------------------------------------------
-
-    @Test
-    fun `TrainingRecommendation topic field is a non-empty string`() {
-        val rec = TrainingRecommendation(topic = "tactics", difficulty = 0.5f, format = "puzzle", expectedGain = 1.0f)
-        assertTrue("topic must be non-empty", rec.topic.isNotEmpty())
-    }
-
-    @Test
-    fun `TrainingRecommendation format field is a non-empty string`() {
-        val rec = TrainingRecommendation(topic = "endgame", difficulty = 0.4f, format = "drill", expectedGain = 0.5f)
-        assertTrue("format must be non-empty", rec.format.isNotEmpty())
-    }
-
-    @Test
-    fun `TrainingRecommendation difficulty is in 0 to 1 range`() {
-        val rec = TrainingRecommendation(topic = "strategy", difficulty = 0.3f, format = "game", expectedGain = 0.8f)
-        assertTrue("difficulty must be >= 0", rec.difficulty >= 0f)
-        assertTrue("difficulty must be <= 1", rec.difficulty <= 1f)
-    }
-
-    @Test
-    fun `TrainingRecommendation expectedGain is non-negative`() {
-        val rec = TrainingRecommendation(topic = "tactics", difficulty = 0.6f, format = "puzzle", expectedGain = 2.5f)
-        assertTrue("expectedGain must be >= 0", rec.expectedGain >= 0f)
-    }
 }

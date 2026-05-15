@@ -30,54 +30,13 @@ os.environ.setdefault("SECA_ENV", "dev")
 
 
 # ---------------------------------------------------------------------------
-# AUT-01  next-training cross-tenant check
+# AUT-01  RETIRED in PR 26 (2026-05-15) alongside the /next-training/{player_id}
+# HTTP endpoint.  The cross-tenant-probe class of attack the test pinned
+# (path player_id != authenticated principal) defended a handler that no
+# longer exists.  /curriculum/next, the surviving training-recommendation
+# surface, derives the player_id from get_current_player only — there is
+# no path parameter to spoof.
 # ---------------------------------------------------------------------------
-
-class TestAut01NextTrainingCrossTenant(unittest.TestCase):
-    """next_training() must verify that the path-supplied player_id matches
-    the authenticated principal.  Currently it relies only on verify_api_key,
-    which is a shared backend secret — any holder of the key can probe any
-    player_id and learn that player's rating from player_skill_memory."""
-
-    def setUp(self):
-        import llm.server as srv
-        self.srv = srv
-
-    def test_next_training_uses_get_current_player(self):
-        """The endpoint must include a Depends(get_current_player) parameter
-        so the JWT-derived player.id is available for cross-tenant validation."""
-        src = inspect.getsource(self.srv.next_training)
-        self.assertIn(
-            "get_current_player",
-            src,
-            "AUT-01: next_training() does not depend on get_current_player; "
-            "without it there is no JWT-derived player to cross-check the path against.",
-        )
-
-    def test_next_training_rejects_mismatched_player_id(self):
-        """The endpoint body must contain a check comparing path player_id to
-        the authenticated player's id and raising 403 on mismatch."""
-        src = inspect.getsource(self.srv.next_training)
-        # Look for the comparison pattern: player_id != str(player.id)  OR equivalent
-        has_comparison = (
-            "player_id != str(player.id)" in src
-            or "player_id != player.id" in src
-            or "str(player.id) != player_id" in src
-        )
-        self.assertTrue(
-            has_comparison,
-            "AUT-01: next_training() does not compare path player_id against the "
-            "authenticated player.id — cross-tenant probe is possible.",
-        )
-
-    def test_next_training_raises_403_on_mismatch(self):
-        """The mismatch path must raise HTTPException(403) — not 401, not 422."""
-        src = inspect.getsource(self.srv.next_training)
-        self.assertIn(
-            "status_code=403",
-            src,
-            "AUT-01: next_training() does not raise 403 for cross-tenant access.",
-        )
 
 
 # ---------------------------------------------------------------------------
