@@ -459,12 +459,20 @@ def finish_game(
             )
 
     # ---- skill update ----
+    # If SkillUpdater raises, the SQLAlchemy session is left in an aborted
+    # state on Postgres (any prior failed DDL/DML marks the txn unusable).
+    # We MUST rollback before the next ORM call (``db.refresh(player)``) or
+    # the handler cascades to a 500 even though the GameEvent already
+    # committed above.  See the 2026-05-15 prod incident: a broken
+    # ``CREATE TABLE … AUTOINCREMENT`` inside ExperienceStore.log aborted
+    # the txn and ``db.refresh`` then threw InFailedSqlTransaction.
     try:
         SkillUpdater(db).update_from_event(player.id, event)
     except Exception:
         logger.exception(
             "SkillUpdater failed for player %s; rating not updated this game", player.id
         )
+        db.rollback()
     db.refresh(player)
 
     rating_after = player.rating
