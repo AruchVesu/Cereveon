@@ -89,11 +89,22 @@ class AccuracyAnalysis:
     ~ 0.5 at ACPL=100, ~ 0.25 at ACPL=300."""
 
     weaknesses: dict[str, float]
-    """Player-side weakness vector.  Currently exposes the three
-    severity-bucket rates (blunders / mistakes / inaccuracies as
-    fractions of player moves).  Compatible with the request schema's
-    ``weaknesses: dict[str, float]`` shape; consumers downstream of
-    ``finish_game`` accept arbitrary string keys."""
+    """Player-side weakness vector, phase-keyed.
+
+    Keys are a subset of ``{"opening", "middlegame", "endgame"}``;
+    values are (mistake + blunder rate) for the player's moves in
+    that phase, normalised over total player moves.  Matches the
+    schema ``llm.seca.analytics.mistake_stats.aggregate_from_weakness_dicts``
+    expects (see ``llm.seca.analysis.weakness_vector.WeaknessVectorBuilder``
+    for the historical producer), so the post-game dominant-category
+    pipeline can read directly from ``event.weaknesses_json``.
+
+    Pre-PR-#171 this returned severity-keyed counts
+    (``{"blunders", "mistakes", "inaccuracies"}``) and the analytics
+    aggregator silently dropped every record — see the 2026-05-16
+    multi-game probe finding.  Severity counts are still available as
+    ``blunder_count`` / ``mistake_count`` / ``inaccuracy_count`` for
+    the ACC_DIVERGENCE log and the bandit context."""
 
     blunder_count: int
     mistake_count: int
@@ -154,6 +165,18 @@ def compute_accuracy_from_pgn(
     board = game.board()
 
     losses_cp: list[int] = []
+    # Per-phase loss tracking.  Phase classification matches
+    # ``llm.seca.analysis.analyzer.GameWeaknessAnalyzer._phase`` so the
+    # downstream ``aggregate_from_weakness_dicts`` aggregator (which
+    # keys off "opening" / "middlegame" / "endgame") reads phase rates
+    # with the same vocabulary the historical producer used.  Each
+    # entry is a loss-cp integer for one player move played in that
+    # phase.
+    phase_losses_cp: dict[str, list[int]] = {
+        "opening": [],
+        "middlegame": [],
+        "endgame": [],
+    }
     plies_seen = 0
     prev_eval_cp: int | None = None
 
@@ -163,6 +186,10 @@ def compute_accuracy_from_pgn(
 
         side_to_move = board.turn
         is_player_move = side_to_move == player_color
+        # Phase is determined by the PRE-MOVE position the player faced,
+        # matching WeaknessVectorBuilder.record(phase=_phase(board)) in
+        # the historical analyzer (called before board.push).
+        pre_move_phase = _phase(board) if is_player_move else None
 
         if prev_eval_cp is None:
             # First iteration — establish the eval-before for the
@@ -190,11 +217,27 @@ def compute_accuracy_from_pgn(
             else:
                 loss = max(0, after_eval_cp - prev_eval_cp)
             losses_cp.append(loss)
+            if pre_move_phase is not None:
+                phase_losses_cp[pre_move_phase].append(loss)
 
         prev_eval_cp = after_eval_cp
         plies_seen += 1
 
-    return _summarise(losses_cp, player_color)
+    return _summarise(losses_cp, phase_losses_cp, player_color)
+
+
+def _phase(board: chess.Board) -> str:
+    """Coarse game-phase classifier — piece-count thresholds match
+    ``llm.seca.analysis.analyzer.GameWeaknessAnalyzer._phase``.  Pinned
+    by ``test_pgn_accuracy_phase_classifier_matches_historical_analyzer``
+    so the two producers can't drift apart.
+    """
+    pieces = len(board.piece_map())
+    if pieces > 24:
+        return "opening"
+    if pieces > 12:
+        return "middlegame"
+    return "endgame"
 
 
 def _evaluate_cp(
@@ -252,9 +295,20 @@ def _infer_player_color(game: chess.pgn.Game, result: str) -> chess.Color:
 
 def _summarise(
     losses_cp: list[int],
+    phase_losses_cp: dict[str, list[int]],
     player_color: chess.Color,
 ) -> AccuracyAnalysis:
-    """Reduce per-move CP losses to accuracy + weakness counts."""
+    """Reduce per-move CP losses to accuracy + phase-keyed weakness rates.
+
+    ``weaknesses`` keys are the subset of ``{"opening", "middlegame",
+    "endgame"}`` that produced at least one player move classified as
+    mistake or blunder (``loss >= _MISTAKE_THRESHOLD_CP``).  Values are
+    that phase's mistake+blunder count normalised over the TOTAL count
+    of player moves analysed.  Matches the historical
+    ``WeaknessVectorBuilder.build()`` shape so the downstream analytics
+    aggregator (``aggregate_from_weakness_dicts``) reads category
+    scores out of the box.
+    """
     if not losses_cp:
         return AccuracyAnalysis(
             accuracy=0.5,
@@ -290,11 +344,21 @@ def _summarise(
     accuracy = max(0.0, min(1.0, 1.0 / (1.0 + acpl / 100.0)))
 
     n = len(losses_cp)
-    weaknesses = {
-        "blunders": blunders / n,
-        "mistakes": mistakes / n,
-        "inaccuracies": inaccuracies / n,
-    }
+
+    # Phase-keyed weaknesses: rate of (mistake + blunder) for each phase,
+    # normalised over total player moves.  Matches
+    # WeaknessVectorBuilder.build() semantics: count moves where the
+    # classified delta is "mistake" (>= _MISTAKE_THRESHOLD_CP) or
+    # "blunder" (>= _BLUNDER_THRESHOLD_CP).  Inaccuracies are excluded
+    # so the rate matches the historical producer that fed
+    # _PHASE_TO_CATEGORIES in mistake_stats.py.  Only phases that
+    # actually produced significant errors are emitted — zero-rate
+    # phases are dropped to keep event.weaknesses_json compact.
+    weaknesses: dict[str, float] = {}
+    for phase, phase_losses in phase_losses_cp.items():
+        significant = sum(1 for loss in phase_losses if loss >= _MISTAKE_THRESHOLD_CP)
+        if significant > 0:
+            weaknesses[phase] = significant / n
 
     return AccuracyAnalysis(
         accuracy=accuracy,

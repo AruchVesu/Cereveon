@@ -393,9 +393,20 @@ class TestResolveAuthoritativeAccuracy:
 
         assert source == "engine"
         assert acc < 0.5, f"server accuracy {acc} should be < 0.5 for blundered game"
-        # Server weaknesses dict shape — not the client's.
-        assert "blunders" in wks
-        assert wks["blunders"] > 0
+        # Server weaknesses dict shape — phase-keyed since PR #171
+        # (was severity-keyed pre-fix, which broke the downstream
+        # aggregate_from_weakness_dicts pipeline silently).  At least
+        # one phase must carry a non-zero rate for a blundered game.
+        assert wks, f"weaknesses must be non-empty for a blundered game, got {wks}"
+        assert set(wks.keys()) <= {"opening", "middlegame", "endgame"}, (
+            f"weakness keys must be a subset of phase names "
+            f"{{opening, middlegame, endgame}}; got {set(wks.keys())} — "
+            f"if this fails, the post-PR-171 aggregator pipeline is broken."
+        )
+        assert any(v > 0 for v in wks.values()), (
+            f"blundered game should produce at least one positive phase rate, "
+            f"got {wks}"
+        )
         # Divergence warning fired (|0.95 - acc| > 0.20).
         assert any("ACC_DIVERGENCE" in rec.message for rec in caplog.records)
 
