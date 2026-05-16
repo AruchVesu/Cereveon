@@ -100,7 +100,24 @@ MOVE_ADVISORY_PATTERNS: tuple[str, ...] = (
 # prompt-injected output that bypassed the lexical layer still fails the
 # semantic gate.
 SPECULATIVE_PATTERNS: tuple[str, ...] = (
-    r"\bshould\b",
+    # ``\bshould\b`` was retired in PR #170 (2026-05-16).  It was the
+    # single biggest reason DeepSeek Mode-2 output kept failing the
+    # lexical gate — caught by PR #168's new exhaustion warning, which
+    # showed every chat retry tripping ``Forbidden MODE-2 pattern
+    # detected: pattern `\bshould\b```.  In coaching language ``should``
+    # is overwhelmingly imperative ("you should develop your knight",
+    # "White should castle quickly") rather than speculative; the
+    # validator can't tell the two senses apart from a regex, so it
+    # blocked legitimate coaching alongside actual speculation, leaving
+    # the user with the repetitive deterministic fallback PR #169
+    # later tightened.
+    #
+    # Speculative compounds and engine-voice forms remain caught:
+    #   - ``should likely`` / ``should probably``    → \blikely\b / \bprobably\b
+    #   - ``should consider``                        → \bconsider\b
+    #   - ``the engine should …``                    → \bengine\b in SPECULATIVE_SEMANTIC
+    #   - ``I think you should …``                   → \bI think\b
+    #   - ``the engine wants …`` / ``plans to …``    → unchanged below
     r"\blikely\b",
     r"\bprobably\b",
     r"\bI think\b",

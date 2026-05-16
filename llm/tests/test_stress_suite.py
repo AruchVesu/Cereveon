@@ -121,10 +121,17 @@ class TestSchemaValidationStress:
         Only includes patterns verified by the schema validator's existing test suite.
         Capture notation (Qxf7, Rxe5) is intentionally excluded — it does not match
         the forbidden notation regex \b[KQRBN][a-h][1-8]\b.
+
+        Note: ``\bshould\b`` was removed from SPECULATIVE_PATTERNS in PR
+        #170 (2026-05-16).  The previous "White should advance the pawn"
+        / "Black should retreat the knight" cases that used to live here
+        now PASS the lexical gate — they were the canonical example of
+        the gate over-blocking imperative coaching language.  Speculative
+        compounds (``should likely``, ``should probably``) still fail
+        via the ``\blikely\b`` / ``\bprobably\b`` patterns that remain.
+        See TestSpeculativeShouldAccepted below for the inverse pin.
         """
         forbidden = [
-            "White should advance the pawn.",  # speculative: "should"
-            "Black should retreat the knight.",  # speculative: "should"
             "The engine wants to capture the bishop.",  # engine reference
             "The engine wants to play Nd5.",  # engine reference
             "The position leads to mate in 3 moves.",  # mate claim

@@ -528,11 +528,15 @@ class TestEngineOverrideGuard:
         with pytest.raises(AssertionError, match="pattern"):
             validate_mode_2_negative("The position allows mate in 2.")
 
-    def test_should_advisory_fails_negative_validator(self):
-        from llm.rag.validators.mode_2_negative import validate_mode_2_negative
-
-        with pytest.raises(AssertionError, match="pattern"):
-            validate_mode_2_negative("Black should capture on d4 immediately.")
+    # ``test_should_advisory_fails_negative_validator`` retired in PR
+    # #170 (2026-05-16).  The pattern ``\bshould\b`` was removed from
+    # SPECULATIVE_PATTERNS because it over-blocked imperative coaching
+    # language and was the dominant cause of every Mode-2 LLM retry
+    # tripping the lexical gate (caught by PR #168's exhaustion
+    # WARNING).  Speculative compounds ("should likely", "should
+    # consider", "I think you should") remain rejected via the
+    # patterns that catch their hedging marker — see
+    # ``test_speculative_should_unlock.py`` for the full pin set.
 
     def test_stockfish_phrase_fails_contract_validator(self):
         from llm.rag.contracts.validate_output import validate_output
