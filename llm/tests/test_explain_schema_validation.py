@@ -245,7 +245,13 @@ class TestExplainResponseContentValidation:
             validate_explain_response(r)
 
     def test_llm_mode_speculative_language_rejected(self):
-        r = _llm_response(explanation="White should advance the pawn.")
+        # PR #170 retired ``\bshould\b`` from SPECULATIVE_PATTERNS
+        # (was over-blocking imperative coaching language).  This
+        # test still pins the broader contract — speculative language
+        # IS rejected — using ``\blikely\b`` (still in the list).
+        # See test_speculative_should_unlock.py for the bare-should
+        # accept pin + the matching compound-still-rejected pins.
+        r = _llm_response(explanation="White will likely convert this edge.")
         with pytest.raises(ExplainSchemaError, match="Mode-2 content"):
             validate_explain_response(r)
 
