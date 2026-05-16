@@ -64,7 +64,10 @@ from llm.rag.validators.sanitize import NOTATION_REGEX, mask_chess_notation
 # ---------------------------------------------------------------------------
 
 NEG_SAMPLES: list[tuple[str, str]] = [
-    (r"\bshould\b",                "you should know"),
+    # ``\bshould\b`` retired from SPECULATIVE_PATTERNS in PR #170
+    # (2026-05-16) — was over-blocking imperative coaching language.
+    # Speculative compounds still caught via the other patterns below
+    # (``\blikely\b``, ``\bprobably\b``, ``\bconsider\b``, etc.).
     (r"\blikely\b",                "snow is likely"),
     (r"\bprobably\b",              "milk is probably ok"),
     (r"\bI think\b",               "I think apples are tasty"),
