@@ -965,3 +965,126 @@ class TestCoachExecutorStability:
         CoachExecutor().execute(action)
         assert action.type == original_type
         assert action.weakness == original_weakness
+
+    # ------------------------------------------------------------------
+    # PR #173 — _handle_default is now context-aware when a GameSummary
+    # is supplied.  These tests pin the new path; the back-compat path
+    # (no game arg) is covered by test_default_content_* above.
+    # ------------------------------------------------------------------
+
+    def _game_summary(
+        self,
+        rating_before: float = 1200.0,
+        rating_after: float = 1214.0,
+        confidence_before: float = 0.50,
+        confidence_after: float = 0.55,
+        weaknesses: dict | None = None,
+    ):
+        from llm.seca.coach.live_controller import GameSummary
+
+        return GameSummary(
+            rating_before=rating_before,
+            rating_after=rating_after,
+            confidence_before=confidence_before,
+            confidence_after=confidence_after,
+            learning_delta=rating_after - rating_before,
+            weaknesses=weaknesses or {},
+        )
+
+    def test_default_enriched_mentions_rating_delta(self):
+        """PR #173: when a GameSummary is passed, the default
+        description must reference the rating change in concrete
+        numbers — pre-PR-#173 every game produced 'Keep playing /
+        No special training needed right now.' regardless of what
+        happened."""
+        from llm.seca.coach.executor import CoachExecutor
+
+        game = self._game_summary(rating_before=1200, rating_after=1214)
+        content = CoachExecutor().execute(self._action("NONE"), game=game)
+
+        assert "Keep playing" not in content.title, (
+            f"Enriched default must not use the generic stub title; "
+            f"got: {content.title!r}"
+        )
+        assert "Rating moved" in content.description, (
+            f"Enriched description must reference the rating change; "
+            f"got: {content.description!r}"
+        )
+        assert "+14" in content.description, (
+            f"Description must surface the actual delta (+14 expected); "
+            f"got: {content.description!r}"
+        )
+
+    def test_default_enriched_mentions_dominant_phase(self):
+        """When weaknesses are non-empty, the description names the
+        dominant phase."""
+        from llm.seca.coach.executor import CoachExecutor
+
+        game = self._game_summary(weaknesses={"opening": 0.6, "middlegame": 0.1})
+        content = CoachExecutor().execute(self._action("NONE"), game=game)
+
+        assert "opening" in content.description.lower(), (
+            f"Description must name the dominant phase ('opening'); "
+            f"got: {content.description!r}"
+        )
+
+    def test_default_enriched_clean_game_says_no_significant_mistakes(self):
+        """An empty weaknesses dict (engine saw no significant errors)
+        produces a clean-game acknowledgement instead of pretending
+        there was a problem."""
+        from llm.seca.coach.executor import CoachExecutor
+
+        game = self._game_summary(weaknesses={})
+        content = CoachExecutor().execute(self._action("NONE"), game=game)
+
+        assert "no significant" in content.description.lower(), (
+            f"Clean game should acknowledge no flagged mistakes; "
+            f"got: {content.description!r}"
+        )
+
+    def test_default_enriched_negative_delta_changes_title(self):
+        """Rating drops shift the title to a 'tough game' tone rather
+        than 'strong game' — bidirectional check on the title-band
+        logic."""
+        from llm.seca.coach.executor import CoachExecutor
+
+        # Strong win.
+        strong = CoachExecutor().execute(
+            self._action("NONE"),
+            game=self._game_summary(rating_before=1200, rating_after=1215),
+        )
+        # Tough loss.
+        tough = CoachExecutor().execute(
+            self._action("NONE"),
+            game=self._game_summary(rating_before=1200, rating_after=1185),
+        )
+
+        assert strong.title != tough.title, (
+            f"Win and loss must produce different titles; "
+            f"both got: {strong.title!r}"
+        )
+
+    def test_default_enriched_payload_carries_delta_and_weaknesses(self):
+        """The payload should expose the structured values the UI
+        used (rating delta + raw weakness rates) so future Android
+        layouts can render them without re-parsing the description."""
+        from llm.seca.coach.executor import CoachExecutor
+
+        game = self._game_summary(
+            rating_before=1200,
+            rating_after=1207,
+            weaknesses={"middlegame": 0.4},
+        )
+        content = CoachExecutor().execute(self._action("NONE"), game=game)
+
+        assert content.payload.get("learning_delta") == 7.0
+        assert content.payload.get("weaknesses") == {"middlegame": 0.4}
+
+    def test_default_without_game_falls_back_to_canned_copy(self):
+        """Inverse pin: callers that don't supply a game arg (legacy
+        path / unit tests) still get the deterministic stub."""
+        from llm.seca.coach.executor import CoachExecutor
+
+        content = CoachExecutor().execute(self._action("NONE"))
+        assert content.title == "Keep playing"
+        assert content.description == "No special training needed right now."

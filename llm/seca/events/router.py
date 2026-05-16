@@ -570,8 +570,14 @@ def finish_game(
             reward=reward,
         )
 
+        # Pass the GameSummary so the executor's default handler can
+        # synthesise a per-game description from engine-truth fields
+        # (rating delta, per-phase weakness rates) instead of the
+        # generic "Keep playing" stub.  See PR #173 + the 2026-05-16
+        # on-device feedback — the dashboard had no useful coach copy
+        # to render when the controller chose NONE.
         executor = CoachExecutor()
-        coach_content = executor.execute(coach_action)
+        coach_content = executor.execute(coach_action, game=game_summary)
     except Exception:
         logger.exception("Coach pipeline failed")
         coach_action = CoachAction(
