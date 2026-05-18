@@ -284,6 +284,48 @@
         <View
             style="@style/Atrium.SettingsDivider" />
 
+        <!-- ── Integrations ─────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker"
+            android:text="Integrations"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingTop="@dimen/atrium_space_16"
+            android:paddingBottom="@dimen/atrium_space_8" />
+
+        <LinearLayout
+            android:id="@+id/rowConnectLichess"
+            style="@style/Atrium.SettingsRow.Trailing">
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:text="Lichess" />
+
+            <TextView
+                android:id="@+id/rowConnectLichessValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/inter"
+                android:textStyle="italic"
+                android:textSize="13sp"
+                android:textColor="@color/atrium_muted"
+                android:layout_marginEnd="@dimen/atrium_space_12"
+                android:text="Not linked"
+                tools:text="Linked" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Chevron"
+                android:text="›" />
+
+        </LinearLayout>
+
+        <View
+            style="@style/Atrium.SettingsDivider" />
+
         <!-- ── Premium ──────────────────────────────────────────────── -->
         <LinearLayout
             android:id="@+id/rowUpgrade"
