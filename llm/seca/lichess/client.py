@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Iterator
 
 import httpx
@@ -33,6 +34,32 @@ logger = logging.getLogger(__name__)
 
 LICHESS_API_BASE = os.getenv("LICHESS_API_BASE", "https://lichess.org")
 LICHESS_USER_AGENT = os.getenv("LICHESS_USER_AGENT", "ChessCoach/1.0 (lichess-import)")
+
+# Username shape Lichess accepts (mirrors the signup-form rule).
+# Validation is enforced at the router layer *and* at the client entry
+# points below — defense in depth, so a future internal caller that
+# bypasses the router cannot smuggle a path-traversal / SSRF payload
+# (``alice/../admin``, ``evil.com?``) into the URL.  CodeQL flagged
+# this as "partial server-side request forgery" on the first cut where
+# only the router validated.
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{2,30}$")
+
+
+def _validated_username(raw: str) -> str:
+    """Return the stripped username if it matches the Lichess shape; else raise.
+
+    Raises ``ValueError`` rather than a custom error type because this
+    is a programming-error guard, not an upstream-failure mode: any
+    call that reaches the client with a non-conforming handle has
+    skipped the router-layer validation that should have caught it.
+    """
+    if not isinstance(raw, str):
+        raise ValueError("username must be a string")
+    candidate = raw.strip()
+    if not _USERNAME_RE.fullmatch(candidate):
+        raise ValueError("username must be 2-30 chars of letters, digits, '_' or '-'")
+    return candidate
+
 
 # Optional bearer token for raised rate limits.  Anonymous requests are
 # supported by Lichess but capped lower; a personal-access token bumps
@@ -117,10 +144,9 @@ def fetch_user_profile(username: str) -> dict:
     documented in ``import_service._calibration_from_profile`` — this
     function does not trim or transform the response.
     """
-    if not username or not username.strip():
-        raise ValueError("username must not be empty")
+    safe_username = _validated_username(username)
 
-    url = f"{LICHESS_API_BASE}/api/user/{username.strip()}"
+    url = f"{LICHESS_API_BASE}/api/user/{safe_username}"
     try:
         with httpx.Client(
             timeout=httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
@@ -188,8 +214,7 @@ def fetch_user_games(
         ``id``, ``pgn``, ``players``, ``winner``, ``createdAt``,
         ``rated``, ``speed``, ``perf``.
     """
-    if not username or not username.strip():
-        raise ValueError("username must not be empty")
+    safe_username = _validated_username(username)
     if max_games is not None:
         if max_games <= 0:
             raise ValueError("max_games must be positive")
@@ -216,7 +241,7 @@ def fetch_user_games(
     if perf_types:
         params["perfType"] = ",".join(perf_types)
 
-    url = f"{LICHESS_API_BASE}/api/games/user/{username.strip()}"
+    url = f"{LICHESS_API_BASE}/api/games/user/{safe_username}"
     headers = {**_headers(), "Accept": "application/x-ndjson"}
 
     try:

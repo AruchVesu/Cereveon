@@ -407,6 +407,45 @@ class TestClient:
         with pytest.raises(ValueError):
             list(lichess_client.fetch_user_games("   ", max_games=5))
 
+    # CL_11 — SSRF defense in depth.  The router layer pre-validates
+    # via _LICHESS_USERNAME_RE, but the client must independently reject
+    # any input that could escape the URL path or inject query state,
+    # so a future internal caller cannot smuggle a path-traversal /
+    # open-redirect payload through.  CodeQL flagged the missing check
+    # on the first cut as "partial server-side request forgery".
+    @pytest.mark.parametrize(
+        "ssrf_shaped",
+        [
+            "alice/../admin",  # path traversal
+            "alice?evil=1",  # query injection
+            "alice#frag",  # fragment injection
+            "alice%2F..",  # encoded slash
+            "alice evil",  # whitespace
+            "ümlaut",  # non-ASCII
+            "alice@evil.com",  # @-hijack
+            ".",  # bare dot
+            "..",  # double dot
+            "a",  # too short
+            "x" * 31,  # too long
+        ],
+    )
+    def test_client_rejects_ssrf_shaped_username_profile(self, ssrf_shaped):
+        with pytest.raises(ValueError):
+            lichess_client.fetch_user_profile(ssrf_shaped)
+
+    @pytest.mark.parametrize(
+        "ssrf_shaped",
+        [
+            "alice/../admin",
+            "alice?evil=1",
+            "alice#frag",
+            "ümlaut",
+        ],
+    )
+    def test_client_rejects_ssrf_shaped_username_games(self, ssrf_shaped):
+        with pytest.raises(ValueError):
+            list(lichess_client.fetch_user_games(ssrf_shaped, max_games=5))
+
     # CL_06 — malformed NDJSON line surfaces as parse error.
     def test_games_malformed_json_line_raises_parse(self, patch_games):
         patch_games(lines=["{not json"])
