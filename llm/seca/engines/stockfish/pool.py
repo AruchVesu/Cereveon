@@ -13,6 +13,8 @@ from typing import cast
 import chess
 import chess.engine
 
+from .board_features import compute_position_flags, compute_tactical_flags
+
 logger = logging.getLogger(__name__)
 
 # ``redis`` is an optional dependency.  The ``# type: ignore[assignment]``
@@ -477,13 +479,25 @@ class StockfishEnginePool:
         """Run Stockfish on a single position and return a stockfish_json dict.
 
         Returns the shape that ``extract_engine_signal`` consumes:
-            {"evaluation": {"type": "cp" | "mate", "value": int}}
+            {
+                "evaluation":     {"type": "cp" | "mate", "value": int},
+                "tactical_flags": list[str],
+                "position_flags": list[str],
+            }
 
         ``value`` is centipawns from White's perspective for "cp", or the
         signed mate-in-N for "mate" (positive = White mates, negative =
         Black mates).  Always returns a dict; on any engine failure the
         function raises so the caller can decide whether to fall back
         to the heuristic-only path.
+
+        ``tactical_flags`` and ``position_flags`` are computed
+        deterministically from the current board by
+        ``llm.seca.engines.stockfish.board_features`` and are populated
+        unconditionally (no extra Stockfish search) — see ARCHITECTURE.md
+        §72-95 for the trust-boundary rules they live under.  Strings
+        are drawn from the closed vocabulary in
+        ``llm.rag.engine_signal.flag_vocabulary``.
 
         Caller is the Mode-1 ``/live/move`` route, which uses the result
         to give the LLM real tactical context (band, side, mate flag)
@@ -494,6 +508,12 @@ class StockfishEnginePool:
             raise RuntimeError("Engine pool not started")
 
         board = chess.Board(fen)
+        # Computed eagerly so the flag list is identical on the
+        # zero-score defence path below (engine returned no score) and
+        # the happy paths — the LLM should see the same board features
+        # regardless of whether Stockfish produced a numeric score.
+        tactical_flags = compute_tactical_flags(board)
+        position_flags = compute_position_flags(board)
 
         timeout_ms = queue_timeout_ms
         if timeout_ms is None:
@@ -518,15 +538,27 @@ class StockfishEnginePool:
             # but defend against it).  Return a neutral cp eval so the caller
             # gets a usable shape; extract_engine_signal will tag this as
             # band="equal".
-            return {"evaluation": {"type": "cp", "value": 0}}
+            return {
+                "evaluation": {"type": "cp", "value": 0},
+                "tactical_flags": tactical_flags,
+                "position_flags": position_flags,
+            }
 
         white_score = score.white()
         if white_score.is_mate():
             mate_in = white_score.mate()
-            return {"evaluation": {"type": "mate", "value": int(mate_in or 0)}}
+            return {
+                "evaluation": {"type": "mate", "value": int(mate_in or 0)},
+                "tactical_flags": tactical_flags,
+                "position_flags": position_flags,
+            }
 
         cp = white_score.score(mate_score=10000)
-        return {"evaluation": {"type": "cp", "value": int(cp or 0)}}
+        return {
+            "evaluation": {"type": "cp", "value": int(cp or 0)},
+            "tactical_flags": tactical_flags,
+            "position_flags": position_flags,
+        }
 
     def prewarm_cache(
         self,

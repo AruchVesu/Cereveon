@@ -5,6 +5,17 @@ import chess
 
 logger = logging.getLogger(__name__)
 
+# Pattern an ESV flag string must match to reach the prompt.  Bounded
+# to lowercase ASCII letters / digits / underscore / colon / hyphen,
+# 1-64 chars.  This is a *shape* filter, not a closed-vocabulary check:
+# the canonical vocabulary for flags emitted by
+# ``llm.seca.engines.stockfish.board_features`` lives in
+# ``llm.rag.engine_signal.flag_vocabulary`` and is enforced by the
+# board-feature unit tests, not at the trust boundary.  The pattern
+# here defends against upstream bugs (a stray empty string, a free-form
+# sentence, an int, control characters) reaching the LLM prompt.
+_FLAG_SHAPE = re.compile(r"^[a-z0-9_:\-]{1,64}$")
+
 _PIECE_CP = {
     chess.PAWN: 100,
     chess.KNIGHT: 320,
@@ -84,6 +95,53 @@ def _fen_phase(board: chess.Board) -> str:
     if total <= 14 or (not has_queens and total <= 20):
         return "endgame"
     return "middlegame"
+
+
+def _filter_flags(raw: object, label: str) -> list[str]:
+    """Sanitize a flag list before it reaches the prompt.
+
+    The ESV is the trust boundary in front of the LLM.  Anything
+    flowing through here is rendered verbatim into the Mode-2 prompt,
+    so a stray sentence or control-character payload would be
+    user-visible at best and prompt-injection bait at worst.  The
+    filter drops entries that:
+
+    - are not strings,
+    - are empty,
+    - exceed 64 characters,
+    - contain anything outside ``[a-z0-9_:-]``.
+
+    It does NOT enforce a closed vocabulary — the canonical labels
+    emitted by ``llm.seca.engines.stockfish.board_features`` are
+    documented in ``llm.rag.engine_signal.flag_vocabulary`` and pinned
+    by board-feature unit tests; legacy flag strings used by fixtures
+    and rule-based retrieval ("forced_mate", "mate_threat",
+    "better_development", etc.) keep flowing through unchanged.
+    """
+    if not isinstance(raw, list):
+        if raw is not None and raw != []:
+            logger.warning(
+                "%s is not a list (%s); ignoring", label, _safe_log(type(raw).__name__)
+            )
+        return []
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            logger.warning(
+                "%s entry %s is not a string; dropping",
+                label,
+                _safe_log(item),
+            )
+            continue
+        if not _FLAG_SHAPE.match(item):
+            logger.warning(
+                "%s entry %s rejected by shape filter; dropping",
+                label,
+                _safe_log(item),
+            )
+            continue
+        out.append(item)
+    return out
 
 
 def _enrich_from_fen(stockfish_json: dict, fen: str | None) -> dict:
@@ -178,8 +236,12 @@ def extract_engine_signal(
             },
             "eval_delta": eval_delta,
             "last_move_quality": last_move_quality,
-            "tactical_flags": stockfish_json.get("tactical_flags", []),
-            "position_flags": stockfish_json.get("position_flags", []),
+            "tactical_flags": _filter_flags(
+                stockfish_json.get("tactical_flags", []), "tactical_flags"
+            ),
+            "position_flags": _filter_flags(
+                stockfish_json.get("position_flags", []), "position_flags"
+            ),
             "phase": stockfish_json.get("phase", "middlegame"),
         }
 
@@ -218,7 +280,11 @@ def extract_engine_signal(
         },
         "eval_delta": eval_delta,
         "last_move_quality": last_move_quality,
-        "tactical_flags": stockfish_json.get("tactical_flags", []),
-        "position_flags": stockfish_json.get("position_flags", []),
+        "tactical_flags": _filter_flags(
+            stockfish_json.get("tactical_flags", []), "tactical_flags"
+        ),
+        "position_flags": _filter_flags(
+            stockfish_json.get("position_flags", []), "position_flags"
+        ),
         "phase": stockfish_json.get("phase", "middlegame"),
     }

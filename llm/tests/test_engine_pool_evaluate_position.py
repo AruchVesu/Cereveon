@@ -10,10 +10,18 @@ signal degraded to a FEN-only heuristic that could not see tactical
 threats — the LLM then wrote "solid, balanced" replies regardless of
 whether the human had just hung a piece.
 
+The return shape was widened in the ESV-legal Stockfish enrichment to
+include deterministically-computed ``tactical_flags`` and
+``position_flags`` lists alongside the ``evaluation`` dict (see
+``llm/seca/engines/stockfish/board_features.py``).  Tests in this
+module assert on the ``evaluation`` sub-dict directly so the
+flag-content tests can live in ``test_board_features.py`` without
+duplicating coverage here.
+
 Stable test IDs (do NOT rename):
-  EVAL_POS_01  CP score returns ``{"evaluation": {"type": "cp", "value": <int>}}``
-  EVAL_POS_02  Mate score returns ``{"evaluation": {"type": "mate", "value": <signed_int>}}``
-  EVAL_POS_03  ``score()`` returning ``None`` (rare engine quirk) defaults to cp=0
+  EVAL_POS_01  CP score returns evaluation ``{"type": "cp", "value": <int>}`` + flag lists
+  EVAL_POS_02  Mate score returns evaluation ``{"type": "mate", "value": <signed_int>}`` + flag lists
+  EVAL_POS_03  ``score()`` returning ``None`` (rare engine quirk) defaults to cp=0 + flag lists
   EVAL_POS_04  Engine that has not been started raises RuntimeError
   EVAL_POS_05  Queue exhaustion raises a clear RuntimeError, not queue.Empty
   EVAL_POS_06  Healthy engine is returned to the pool after evaluate_position
@@ -99,7 +107,9 @@ class TestEvaluatePositionShape(unittest.TestCase):
 
         result = pool.evaluate_position(fen=_STARTING_FEN, movetime_ms=50)
 
-        self.assertEqual(result, {"evaluation": {"type": "cp", "value": 42}})
+        self.assertEqual(result["evaluation"], {"type": "cp", "value": 42})
+        self.assertIsInstance(result["tactical_flags"], list)
+        self.assertIsInstance(result["position_flags"], list)
         self.assertEqual(engine.analyse_call_count, 1)
 
     def test_mate_score_returns_mate_dict_with_signed_value(self):
@@ -118,14 +128,18 @@ class TestEvaluatePositionShape(unittest.TestCase):
         """EVAL_POS_03.  ``info`` without a ``score`` key (defensive
         fallback) should not blow up — return neutral cp=0 so the
         caller still gets a valid ``stockfish_json`` shape and
-        ``extract_engine_signal`` tags it as band="equal".
+        ``extract_engine_signal`` tags it as band="equal".  Flag lists
+        are still populated because they are computed from the board,
+        independent of the engine score.
         """
         engine = _FakeEngine(analyse_info={})  # no score key
         pool = _pool_with(engine=engine)
 
         result = pool.evaluate_position(fen=_STARTING_FEN, movetime_ms=50)
 
-        self.assertEqual(result, {"evaluation": {"type": "cp", "value": 0}})
+        self.assertEqual(result["evaluation"], {"type": "cp", "value": 0})
+        self.assertIsInstance(result["tactical_flags"], list)
+        self.assertIsInstance(result["position_flags"], list)
 
 
 class TestEvaluatePositionLifecycle(unittest.TestCase):
