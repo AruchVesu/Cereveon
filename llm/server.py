@@ -37,15 +37,18 @@ from llm.seca.curriculum.router import router as curriculum_router
 from llm.seca.inference.router import router as inference_router
 from llm.seca.analytics.router import router as analytics_router
 from llm.seca.repertoire.router import router as repertoire_router
+from llm.seca.lichess.router import router as lichess_router
 
 # register SECA models
 import llm.seca.events.models
+import llm.seca.lichess.models  # noqa: F401  # ensure LinkedAccount is on Base before init_schema
 
 from llm.seca.engines.stockfish.pool import (
     EnginePoolSettings,
     StockfishEnginePool,
 )
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
+
 # NOTE (PR 10): ``generate_validated_explanation`` was previously
 # imported here as a "leave it ready for future wiring" placeholder.
 # The function is alive (exercised by ``test_firewall_integration.py``
@@ -686,6 +689,7 @@ app.include_router(game_router)
 app.include_router(curriculum_router)
 app.include_router(analytics_router)
 app.include_router(repertoire_router)
+app.include_router(lichess_router)
 app.include_router(
     inference_router,
     prefix="/seca",
@@ -1086,8 +1090,7 @@ def seca_status():
         # endpoint always returns a usable shape.  The exception is
         # logged for operator visibility.
         logger.exception(
-            "verify_runtime_safety raised in /seca/status; "
-            "falling back to SAFE_MODE constant"
+            "verify_runtime_safety raised in /seca/status; " "falling back to SAFE_MODE constant"
         )
         ok = SAFE_MODE
     return {"safe_mode": ok}

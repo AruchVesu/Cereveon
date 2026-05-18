@@ -27,6 +27,7 @@ from llm.seca.brain.models import *  # noqa: F401,F403
 from llm.seca.analytics.models import *  # noqa: F401,F403
 from llm.seca.storage.models import *  # noqa: F401,F403
 from llm.seca.chat.models import *  # noqa: F401,F403
+from llm.seca.lichess.models import *  # noqa: F401,F403
 
 # pylint: enable=wildcard-import,unused-wildcard-import
 from .service import AuthService
@@ -129,6 +130,27 @@ def init_schema() -> None:
             "sessions",
             "previous_token_expires_at",
             _column_type_for_dialect("DATETIME", "TIMESTAMP"),
+        )
+
+        # Lichess import (PR: Lichess API integration).  Adds
+        # provenance + external-id columns to ``game_events`` so
+        # imported Lichess games coexist with in-app games in the
+        # same table without breaking the existing /game/finish
+        # writer (NULL for legacy rows; populated by the Lichess
+        # import service).  Both columns nullable so historical rows
+        # need no backfill.  Lowest-common-denominator types: TEXT
+        # on SQLite, VARCHAR on Postgres.
+        _ensure_column(
+            conn,
+            "game_events",
+            "source",
+            _column_type_for_dialect("TEXT", "VARCHAR"),
+        )
+        _ensure_column(
+            conn,
+            "game_events",
+            "external_game_id",
+            _column_type_for_dialect("TEXT", "VARCHAR"),
         )
 
 

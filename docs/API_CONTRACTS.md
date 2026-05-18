@@ -913,6 +913,218 @@ Same shape as §14 — full updated list.
 
 ---
 
+## 27. `POST /lichess/link`
+
+**Host:** `llm/seca/lichess/router.py`
+**Auth:** `Authorization: Bearer <token>` required
+**Rate limit:** 10 / minute
+
+Attach a Lichess account to the authenticated player.  Validates the
+handle via Lichess `GET /api/user/{username}` and, on first link
+(player still at default rating 1200 + confidence 0.5), seeds the
+player's rating + confidence from the matching Lichess perf rating
+(prefers `rapid`, then `blitz`, then `classical`).
+
+The Lichess account is the only external-platform link supported in
+this release.  Imported `GameEvent` rows carry `source='lichess'` and
+the Lichess game ID (see §3 "Imported games" and the lazy-re-analysis
+note below).
+
+### Request body
+
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `username` | `string` | 2–30 chars; `[A-Za-z0-9_-]` only.  The Lichess signup-form rule. |
+
+### Response
+
+```json
+{
+  "platform":          "lichess",
+  "external_username": <string>,
+  "linked_at":         <ISO-8601 string | null>,
+  "calibration": {
+    "applied":     <bool>,
+    "reason":      <string | absent>,
+    "perf":        <"rapid" | "blitz" | "classical" | absent>,
+    "rating":      <float | absent>,
+    "confidence":  <float | absent>,
+    "games_basis": <int | absent>,
+    "provisional": <bool | absent>
+  }
+}
+```
+
+- `external_username` is the **canonical lowercase** Lichess id, not
+  the user-submitted casing.  Clients should display this verbatim.
+- `calibration.applied = true` means the player's rating + confidence
+  were updated; `false` means they were preserved (either no eligible
+  perf or the player had already moved off defaults via in-app play).
+- `reason` is `"player_already_calibrated"` or `"no_eligible_perf"` on
+  the `applied=false` paths.
+
+### Errors
+
+- `400` — username failed schema validation, or the Lichess profile
+  payload was missing the `id` field.
+- `404` — Lichess returned 404 for the username.
+- `409` — that Lichess handle is already linked to another ChessCoach
+  player.  Detail: `"Lichess account '<id>' is linked to another
+  player"`.
+- `502` — Lichess returned 5xx, a non-special-cased 4xx, or its body
+  failed to parse.
+- `503` — Lichess returned 429.  Carries `Retry-After` header when
+  Lichess provided one (numeric seconds; non-numeric values are
+  dropped silently).
+
+### Trust-boundary note
+
+This endpoint is the only place that mutates `Player.rating` /
+`Player.confidence` from Lichess data, and it does so at most once per
+player (calibration is gated on default values).  Imported games never
+touch the rating model — that invariant is the reason backfilling years
+of historical games does not whipsaw the in-app FIDE-style Elo.
+
+---
+
+## 28. `DELETE /lichess/link`
+
+**Host:** `llm/seca/lichess/router.py`
+**Auth:** `Authorization: Bearer <token>` required
+**Rate limit:** 10 / minute
+
+Detach the player's Lichess link.  Already-imported `game_events` rows
+are **retained** as game history; only the `linked_accounts` row is
+removed.
+
+### Request body
+
+Empty.
+
+### Response
+
+```json
+{ "unlinked": <bool> }
+```
+
+- `true` — a link existed and was removed.
+- `false` — the player had no Lichess link to begin with (idempotent).
+
+---
+
+## 29. `GET /lichess/status`
+
+**Host:** `llm/seca/lichess/router.py`
+**Auth:** `Authorization: Bearer <token>` required
+**Rate limit:** (not rate-limited; cheap read used for client polling.)
+
+Report the player's current Lichess link state and import counters.
+
+### Request
+
+No body, no query params.
+
+### Response — when not linked
+
+```json
+{ "linked": false }
+```
+
+### Response — when linked
+
+```json
+{
+  "linked":              true,
+  "platform":            "lichess",
+  "external_username":   <string>,
+  "linked_at":           <ISO-8601 string | null>,
+  "last_imported_at":    <ISO-8601 string | null>,
+  "imported_game_count": <int>
+}
+```
+
+- `last_imported_at` is the `createdAt` of the **newest** game seen in
+  the most recent successful import slice — NOT the server clock at
+  import time.  The next `/lichess/import` uses this value as the
+  Lichess `since` parameter, so import is incremental by construction.
+- `imported_game_count` counts only `game_events` rows where
+  `source='lichess'` for this player; it does NOT include in-app
+  games.
+
+---
+
+## 30. `POST /lichess/import`
+
+**Host:** `llm/seca/lichess/router.py`
+**Auth:** `Authorization: Bearer <token>` required
+**Rate limit:** 6 / minute
+
+Pull the next slice of games from Lichess for the linked player.
+Synchronous: the request returns when the slice is complete (or when
+the cap is reached).  No background-job framework yet — repeated calls
+walk forward through history via the `last_imported_at` watermark on
+`linked_accounts`.
+
+### Request
+
+No body.  Query parameters:
+
+| Param | Type | Default | Constraints | Description |
+|-------|------|---------|-------------|-------------|
+| `max_games` | `int` | `50` | `1 ≤ value ≤ 100` | Hard upper bound on games fetched in this call.  The 100 cap exists to bound request latency in the absence of a background-job framework. |
+| `rated` | `bool` | `true` | — | Filter to rated games only. |
+
+Server-side, the perf-type filter is hard-coded to
+`["blitz", "rapid", "classical"]` and Lichess `evals=false` is pinned
+(see "Trust-boundary note" below).
+
+### Response
+
+```json
+{
+  "inserted":          <int>,
+  "skipped_duplicate": <int>,
+  "skipped_invalid":   <int>,
+  "last_imported_at":  <ISO-8601 string | null>
+}
+```
+
+- `inserted` — newly stored `game_events` rows.
+- `skipped_duplicate` — games whose `(source='lichess',
+  external_game_id)` pair was already in the DB.  This will be
+  non-zero on partial-retry calls and is part of the dedup contract.
+- `skipped_invalid` — games dropped because their PGN was missing,
+  oversize (> 100 000 chars), unparseable by `python-chess`, the
+  linked user wasn't listed as a player, or the `id` field was
+  missing.  Surfaced for observability — these are **not** errors.
+- `last_imported_at` is the new value of the watermark after this
+  call.  The watermark is only advanced after a clean iteration; a
+  mid-stream failure leaves it unchanged so a retry re-scans the same
+  window (dedup handles the repeated rows).
+
+### Errors
+
+- `400` — player has no Lichess link (`/lichess/link` first).
+- `422` — `max_games` out of range or `rated` not bool.
+- `502` — Lichess upstream error (5xx, malformed NDJSON, connection
+  failure mid-stream).  Any rows committed before the failure are
+  retained.
+- `503` — Lichess rate-limited the request; `Retry-After` propagated
+  when present.
+
+### Trust-boundary note
+
+Lichess can return its own Stockfish evaluations when the games
+endpoint is called with `evals=true`.  Per `docs/ARCHITECTURE.md`,
+**only the local engine pool produces trusted engine output**; this
+client therefore pins `evals=false` and the import service never
+populates `GameEvent.accuracy` / `GameEvent.weaknesses_json` from
+Lichess data.  ESV-based coaching for an imported game is produced
+lazily by re-analysing the stored PGN with the local Stockfish pool
+when (and only when) the user opens that game for review.
+
+---
+
 ## Error responses
 
 The API emits **two distinct error-body shapes** that any client (the
