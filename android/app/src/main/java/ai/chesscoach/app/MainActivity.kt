@@ -333,6 +333,10 @@ class MainActivity : AppCompatActivity() {
             val sheet = SettingsBottomSheet()
             sheet.onChangePasswordTapped = { showChangePasswordDialog() }
             sheet.onSignOutTapped = { performLogout() }
+            sheet.onConnectLichessTapped = {
+                LichessConnectBottomSheet()
+                    .show(supportFragmentManager, LichessConnectBottomSheet.TAG)
+            }
             sheet.show(supportFragmentManager, "SettingsBottomSheet")
         }
 

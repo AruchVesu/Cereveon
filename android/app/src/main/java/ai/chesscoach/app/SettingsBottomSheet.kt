@@ -60,6 +60,15 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
     var onChangePasswordTapped: (() -> Unit)? = null
     var onSignOutTapped: (() -> Unit)? = null
 
+    /**
+     * Optional callback the host activity wires to surface the
+     * Lichess Connect bottom sheet when the "Lichess" row in the
+     * Integrations section is tapped.  Defaults to no-op; the host
+     * is responsible for showing [LichessConnectBottomSheet] (or any
+     * future replacement surface).
+     */
+    var onConnectLichessTapped: (() -> Unit)? = null
+
     private val voiceDots = mutableMapOf<String, View>()
     private val boardDots = mutableMapOf<String, View>()
 
@@ -114,6 +123,15 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
         ratingValueLabel.text = formatRatingLabel(prefs)
         view.findViewById<View>(R.id.rowEditRating).setOnClickListener {
             showEditRatingDialog(prefs, ratingValueLabel)
+        }
+
+        // ── Integrations · Lichess chevron row ──────────────────────
+        view.findViewById<View>(R.id.rowConnectLichess).setOnClickListener {
+            // Dismiss so the Lichess sheet slides over a settled host
+            // background, not over the Settings sheet's fading scrim
+            // (matches the rowUpgrade dismiss-then-launch idiom below).
+            dismiss()
+            onConnectLichessTapped?.invoke()
         }
 
         // ── Premium chevron row ──────────────────────────────────────
