@@ -133,6 +133,11 @@ TEST_TARGETS = [
     "llm/tests/test_explain_schema_mutation_killers.py",
     # Progress dashboard: /player/progress endpoint contract + world-model transparency tests.
     "llm/tests/test_progress_dashboard.py",
+    # Training-XP feature (Phase 2): POST /training/solve persistence +
+    # idempotency + +10 XP credit per verified solve.  Schema validation
+    # + endpoint integration tests run in-memory SQLite against the
+    # full SECA Base so every Phase-3 caller has the contract pinned.
+    "llm/tests/test_training_solve.py",
     # Weekly digest agent (v1): deterministic top-3-holes + microtask
     # selection, 7-day window, persistence, refresh/fetch endpoint
     # contract, and no-LLM-imports invariant.
@@ -235,6 +240,11 @@ COVERAGE_TARGETS = [
     "llm.seca.analytics.router",
     "llm.seca.curriculum.reward",
     "llm.seca.curriculum.spacing",
+    # Training-XP surface (Phase 2): TrainingCompletion model + POST
+    # /training/solve handler.  Covered by test_training_solve.py
+    # listed above in TEST_TARGETS.
+    "llm.seca.training.models",
+    "llm.seca.training.router",
     # llm.seca.coach.live_controller, llm.seca.coach.executor,
     # llm.seca.coach.confidence_language_controller, and
     # llm.seca.coach.explain_pipeline are excluded from --cov targets:
