@@ -138,6 +138,13 @@ TEST_TARGETS = [
     # + endpoint integration tests run in-memory SQLite against the
     # full SECA Base so every Phase-3 caller has the contract pinned.
     "llm/tests/test_training_solve.py",
+    # Mistake-replay (Phase 3): biggest-mistake extraction at
+    # /game/finish time + POST /training/verify-replay engine
+    # verification.  Detector tests are pool-free; verifier tests
+    # stand up a FakePool that returns rigged PovScore objects so
+    # the threshold + POV-flip math is pinned.
+    "llm/tests/test_mistake_detector.py",
+    "llm/tests/test_verify_replay.py",
     # Weekly digest agent (v1): deterministic top-3-holes + microtask
     # selection, 7-day window, persistence, refresh/fetch endpoint
     # contract, and no-LLM-imports invariant.
@@ -245,6 +252,13 @@ COVERAGE_TARGETS = [
     # listed above in TEST_TARGETS.
     "llm.seca.training.models",
     "llm.seca.training.router",
+    # Mistake-replay (Phase 3): detector picks the worst player move
+    # from losses_cp + PGN; verify runs the engine and answers
+    # is_correct.  Covered by test_mistake_detector.py and
+    # test_verify_replay.py.
+    "llm.seca.mistakes.detector",
+    "llm.seca.mistakes.verify",
+    "llm.seca.mistakes.router",
     # llm.seca.coach.live_controller, llm.seca.coach.executor,
     # llm.seca.coach.confidence_language_controller, and
     # llm.seca.coach.explain_pipeline are excluded from --cov targets:

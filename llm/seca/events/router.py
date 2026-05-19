@@ -95,15 +95,22 @@ def _resolve_authoritative_accuracy(
     request: Request,
     req,  # GameFinishRequest, forward reference to avoid declaration order
     player_id: str,
-) -> tuple[float, dict, str]:
+) -> tuple[float, dict, str, "AccuracyAnalysis | None"]:
     """Recompute accuracy + weaknesses from the PGN via the engine pool.
 
-    Returns a 3-tuple ``(accuracy, weaknesses, source)`` where source
-    is ``"engine"`` (recompute succeeded) or ``"client"`` (falling
-    back to request fields).  Emits an ``ACC_DIVERGENCE`` warning
-    when the recomputed accuracy differs from the client value by
-    at least ``_DIVERGENCE_WARN_THRESHOLD`` — anti-cheat telemetry
-    that operators can grep for in production logs.
+    Returns a 4-tuple ``(accuracy, weaknesses, source, analysis)``
+    where ``source`` is ``"engine"`` (recompute succeeded) or
+    ``"client"`` (falling back to request fields) and ``analysis`` is
+    the full ``AccuracyAnalysis`` when ``source == "engine"`` (None
+    otherwise).  Downstream consumers — including the mistake-replay
+    detector wired into the /game/finish response — read ``losses_cp``
+    + ``player_color`` off ``analysis`` so the route doesn't have to
+    re-walk the PGN itself.
+
+    Emits an ``ACC_DIVERGENCE`` warning when the recomputed accuracy
+    differs from the client value by at least
+    ``_DIVERGENCE_WARN_THRESHOLD`` — anti-cheat telemetry that
+    operators can grep for in production logs.
     """
     pool = getattr(request.app.state, "engine_pool", None)
     if pool is None:
@@ -111,7 +118,7 @@ def _resolve_authoritative_accuracy(
             "ACC_FALLBACK player=%s reason=engine_pool_unavailable",
             _safe_log(player_id),
         )
-        return req.accuracy, req.weaknesses, "client"
+        return req.accuracy, req.weaknesses, "client", None
 
     try:
         analysis: AccuracyAnalysis = compute_accuracy_from_pgn(
@@ -124,7 +131,7 @@ def _resolve_authoritative_accuracy(
             "ACC_FALLBACK player=%s reason=recompute_failed",
             _safe_log(player_id),
         )
-        return req.accuracy, req.weaknesses, "client"
+        return req.accuracy, req.weaknesses, "client", None
 
     if analysis.moves_analyzed == 0:
         # The engine pool was available AND the recompute ran, but the
@@ -149,7 +156,7 @@ def _resolve_authoritative_accuracy(
             "ACC_FALLBACK player=%s reason=non_engine_source",
             _safe_log(player_id),
         )
-        return req.accuracy, req.weaknesses, "client"
+        return req.accuracy, req.weaknesses, "client", None
 
     divergence = abs(analysis.accuracy - float(req.accuracy))
     if divergence >= _DIVERGENCE_WARN_THRESHOLD:
@@ -162,7 +169,7 @@ def _resolve_authoritative_accuracy(
             analysis.moves_analyzed,
         )
 
-    return analysis.accuracy, analysis.weaknesses, "engine"
+    return analysis.accuracy, analysis.weaknesses, "engine", analysis
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +430,7 @@ def finish_game(
     # in the resolver (``ACC_FALLBACK`` / ``ACC_DIVERGENCE``); we don't
     # propagate it onto the response or stored record yet — that's a
     # follow-up if operators want a queryable telemetry column.
-    accuracy, weaknesses, _ = _resolve_authoritative_accuracy(
+    accuracy, weaknesses, _, accuracy_analysis = _resolve_authoritative_accuracy(
         request=request,
         req=req,
         player_id=str(player.id),
@@ -616,6 +623,51 @@ def finish_game(
     except Exception:
         logger.exception("HistoricalAnalysisPipeline failed; recommendations omitted")
 
+    # Mistake-replay extraction (Phase 3).  Cheap piggy-back on the
+    # accuracy recompute the engine pool already ran above — find the
+    # player's biggest centipawn loss, walk the PGN back to that
+    # position, and surface it on the response so the Android replay
+    # sheet can launch.  Skipped entirely when the recompute fell
+    # back to client values (analysis is None) or when the worst loss
+    # is below the mistake threshold; in both cases the response
+    # carries ``biggest_mistake: null`` and the client doesn't show
+    # the replay CTA.
+    biggest_mistake_field: dict | None = None
+    if accuracy_analysis is not None:
+        try:
+            from llm.seca.mistakes.detector import find_biggest_mistake
+
+            mistake = find_biggest_mistake(
+                pgn_text=req.pgn,
+                losses_cp=accuracy_analysis.losses_cp,
+                player_color=accuracy_analysis.player_color,
+            )
+            if mistake is not None:
+                # source_ref ties the solve event to the specific
+                # mistake position so /training/solve dedups correctly
+                # if the user submits the same replay twice (e.g. a
+                # flaky network retry).  Event id is the canonical
+                # post-finish identifier — always populated, unlike
+                # the optional client-supplied game_id.
+                biggest_mistake_field = {
+                    "fen": mistake.fen_before,
+                    "played_move": mistake.played_uci,
+                    "move_number": mistake.move_number,
+                    "eval_loss_cp": mistake.eval_loss_cp,
+                    "source_ref": (
+                        f"event_{event.id}:move_{mistake.move_number}"
+                    ),
+                }
+        except Exception:  # noqa: BLE001 — never 500 /game/finish
+            # Detector is non-critical — log and continue without the
+            # field.  /game/finish must stay green even if the mistake
+            # extractor blows up on a malformed PGN that somehow
+            # passed the accuracy recompute.
+            logger.exception(
+                "biggest_mistake extraction failed for player=%s",
+                _safe_log(str(player.id)),
+            )
+
     return {
         "status": "stored",
         "new_rating": rating_after,
@@ -636,6 +688,11 @@ def finish_game(
             "games_analyzed": analysis_games_analyzed,
             "recommendations": analysis_recommendations,
         },
+        # Always present on the wire — null when there's no mistake
+        # worth replaying or the recompute fell back.  The Android
+        # client checks ``biggest_mistake !== null`` to decide whether
+        # to show the "Replay your mistake" CTA on GameSummary.
+        "biggest_mistake": biggest_mistake_field,
     }
 
 

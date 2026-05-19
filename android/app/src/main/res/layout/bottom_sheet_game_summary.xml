@@ -250,6 +250,59 @@
         android:visibility="gone" />
 
     <!--
+        Mistake-replay card (Phase 3).  Visible iff the /game/finish
+        response carries a non-null ``biggest_mistake``.  Tapping the
+        button launches ``MistakeReplayBottomSheet`` which lets the
+        user try a stronger move at the position they erred.  Card
+        sits above the curriculum training card so the user sees
+        "fix what you just did wrong" before "learn the broader
+        concept".
+    -->
+    <ai.chesscoach.app.AtriumCardView
+        android:id="@+id/mistakeReplayCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="@dimen/atrium_space_16"
+        android:layout_marginTop="@dimen/atrium_space_16"
+        android:visibility="gone"
+        app:atriumCardTicks="false">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Kicker.Cyan"
+                android:text="Replay your mistake" />
+
+            <TextView
+                android:id="@+id/txtMistakeReplaySummary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_4"
+                android:fontFamily="@font/cormorant_garamond"
+                android:textStyle="italic"
+                android:textColor="@color/atrium_ink"
+                android:textSize="17sp"
+                android:text=""
+                tools:text="Move 14 — find a stronger move (lost 240 cp)." />
+
+            <Button
+                android:id="@+id/btnReplayMistake"
+                style="@style/Atrium.Button.Primary"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/atrium_tap_target"
+                android:layout_marginTop="@dimen/atrium_space_12"
+                android:text="Replay" />
+
+        </LinearLayout>
+
+    </ai.chesscoach.app.AtriumCardView>
+
+    <!--
         Training recommendation card — quieter sibling of the hero
         card (no corner ticks).  All inner IDs preserved so the
         existing training-recommendation render path keeps working.

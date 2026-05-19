@@ -329,6 +329,41 @@ data class LearningStatusDto(
     val status: String? = null,
 )
 
+/**
+ * The biggest mistake the player made in this game.
+ *
+ * Surfaced on the /game/finish response (Phase 3) so the Android
+ * client can show a "Replay your mistake" CTA on the post-game sheet
+ * and launch ``MistakeReplayBottomSheet`` with the position + the
+ * move the player originally played.
+ *
+ * Always present on the wire, but ``null`` when (a) the engine
+ * recompute fell back to client values, or (b) no move clears the
+ * server-side ``MIN_MISTAKE_LOSS_CP`` threshold (150 cp).  The
+ * client just hides the CTA in those cases.
+ *
+ * Wire shape pinned by ``docs/API_CONTRACTS.md`` §3.
+ */
+@Serializable
+data class BiggestMistakeDto(
+    /** FEN of the position the player was looking at, BEFORE the bad move. */
+    val fen: String = "",
+    /** UCI of the move the player actually played at that position. */
+    @SerialName("played_move") val playedMove: String = "",
+    /** 1-indexed Nth player half-move.  Used in the replay sheet header copy. */
+    @SerialName("move_number") val moveNumber: Int = 0,
+    /** Centipawn loss this single move cost the player. Always >= 150 when populated. */
+    @SerialName("eval_loss_cp") val evalLossCp: Int = 0,
+    /**
+     * Opaque identifier to forward to POST /training/solve as
+     * ``source_ref`` on a verified-correct replay.  The server
+     * constructs it as ``event_<event_id>:move_<n>`` so the
+     * ``(player, source_type, source_ref)`` dedup triple stays
+     * stable across retries.
+     */
+    @SerialName("source_ref") val sourceRef: String = "",
+)
+
 @Serializable
 data class GameFinishResponse(
     val status: String = "stored",
@@ -342,6 +377,13 @@ data class GameFinishResponse(
      * response; callers read the flat [learningStatus] accessor below.
      */
     val learning: LearningStatusDto? = null,
+    /**
+     * Phase 3 mistake-replay payload.  ``null`` (the default) means
+     * either no mistake worth replaying or the accuracy recompute
+     * fell back to client values; the Android client hides the
+     * "Replay your mistake" CTA in both cases.
+     */
+    @SerialName("biggest_mistake") val biggestMistake: BiggestMistakeDto? = null,
 ) {
     /**
      * Status string from the `learning` object in the /game/finish response
@@ -351,3 +393,74 @@ data class GameFinishResponse(
     val learningStatus: String?
         get() = learning?.status?.takeIf { it.isNotEmpty() }
 }
+
+
+// ── /training/verify-replay ──────────────────────────────────────────────────
+
+
+/**
+ * Request body for POST /training/verify-replay.
+ *
+ * The Android replay sheet sends this after the user submits a move
+ * on the embedded ChessBoardView.  The server runs Stockfish, checks
+ * whether the move is within 30 cp of the engine's best, and returns
+ * the verdict.  Only on ``isCorrect=true`` does the client follow up
+ * with POST /training/solve to actually credit XP.
+ */
+@Serializable
+data class VerifyReplayRequest(
+    val fen: String,
+    @SerialName("move_uci") val moveUci: String,
+)
+
+
+/**
+ * Response from POST /training/verify-replay.
+ *
+ * [isCorrect] = true means the user's move gave up at most 30 cp vs
+ * the engine's best move; false means "try again, this one was too
+ * loose".  [engineBestUci] is always populated so the UI can offer a
+ * "Show me the engine's move" peek without a second round-trip.
+ * [evalLossCp] is signed (player POV) — positive when the user's
+ * move was worse than the engine's.
+ */
+@Serializable
+data class VerifyReplayResponse(
+    @SerialName("is_correct") val isCorrect: Boolean = false,
+    @SerialName("engine_best_uci") val engineBestUci: String = "",
+    @SerialName("eval_loss_cp") val evalLossCp: Int = 0,
+)
+
+
+// ── /training/solve ──────────────────────────────────────────────────────────
+
+
+/**
+ * Request body for POST /training/solve (Phase 2 endpoint).
+ *
+ * The Android replay sheet posts this on a verified-correct attempt
+ * with ``sourceType = "mistake_replay"`` and ``sourceRef`` copied
+ * from [BiggestMistakeDto.sourceRef] so the server-side
+ * ``(player, source_type, source_ref)`` dedup triple stays stable.
+ */
+@Serializable
+data class TrainingSolveRequest(
+    @SerialName("source_type") val sourceType: String,
+    @SerialName("source_ref") val sourceRef: String? = null,
+)
+
+
+/**
+ * Response from POST /training/solve.
+ *
+ * [xpAwarded] = 0 indicates a dedup hit (the client retried the same
+ * solve) — the client should NOT toast "+10 XP" in that case, but
+ * may still update [trainingXp] in PREF_TRAINING_XP since the server
+ * value is authoritative.
+ */
+@Serializable
+data class TrainingSolveResponse(
+    @SerialName("xp_awarded") val xpAwarded: Int = 0,
+    @SerialName("training_xp") val trainingXp: Int = 0,
+    @SerialName("completed_at") val completedAt: String = "",
+)

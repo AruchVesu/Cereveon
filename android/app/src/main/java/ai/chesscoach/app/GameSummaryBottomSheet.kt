@@ -47,6 +47,10 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
         // see ProgressDashboardBottomSheet's "Coach's plan" section.
         private const val ARG_COACH_WEAKNESS  = "coach_weakness"
         private const val ARG_COACH_REASON    = "coach_reason"
+        // Phase 3 — biggest_mistake (the mistake-replay payload) serialised
+        // as a JSON string so the bundle stays primitive-only.  Optional;
+        // absent / blank means the response didn't carry the field.
+        private const val ARG_BIGGEST_MISTAKE_JSON = "biggest_mistake_json"
 
         const val PREFS_NAME  = MainActivity.PREFS_NAME
         const val PREF_RATING = MainActivity.PREF_RATING
@@ -91,6 +95,13 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
                 response.learningStatus?.let { putString(ARG_LEARNING_STATUS, it) }
                 result?.let { putString(ARG_RESULT, it.name) }
                 if (moveCount > 0) putInt(ARG_MOVE_COUNT, moveCount)
+                // Phase 3 — pass the biggest_mistake DTO through as a
+                // JSON string so the bundle stays primitive-only.
+                // Decoded back into a [BiggestMistakeDto] in
+                // onViewCreated when the card is wired up.
+                response.biggestMistake?.let {
+                    putString(ARG_BIGGEST_MISTAKE_JSON, ApiJson.encodeToString(it))
+                }
             }
         }
 
@@ -158,6 +169,13 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
         /** Format a training topic string as "Topic: Endgame technique". */
         fun formatTopic(topic: String): String =
             "Topic: ${topic.replaceFirstChar { it.uppercase() }.replace('_', ' ')}"
+
+        /**
+         * Phase 3 mistake-replay card subline.
+         * "Move 14 — find a stronger move (lost 240 cp)."
+         */
+        fun formatMistakeSummary(moveNumber: Int, evalLossCp: Int): String =
+            "Move $moveNumber — find a stronger move (lost $evalLossCp cp)."
 
         // ``formatFormat`` and ``formatGain`` retired in PR 26 (2026-05-15)
         // alongside the /next-training/{player_id} fallback path that was
@@ -238,6 +256,16 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
             txtLearningStatus.text = learningStatusLabel(learningStatus)
             txtLearningStatus.visibility = View.VISIBLE
         }
+
+        // ── Phase 3: mistake-replay card ──────────────────────────────────────
+        // When the /game/finish response carried a non-null
+        // ``biggest_mistake``, surface a "Replay your mistake" CTA above
+        // the curriculum training card.  Tap → launches
+        // MistakeReplayBottomSheet preloaded with the worst-loss position
+        // and the move the user actually played.  Falls back gracefully
+        // (card stays gone, sheet doesn't launch) when the JSON arg is
+        // missing or malformed — neither path 500s the post-game flow.
+        wireMistakeReplayCard(view, args.getString(ARG_BIGGEST_MISTAKE_JSON))
 
         // ── P3-A: payload detail section (DRILL / PUZZLE only) ────────────────
         val layoutPayload = view.findViewById<LinearLayout>(R.id.layoutPayload)
@@ -338,6 +366,48 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
             ChatBottomSheet
                 .newInstance(fen, null, null, 0)
                 .show(parentFragmentManager, "ChatBottomSheet")
+            dismiss()
+        }
+    }
+
+    /**
+     * Show the mistake-replay card iff [biggestMistakeJson] decodes to
+     * a usable [BiggestMistakeDto].  Card stays gone (the default
+     * layout state) on null / blank / malformed input — the rest of
+     * the sheet renders normally either way.
+     */
+    private fun wireMistakeReplayCard(view: View, biggestMistakeJson: String?) {
+        val card = view.findViewById<AtriumCardView>(R.id.mistakeReplayCard)
+        if (biggestMistakeJson.isNullOrBlank()) {
+            card.visibility = View.GONE
+            return
+        }
+        val mistake = try {
+            ApiJson.decodeFromString<BiggestMistakeDto>(biggestMistakeJson)
+        } catch (_: Exception) {
+            // Malformed payload — the activity should never see it
+            // (the JSON came from this same process's encode), but be
+            // defensive so a wire-shape drift can't 500 the sheet.
+            card.visibility = View.GONE
+            return
+        }
+        // FEN is the load-bearing field; a missing FEN means the
+        // detector returned None and the wire field shouldn't have
+        // been set.  Treat blank FEN as "no mistake" to mirror the
+        // server-side semantics.
+        if (mistake.fen.isBlank()) {
+            card.visibility = View.GONE
+            return
+        }
+
+        view.findViewById<TextView>(R.id.txtMistakeReplaySummary).text =
+            formatMistakeSummary(mistake.moveNumber, mistake.evalLossCp)
+        card.visibility = View.VISIBLE
+        view.findViewById<Button>(R.id.btnReplayMistake).setOnClickListener {
+            if (parentFragmentManager.isStateSaved) return@setOnClickListener
+            val sheet = MistakeReplayBottomSheet.newInstance(mistake)
+            sheet.gameApiClient = gameApiClient
+            sheet.show(parentFragmentManager, "MistakeReplayBottomSheet")
             dismiss()
         }
     }
