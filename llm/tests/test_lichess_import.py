@@ -1164,7 +1164,7 @@ class TestImportJobLifecycle:
         self, db_session, linked_player, cleared_player_locks
     ):
         job = import_service.start_import_job(
-            db_session, linked_player, max_games=42, rated=True
+            db_session, linked_player, max_games=42
         )
         assert job.id  # UUID assigned
         assert job.status == JOB_STATUS_QUEUED
@@ -1183,7 +1183,7 @@ class TestImportJobLifecycle:
     ):
         with pytest.raises(ValueError):
             import_service.start_import_job(
-                db_session, linked_player, max_games=0, rated=True
+                db_session, linked_player, max_games=0
             )
 
     # IJ_03
@@ -1191,7 +1191,7 @@ class TestImportJobLifecycle:
         self, db_session, player, cleared_player_locks
     ):
         with pytest.raises(LichessNotLinkedError):
-            import_service.start_import_job(db_session, player, max_games=10, rated=True)
+            import_service.start_import_job(db_session, player, max_games=10)
 
     # IJ_04
     def test_run_import_job_clean_stream_marks_succeeded(
@@ -1210,7 +1210,7 @@ class TestImportJobLifecycle:
             ],
         )
         job = import_service.start_import_job(
-            db_session, linked_player, max_games=50, rated=True
+            db_session, linked_player, max_games=50
         )
         # Worker runs synchronously from the test thread.
         import_service.run_import_job(job.id, max_games=50, rated=True)
@@ -1244,7 +1244,7 @@ class TestImportJobLifecycle:
         monkeypatch.setattr(import_service.lichess_client, "fetch_user_games", _raising_iter)
 
         job = import_service.start_import_job(
-            db_session, linked_player, max_games=50, rated=True
+            db_session, linked_player, max_games=50
         )
         import_service.run_import_job(job.id, max_games=50, rated=True)
 
@@ -1290,7 +1290,7 @@ class TestImportJobLifecycle:
     # IJ_10
     def test_serialize_job_shape_stable(self, db_session, linked_player, cleared_player_locks):
         job = import_service.start_import_job(
-            db_session, linked_player, max_games=25, rated=True
+            db_session, linked_player, max_games=25
         )
         payload = import_service.serialize_job(job)
         assert set(payload.keys()) == {
@@ -1359,7 +1359,7 @@ class TestCoalesce:
                     p = db.get(Player, player_id)
                     barrier.wait(timeout=5)
                     job = import_service.start_import_job(
-                        db, p, max_games=25, rated=True
+                        db, p, max_games=25
                     )
                     results.append(job.id)
             except BaseException as exc:  # pylint: disable=broad-except
@@ -1703,7 +1703,7 @@ class TestGetImportJobRoute:
         from llm.seca.lichess.router import get_import_job
 
         job = import_service.start_import_job(
-            db_session, linked_player, max_games=10, rated=True
+            db_session, linked_player, max_games=10
         )
         with _limiter_disabled():
             payload = get_import_job(
@@ -1738,7 +1738,7 @@ class TestGetImportJobRoute:
 
         # Job owned by linked_player; other_player must not be able to read it.
         job = import_service.start_import_job(
-            db_session, linked_player, max_games=10, rated=True
+            db_session, linked_player, max_games=10
         )
         with _limiter_disabled(), pytest.raises(HTTPException) as excinfo:
             get_import_job(

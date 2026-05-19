@@ -230,7 +230,6 @@ def trigger_import(
             db,
             player,
             max_games=max_games,
-            rated=rated,
         )
         if job.status == JOB_STATUS_QUEUED:
             # Freshly inserted — kick off the worker.  Coalesced

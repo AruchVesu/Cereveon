@@ -347,9 +347,7 @@ def cleanup_stale_import_jobs_on_startup() -> int:
         )
         db.commit()
         if affected:
-            logger.info(
-                "Lichess import janitor swept %d stale job(s) to failed", affected
-            )
+            logger.info("Lichess import janitor swept %d stale job(s) to failed", affected)
         return int(affected)
     finally:
         db.close()
@@ -416,7 +414,6 @@ def start_import_job(
     player: Player,
     *,
     max_games: int,
-    rated: bool = True,
 ) -> LichessImportJob:
     """Create-or-coalesce an import job for the player (v2 async).
 
@@ -429,6 +426,11 @@ def start_import_job(
     Holds the lock around the SELECT + INSERT + commit only — NOT across
     the actual Lichess stream, which is the worker's job.  This keeps
     concurrent imports for *different* players fully parallel.
+
+    ``rated`` is intentionally NOT a parameter here: this function only
+    creates the job row.  The router passes ``rated`` directly to the
+    worker via ``executor.submit(run_import_job, job_id, rated=...)``,
+    so persisting it on the row would just duplicate state.
 
     Returns the active job row — either one freshly inserted by this
     call or the one a concurrent caller raced past.  Caller (the router)

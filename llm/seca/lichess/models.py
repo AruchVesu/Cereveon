@@ -88,9 +88,7 @@ JOB_STATUS_ACTIVE = frozenset({JOB_STATUS_QUEUED, JOB_STATUS_RUNNING})
 class LichessImportJob(Base):
     __tablename__ = "lichess_import_jobs"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     player_id: Mapped[str] = mapped_column(
         String, ForeignKey("players.id"), nullable=False, index=True
     )
@@ -124,9 +122,7 @@ class LichessImportJob(Base):
     # Truncated to bound a hostile / pathological message.
     error_message: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow,
