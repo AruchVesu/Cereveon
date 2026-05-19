@@ -83,7 +83,8 @@
                 android:layout_height="wrap_content"
                 android:layout_marginStart="@dimen/atrium_space_8"
                 android:textAppearance="@style/Atrium.Kicker"
-                android:text="1680" />
+                android:text="1680"
+                android:visibility="gone" />
 
             <Space
                 android:layout_width="0dp"
@@ -148,7 +149,8 @@
                 android:layout_height="wrap_content"
                 android:layout_marginStart="@dimen/atrium_space_8"
                 android:textAppearance="@style/Atrium.Kicker"
-                android:text="1720 · white" />
+                android:text="1720 · white"
+                android:visibility="gone" />
 
             <Space
                 android:layout_width="0dp"

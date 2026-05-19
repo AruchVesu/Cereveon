@@ -166,7 +166,7 @@
                 android:textColor="@color/atrium_ink"
                 android:visibility="gone"
                 tools:visibility="visible"
-                tools:text="Rating set to 1907 from your Lichess rapid (894 games)." />
+                tools:text="Calibrated from your Lichess rapid (894 games)." />
 
             <View
                 style="@style/Atrium.SettingsDivider"
