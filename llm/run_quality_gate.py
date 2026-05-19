@@ -87,6 +87,9 @@ FORMAT_TARGETS = [
     "llm/seca/storage/event_storage.py",
     "llm/seca/storage/models.py",
     "llm/seca/storage/repo.py",
+    "llm/seca/training/__init__.py",
+    "llm/seca/training/models.py",
+    "llm/seca/training/router.py",
     "llm/seca/world_model/safe_stub.py",
 ]
 
@@ -160,6 +163,9 @@ PYLINT_TARGETS = [
     "llm/seca/storage/event_storage.py",
     "llm/seca/storage/models.py",
     "llm/seca/storage/repo.py",
+    "llm/seca/training/__init__.py",
+    "llm/seca/training/models.py",
+    "llm/seca/training/router.py",
     "llm/seca/world_model/safe_stub.py",
 ]
 
@@ -242,6 +248,9 @@ MYPY_TARGETS = [
     "llm/seca/repertoire/router.py",
     "llm/seca/skills/updater.py",
     "llm/seca/storage/db.py",
+    "llm/seca/training/__init__.py",
+    "llm/seca/training/models.py",
+    "llm/seca/training/router.py",
     "llm/seca/storage/event_storage.py",
     "llm/seca/storage/repo.py",
 ]

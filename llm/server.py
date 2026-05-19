@@ -38,10 +38,12 @@ from llm.seca.inference.router import router as inference_router
 from llm.seca.analytics.router import router as analytics_router
 from llm.seca.repertoire.router import router as repertoire_router
 from llm.seca.lichess.router import router as lichess_router
+from llm.seca.training.router import router as training_router
 
 # register SECA models
 import llm.seca.events.models
 import llm.seca.lichess.models  # noqa: F401  # ensure LinkedAccount is on Base before init_schema
+import llm.seca.training.models  # noqa: F401  # ensure TrainingCompletion is on Base before init_schema
 
 from llm.seca.engines.stockfish.pool import (
     EnginePoolSettings,
@@ -717,6 +719,7 @@ app.include_router(curriculum_router)
 app.include_router(analytics_router)
 app.include_router(repertoire_router)
 app.include_router(lichess_router)
+app.include_router(training_router)
 app.include_router(
     inference_router,
     prefix="/seca",

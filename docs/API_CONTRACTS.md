@@ -1298,6 +1298,81 @@ There is no explicit cancel endpoint.  The two cancellation paths are:
 
 ---
 
+## 32. `POST /training/solve`
+
+**Host:** `llm/seca/training/router.py`
+**Auth:** `Authorization: Bearer <token>` (required)
+
+Credits one verified-solve event to the authenticated player and
+bumps `Player.training_xp` by `XP_PER_SOLVE` (10 at Phase 2).  The
+endpoint trusts the caller's claim that a solve actually happened —
+engine verification is the *caller*'s responsibility (Phase 3 will
+run a move-vs-engine-best check on the client + a server-side
+double-check before posting here).
+
+### Request body
+
+| Field         | Type             | Required | Description |
+|---------------|------------------|----------|-------------|
+| `source_type` | `string`         | yes      | One of `"mistake_replay"`, `"weekly_microtask"`, `"standard_puzzle"`. |
+| `source_ref`  | `string \| null` | no       | Stable identifier for the solved item (e.g. `"game_<id>:move_<n>"`, a puzzle id, a digest row id).  Bounded at 200 chars; empty / whitespace-only strings are normalised to `null`. |
+
+### Response (200)
+
+```json
+{
+  "xp_awarded":   <int>,
+  "training_xp":  <int>,
+  "completed_at": "<ISO-8601>"
+}
+```
+
+* `xp_awarded` — XP credited for THIS request.  Equals `XP_PER_SOLVE`
+  for a new completion; equals `0` when the call deduped against an
+  existing row (see *Idempotency* below).  Lets the client tell the
+  difference between "you earned XP" and "we already had this one"
+  without rendering two response shapes.
+* `training_xp` — new running total on the player row.  Lets the
+  client update its `PREF_TRAINING_XP` cache + Home Level/XP kicker
+  without a separate `/auth/me` round trip.
+* `completed_at` — ISO-8601 timestamp.  For a brand-new completion
+  this is the row that was just inserted; for a dedup hit this is the
+  *historical* row's timestamp.
+
+### Idempotency
+
+`(player_id, source_type, source_ref)` is unique at the database
+level when `source_ref` is non-null: a retry of the same logical solve
+returns the original row's `completed_at` with `xp_awarded=0` so the
+counter doesn't double-bump.  Rows with `source_ref=null` are NOT
+deduped (Postgres `NULL`-distinct semantics in the unique index;
+intent: catch-all completions where the caller doesn't yet have a
+stable identifier).  Phase-3 callers should always supply a stable
+ref when dedup matters.
+
+The endpoint handles the unique-constraint race window (two
+concurrent requests both pass the pre-check, one commits first, the
+other hits the index) by rolling back, re-fetching the existing row,
+and returning the dedup response — same observable behaviour as the
+pre-check path.
+
+### Rate limit
+
+`60/minute` per client (shared slowapi limiter).  Tuned to permit
+normal solve-burst patterns (a weekly digest's 3 micro-tasks finished
+back-to-back) without permitting scripted XP farming.
+
+### Errors
+
+| Status | Cause |
+|--------|-------|
+| `400`  | `source_type` not in the allowed set; `source_ref` exceeds 200 chars. |
+| `401`  | Missing or invalid `Authorization` header. |
+| `429`  | Rate limit exceeded. |
+| `500`  | Unique-constraint race that left no committed row (should be unreachable; logged as `IntegrityError on /training/solve but no row found`). |
+
+---
+
 ## Error responses
 
 The API emits **two distinct error-body shapes** that any client (the
