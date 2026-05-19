@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Mistake-replay sheet (Phase 3).
+
+    Launched from GameSummaryBottomSheet when the /game/finish response
+    carries a non-null ``biggest_mistake`` block.  The user sees the
+    position they were looking at when they erred + the move they
+    actually played, and tries a stronger alternative on an
+    interactive ChessBoardView.  Each attempt round-trips through
+    POST /training/verify-replay; the first verified-correct attempt
+    posts to POST /training/solve and credits +10 XP.
+
+    Top to bottom:
+      1.  Drag handle.
+      2.  Chapter header (kicker + italic title).
+      3.  "You played" line — italic copy + the user's original
+          move SAN/UCI; muted dim colour to read as "the bad move".
+      4.  ChessBoardView (interactive=true; sized to fit a portrait sheet).
+      5.  Status row — Activity rewrites the text + tone on every attempt.
+      6.  Footer — "Close" secondary action.
+
+    IDs preserved (every findViewById in MistakeReplayBottomSheet.kt
+    resolves unchanged): mistakeReplayKicker, mistakeReplayTitle,
+    mistakeReplayPlayedMove, mistakeReplayBoard, mistakeReplayStatus,
+    mistakeReplayCloseButton.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_atrium_gradient"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/atrium_space_24"
+        android:paddingEnd="@dimen/atrium_space_24"
+        android:paddingTop="@dimen/atrium_space_16"
+        android:paddingBottom="@dimen/atrium_space_24">
+
+        <View
+            android:layout_width="36dp"
+            android:layout_height="4dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginBottom="@dimen/atrium_space_12"
+            android:background="@color/atrium_hairline" />
+
+        <TextView
+            android:id="@+id/mistakeReplayKicker"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker.Cyan"
+            tools:text="Mistake · Move 14" />
+
+        <TextView
+            android:id="@+id/mistakeReplayTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_4"
+            android:fontFamily="@font/cormorant_garamond"
+            android:textStyle="italic"
+            android:textColor="@color/atrium_ink"
+            android:textSize="28sp"
+            android:lineSpacingMultiplier="1.05"
+            android:text="Find a stronger move." />
+
+        <TextView
+            android:id="@+id/mistakeReplayPlayedMove"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_8"
+            android:fontFamily="@font/cormorant_garamond"
+            android:textStyle="italic"
+            android:textColor="@color/atrium_muted"
+            android:textSize="14sp"
+            tools:text="You played e2e4 — eval dropped by 240 cp." />
+
+        <FrameLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/atrium_space_16"
+            android:padding="@dimen/atrium_space_8"
+            android:background="@drawable/board_mat_atrium"
+            android:elevation="6dp">
+
+            <ai.chesscoach.app.ChessBoardView
+                android:id="@+id/mistakeReplayBoard"
+                android:layout_width="312dp"
+                android:layout_height="312dp" />
+
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/mistakeReplayStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_16"
+            android:textAppearance="@style/Atrium.Kicker"
+            android:gravity="center"
+            android:text="Find a stronger move."
+            tools:text="+10 XP" />
+
+        <Button
+            android:id="@+id/mistakeReplayCloseButton"
+            style="@style/Atrium.Button.Secondary"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_tap_target"
+            android:layout_marginTop="@dimen/atrium_space_20"
+            android:text="Close" />
+
+    </LinearLayout>
+
+</ScrollView>

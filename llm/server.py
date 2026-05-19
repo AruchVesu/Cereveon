@@ -39,6 +39,7 @@ from llm.seca.analytics.router import router as analytics_router
 from llm.seca.repertoire.router import router as repertoire_router
 from llm.seca.lichess.router import router as lichess_router
 from llm.seca.training.router import router as training_router
+from llm.seca.mistakes.router import router as mistakes_router
 
 # register SECA models
 import llm.seca.events.models
@@ -294,6 +295,17 @@ async def lifespan(app: FastAPI):
         # client-trust gap documented in docs/SECA.md "Trust
         # property of the reward signal").
         app.state.engine_pool = engine_pool
+        # Mistake-replay verifier injection.  The
+        # /training/verify-replay handler in
+        # ``llm.seca.mistakes.router`` reads from a module-global so
+        # it doesn't have to import ``llm.server`` (that would create
+        # a circular import — server.py registers the mistakes
+        # router).  Pattern matches ``observability.register_*`` —
+        # one-shot wiring at lifespan startup, mirrored at shutdown.
+        from llm.seca.mistakes.router import (  # noqa: PLC0415
+            set_engine_pool as _set_mistakes_pool,
+        )
+        _set_mistakes_pool(engine_pool)
         scheduler = CurriculumScheduler()
 
         # Register the engine pool snapshot provider for Prometheus
@@ -324,6 +336,16 @@ async def lifespan(app: FastAPI):
         # late-binds via getattr(request.app.state, "engine_pool", None)
         # falls back cleanly when startup failed mid-way.
         app.state.engine_pool = None
+        # Clear the mistakes verifier's pool reference too — without
+        # this, a failed startup would leave the verifier holding a
+        # half-initialised pool from a previous run.
+        try:
+            from llm.seca.mistakes.router import (  # noqa: PLC0415
+                set_engine_pool as _set_mistakes_pool,
+            )
+            _set_mistakes_pool(None)
+        except Exception:  # noqa: BLE001 — never mask the original error
+            pass
         logger.error("Stockfish engine pool DISABLED: %s", e)
 
     yield
@@ -720,6 +742,7 @@ app.include_router(analytics_router)
 app.include_router(repertoire_router)
 app.include_router(lichess_router)
 app.include_router(training_router)
+app.include_router(mistakes_router)
 app.include_router(
     inference_router,
     prefix="/seca",

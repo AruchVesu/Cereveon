@@ -118,6 +118,18 @@ the surviving training-recommendation contract.
     "title":       <string>,
     "description": <string>,
     "payload":     <object>
+  },
+  "analysis": {
+    "dominant_category":  <string | null>,
+    "games_analyzed":     <int>,
+    "recommendations":    [...]
+  },
+  "biggest_mistake": null | {
+    "fen":           <string>,
+    "played_move":   <UCI string>,
+    "move_number":   <int>,
+    "eval_loss_cp":  <int>,
+    "source_ref":    <string>
   }
 }
 ```
@@ -134,6 +146,12 @@ the surviving training-recommendation contract.
 | `coach_content.title` | `string` | Content title shown to player |
 | `coach_content.description` | `string` | Content description |
 | `coach_content.payload` | `object` | Type-specific content payload |
+| `biggest_mistake` | `object \| null` | The player's worst-loss move in this game, or `null` when (a) the engine recompute fell back to client values, or (b) no move clears `MIN_MISTAKE_LOSS_CP` (150 cp).  Drives the Android Phase-3 mistake-replay sheet. |
+| `biggest_mistake.fen` | `string` | FEN of the position **before** the bad move. |
+| `biggest_mistake.played_move` | `string` | UCI of the move the player actually played at that position. |
+| `biggest_mistake.move_number` | `int` | 1-indexed Nth player half-move (not Nth ply).  Used in the replay sheet header copy. |
+| `biggest_mistake.eval_loss_cp` | `int` | Centipawn loss this move cost the player. Always ≥ 150 when the field is populated. |
+| `biggest_mistake.source_ref` | `string` | Opaque identifier to pass back to `POST /training/solve` on a verified-correct replay so dedup works (`event_<event_id>:move_<n>`). |
 
 ---
 
@@ -1370,6 +1388,64 @@ back-to-back) without permitting scripted XP farming.
 | `401`  | Missing or invalid `Authorization` header. |
 | `429`  | Rate limit exceeded. |
 | `500`  | Unique-constraint race that left no committed row (should be unreachable; logged as `IntegrityError on /training/solve but no row found`). |
+
+---
+
+## 33. `POST /training/verify-replay`
+
+**Host:** `llm/seca/mistakes/router.py`
+**Auth:** `Authorization: Bearer <token>` (required)
+
+Verify a single mistake-replay attempt against the engine.  Trust
+anchor for the Phase 3 XP-credit path: the Android replay sheet
+calls this BEFORE calling `POST /training/solve`, so an unverified
+move never moves the counter.
+
+### Request body
+
+| Field      | Type     | Required | Description |
+|------------|----------|----------|-------------|
+| `fen`      | `string` | yes      | Position the player was looking at when they erred. Non-empty, ≤ 200 chars.  Typically the value of `biggest_mistake.fen` from a recent `/game/finish` response. |
+| `move_uci` | `string` | yes      | Move the player is proposing as a fix, in UCI notation (e.g. `e2e4`, `e7e8q`). Non-empty, ≤ 8 chars. |
+
+### Response (200)
+
+```json
+{
+  "is_correct":      <bool>,
+  "engine_best_uci": <string>,
+  "eval_loss_cp":    <int>
+}
+```
+
+* `is_correct` — `true` when the user's move gives up at most
+  `VERIFY_THRESHOLD_CP` centipawns (30) vs the engine's best move
+  in that position.  `false` means "engine ran and says no" —
+  the replay UI shows "Not quite, try again" and the user retries.
+* `engine_best_uci` — the move Stockfish prefers.  Surfaced even on
+  a correct attempt so the UI can offer a "Here's what the engine
+  plays" peek without a second round-trip.  Empty string when the
+  engine returned no move (edge case; should not happen on a legal
+  position).
+* `eval_loss_cp` — signed centipawn delta from the player's POV.
+  Positive when the user's move is worse than the engine's; can be
+  slightly negative on engine search noise (still counts as
+  `is_correct=true` since the threshold check is one-sided).
+
+### Rate limit
+
+`60/minute` per client (shared slowapi limiter).  Tuned to permit
+normal puzzle-burst patterns while preventing scripted oracle
+queries against the engine.
+
+### Errors
+
+| Status | Cause |
+|--------|-------|
+| `400`  | `fen` cannot be parsed; `move_uci` not legal in the given position; either string exceeds its length cap. |
+| `401`  | Missing or invalid `Authorization` header. |
+| `429`  | Rate limit exceeded. |
+| `503`  | Engine pool unavailable (boot-time failure or queue timeout). Client can show a soft retry. |
 
 ---
 

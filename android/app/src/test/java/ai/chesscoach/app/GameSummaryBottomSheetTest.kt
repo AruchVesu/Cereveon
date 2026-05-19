@@ -215,6 +215,26 @@ class GameSummaryBottomSheetTest {
         assertEquals("⏸ Tracking paused", GameSummaryBottomSheet.learningStatusLabel("safe_mode"))
     }
 
+    // ------------------------------------------------------------------
+    // formatMistakeSummary (Phase 3 mistake-replay card subline)
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `formatMistakeSummary includes move number and cp loss`() {
+        assertEquals(
+            "Move 14 — find a stronger move (lost 240 cp).",
+            GameSummaryBottomSheet.formatMistakeSummary(14, 240),
+        )
+    }
+
+    @Test
+    fun `formatMistakeSummary handles single-digit move number`() {
+        assertEquals(
+            "Move 1 — find a stronger move (lost 175 cp).",
+            GameSummaryBottomSheet.formatMistakeSummary(1, 175),
+        )
+    }
+
     @Test
     fun `STATUS_STORED - stored returns progress saved label`() {
         assertEquals("✓ Progress saved", GameSummaryBottomSheet.learningStatusLabel("stored"))

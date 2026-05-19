@@ -159,6 +159,53 @@ interface GameApiClient {
         eco: String,
         outcome: Float,
     ): ApiResult<List<RepertoireOpeningDto>> = ApiResult.HttpError(501)
+
+    /**
+     * POST /training/verify-replay — Phase 3 mistake-replay verifier.
+     *
+     * Sends the position FEN the user was looking at + the move
+     * they're proposing as a fix; the server runs Stockfish and
+     * returns whether the move is within 30 cp of the engine's best.
+     * The Android replay sheet calls this BEFORE calling
+     * [submitTrainingSolve] so an unverified move never moves the
+     * XP counter.
+     *
+     * Bearer auth required.  Returns:
+     *   - 200 + [VerifyReplayResponse] — engine ran; ``isCorrect``
+     *     reflects the verdict.  Note: a wrong move is NOT an error,
+     *     it's a successful response with ``isCorrect=false``.
+     *   - 400 — malformed FEN, illegal move, or over-long input.
+     *   - 503 — engine pool unavailable (boot-time failure or
+     *     queue timeout).  Client should show a soft retry message.
+     *
+     * Default implementation returns [ApiResult.HttpError(501)] so
+     * test fakes don't have to implement it.
+     */
+    suspend fun verifyReplayMove(
+        fen: String,
+        moveUci: String,
+    ): ApiResult<VerifyReplayResponse> = ApiResult.HttpError(501)
+
+    /**
+     * POST /training/solve — Phase 2 verified-solve persistence.
+     *
+     * Bumps [Player.training_xp] by 10 (server-side constant) and
+     * inserts a TrainingCompletion row.  Idempotent on
+     * ``(player, source_type, source_ref)``: a retry returns
+     * ``xpAwarded=0`` plus the original completion's timestamp.
+     *
+     * Bearer auth required.  Returns:
+     *   - 200 + [TrainingSolveResponse] — XP credit recorded.
+     *   - 400 — invalid source_type or over-long source_ref.
+     *   - 429 — rate limit exceeded.
+     *
+     * Default implementation returns [ApiResult.HttpError(501)] so
+     * test fakes don't have to implement it.
+     */
+    suspend fun submitTrainingSolve(
+        sourceType: String,
+        sourceRef: String?,
+    ): ApiResult<TrainingSolveResponse> = ApiResult.HttpError(501)
 }
 
 // ── HTTP implementation ───────────────────────────────────────────────────────
@@ -358,6 +405,42 @@ class HttpGameApiClient(
         body = ApiJson.encodeToString(DrillResultRequest(outcome = outcome)),
         onResponse = refreshOnSuccess(),
         parse = ::parseRepertoireResponse,
+    )
+
+    override suspend fun verifyReplayMove(
+        fen: String,
+        moveUci: String,
+    ): ApiResult<VerifyReplayResponse> = http.request(
+        path = "/training/verify-replay",
+        method = "POST",
+        // Bearer-only — /training/* never carries X-Api-Key.  The
+        // server identifies the player via JWT; the FEN + move come
+        // from the replay sheet's state.
+        headers = authHeaders(includeApiKey = false),
+        body = ApiJson.encodeToString(VerifyReplayRequest(fen = fen, moveUci = moveUci)),
+        onResponse = refreshOnSuccess(),
+        parse = { body -> ApiJson.decodeFromString<VerifyReplayResponse>(body) },
+    )
+
+    override suspend fun submitTrainingSolve(
+        sourceType: String,
+        sourceRef: String?,
+    ): ApiResult<TrainingSolveResponse> = http.request(
+        path = "/training/solve",
+        method = "POST",
+        headers = authHeaders(includeApiKey = false),
+        // ``encodeDefaults = false`` on ApiJson strips a null
+        // sourceRef from the wire payload so the server's NULL-distinct
+        // dedup branch fires correctly (a serialised ``"source_ref": null``
+        // would still be a present-but-null key and is treated the
+        // same on the FastAPI side, but stripping it keeps the wire
+        // shape minimal and matches the request schema example in
+        // docs/API_CONTRACTS.md §32).
+        body = ApiJson.encodeToString(
+            TrainingSolveRequest(sourceType = sourceType, sourceRef = sourceRef)
+        ),
+        onResponse = refreshOnSuccess(),
+        parse = { body -> ApiJson.decodeFromString<TrainingSolveResponse>(body) },
     )
 
     /**

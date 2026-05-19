@@ -353,7 +353,7 @@ class TestResolveAuthoritativeAccuracy:
         request = _StubRequest(engine_pool=None)
 
         with caplog.at_level(logging.INFO):
-            acc, wks, source = _resolve_authoritative_accuracy(
+            acc, wks, source, _ = _resolve_authoritative_accuracy(
                 request=request, req=req, player_id="p1"
             )
 
@@ -387,7 +387,7 @@ class TestResolveAuthoritativeAccuracy:
         request = _StubRequest(engine_pool=pool)
 
         with caplog.at_level(logging.WARNING):
-            acc, wks, source = _resolve_authoritative_accuracy(
+            acc, wks, source, _ = _resolve_authoritative_accuracy(
                 request=request, req=req, player_id="p1"
             )
 
@@ -425,7 +425,7 @@ class TestResolveAuthoritativeAccuracy:
         request = _StubRequest(engine_pool=pool)
 
         with caplog.at_level(logging.WARNING):
-            _, _, source = _resolve_authoritative_accuracy(
+            _, _, source, _ = _resolve_authoritative_accuracy(
                 request=request, req=req, player_id="p1"
             )
 
@@ -480,7 +480,7 @@ class TestResolveAuthoritativeAccuracy:
         request = _StubRequest(engine_pool=pool)
 
         with caplog.at_level(logging.INFO):
-            acc, wks, source = _resolve_authoritative_accuracy(
+            acc, wks, source, _ = _resolve_authoritative_accuracy(
                 request=request, req=req, player_id="p1"
             )
 

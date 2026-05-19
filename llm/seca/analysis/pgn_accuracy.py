@@ -117,6 +117,15 @@ class AccuracyAnalysis:
     PGN's Result tag combined with the player's reported outcome —
     see ``_infer_player_color``."""
 
+    losses_cp: tuple[int, ...]
+    """Centipawn loss per player move, in PGN order.  ``losses_cp[i]``
+    is the loss for the player's ``(i + 1)``-th half-move; opponent
+    moves are not included.  Exposed so downstream consumers (e.g. the
+    mistake-replay detector in ``llm.seca.mistakes.detector``) can
+    pick the worst-loss index without re-running the engine.  Stored
+    as a tuple so the frozen dataclass remains hashable / immutable;
+    callers that need a list can ``list(...)`` it."""
+
     source: str
     """``"engine"`` when the analysis was driven by engine evaluation;
     ``"fallback"`` when ``moves_analyzed == 0`` (empty PGN or all moves
@@ -318,6 +327,7 @@ def _summarise(
             inaccuracy_count=0,
             moves_analyzed=0,
             player_color=player_color,
+            losses_cp=(),
             source="fallback",
         )
 
@@ -368,5 +378,6 @@ def _summarise(
         inaccuracy_count=inaccuracies,
         moves_analyzed=n,
         player_color=player_color,
+        losses_cp=tuple(losses_cp),
         source="engine",
     )
