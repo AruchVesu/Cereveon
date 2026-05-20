@@ -96,9 +96,7 @@ class _FakeEngine:
 
         info: dict = {}
         if self._score_cp is not None:
-            info["score"] = chess.engine.PovScore(
-                chess.engine.Cp(self._score_cp), chess.WHITE
-            )
+            info["score"] = chess.engine.PovScore(chess.engine.Cp(self._score_cp), chess.WHITE)
         if self._best_move_uci is not None:
             info["pv"] = [chess.Move.from_uci(self._best_move_uci)]
         return info
@@ -258,6 +256,7 @@ class TestEngineEvalContractSchema:
 
 _GAME_FINISH_REQUIRED = {
     "status",
+    "event_id",
     "new_rating",
     "confidence",
     "learning",
@@ -321,11 +320,16 @@ def _call_finish_game(
     # engine pool → ACC_FALLBACK log path); pinned by
     # test_pgn_accuracy.test_falls_back_when_pool_missing.
     fake_app = SimpleNamespace(state=SimpleNamespace())
-    fake_request = Request({
-        "type": "http", "method": "POST", "path": "/game/finish",
-        "headers": [], "client": ("127.0.0.1", 0),
-        "app": fake_app,
-    })
+    fake_request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/game/finish",
+            "headers": [],
+            "client": ("127.0.0.1", 0),
+            "app": fake_app,
+        }
+    )
 
     prev_enabled = limiter.enabled
     limiter.enabled = False
@@ -374,6 +378,27 @@ class TestGameFinishContractSchema:
         player, db = _make_game_finish_mocks()
         result = _call_finish_game(_DEFAULT_FINISH_REQ, player, db)
         assert result["status"] == "stored"
+
+    def test_event_id_is_string_and_matches_persisted_event(self):
+        """event_id is the server-generated GameEvent.id, stringified.
+
+        Surfaced on the wire so the client can fetch the same payload via
+        ``GET /game/finish/{event_id}/status`` — covers retry-after-network-
+        drop recovery today and lays the contract for the future async-
+        recompute path.  The mock stub in ``_call_finish_game`` uses
+        ``id=99``; the handler must coerce to ``"99"`` so the GET endpoint's
+        path-segment parser (str-typed) accepts it uniformly across
+        SQLite (int id) and Postgres (uuid id).
+        """
+        player, db = _make_game_finish_mocks()
+        result = _call_finish_game(_DEFAULT_FINISH_REQ, player, db)
+        _assert_str(result["event_id"], "event_id")
+        assert result["event_id"] == "99", (
+            "event_id must reflect str(event.id) from the mocked store_game "
+            "return value (SimpleNamespace(id=99)).  If this test fails, "
+            "either the str() coercion was dropped or the mock harness "
+            "diverged from the handler's expected event shape."
+        )
 
     def test_new_rating_is_numeric(self):
         player, db = _make_game_finish_mocks(rating_after=1510.0)
@@ -527,9 +552,9 @@ class TestAuthMeContractSchema:
     def test_skill_vector_malformed_json_returns_empty(self):
         """Malformed skill_vector_json must not raise; returns empty dict."""
         result = self._call_me("not-valid-json")
-        assert result["skill_vector"] == {}, (
-            "Malformed skill_vector_json must degrade gracefully to empty dict."
-        )
+        assert (
+            result["skill_vector"] == {}
+        ), "Malformed skill_vector_json must degrade gracefully to empty dict."
 
     def test_me_still_returns_core_fields(self):
         """P2-A addition must not drop existing fields: id, email, rating, confidence."""
@@ -540,9 +565,9 @@ class TestAuthMeContractSchema:
     def test_non_numeric_skill_vector_values_are_filtered(self):
         """String values in skill_vector_json must be silently filtered out."""
         result = self._call_me('{"tactics": 0.6, "stale": "not-a-number"}')
-        assert "stale" not in result["skill_vector"], (
-            "Non-numeric entries must be excluded from skill_vector response."
-        )
+        assert (
+            "stale" not in result["skill_vector"]
+        ), "Non-numeric entries must be excluded from skill_vector response."
         assert "tactics" in result["skill_vector"]
 
     def test_me_response_has_training_xp_field(self):
@@ -592,6 +617,7 @@ class TestCoachEndpointMissing:
             "Update docs/API_CONTRACTS.md to document the new endpoint."
         )
 
+
 # TestNextTrainingSchemaConflict retired in PR 26 (2026-05-15) alongside
 # the /next-training/{player_id} endpoint.  The mismatch the test pinned
 # (two endpoints with different shapes serving the same purpose) was
@@ -622,12 +648,12 @@ class TestCoachExecutorHandlerGap:
 
         action = SimpleNamespace(type="PUZZLE", weakness="tactics", reason="confidence drop")
         content = CoachExecutor().execute(action)
-        assert content.title != "Keep playing", (
-            "_handle_puzzle must return specific content, not the default fallback."
-        )
-        assert "tactics" in content.title.lower() or "puzzle" in content.title.lower(), (
-            "PUZZLE content title should reference the weakness or 'puzzle'."
-        )
+        assert (
+            content.title != "Keep playing"
+        ), "_handle_puzzle must return specific content, not the default fallback."
+        assert (
+            "tactics" in content.title.lower() or "puzzle" in content.title.lower()
+        ), "PUZZLE content title should reference the weakness or 'puzzle'."
 
     def test_plan_update_action_returns_specific_content(self):
         """
@@ -639,9 +665,9 @@ class TestCoachExecutorHandlerGap:
 
         action = SimpleNamespace(type="PLAN_UPDATE", weakness="endgame", reason="repeated weakness")
         content = CoachExecutor().execute(action)
-        assert content.title != "Keep playing", (
-            "_handle_plan_update must return specific content, not the default fallback."
-        )
+        assert (
+            content.title != "Keep playing"
+        ), "_handle_plan_update must return specific content, not the default fallback."
         assert "endgame" in content.description.lower() or "endgame" in content.payload.get(
             "updated_focus", ""
         ), "PLAN_UPDATE content should reference the weakness."
@@ -721,9 +747,9 @@ class TestRootHealthEndpoint:
     def test_root_and_health_return_identical_shape(self):
         import llm.server as server_module
 
-        assert server_module.root() == server_module.health(), (
-            "GET / and GET /health must return the same body"
-        )
+        assert (
+            server_module.root() == server_module.health()
+        ), "GET / and GET /health must return the same body"
 
 
 # ---------------------------------------------------------------------------
@@ -901,9 +927,7 @@ class TestChatResponseValidation:
         )
 
         with pytest.raises(ExplainSchemaError, match="structure"):
-            validate_chat_response(
-                self._payload(reply="The recommended move keeps activity.")
-            )
+            validate_chat_response(self._payload(reply="The recommended move keeps activity."))
 
     def test_chat_speculative_engine_token_raises(self):
         """``engine`` is on validate_mode_2_semantic's
@@ -917,9 +941,7 @@ class TestChatResponseValidation:
 
         with pytest.raises(ExplainSchemaError, match="semantic"):
             validate_chat_response(
-                self._payload(
-                    reply="The position is solid; the engine sees a small edge."
-                )
+                self._payload(reply="The position is solid; the engine sees a small edge.")
             )
 
     def test_chat_equal_band_describes_advantage_raises(self):
@@ -972,9 +994,7 @@ class TestChatResponseValidation:
 
         with pytest.raises(ExplainSchemaError, match="semantic"):
             validate_chat_response(
-                self._payload(
-                    reply="A knight fork on the next move would shift the balance."
-                )
+                self._payload(reply="A knight fork on the next move would shift the balance.")
             )
 
 
@@ -1026,9 +1046,7 @@ class TestLiveMoveResponseValidation:
         )
 
         with pytest.raises(ExplainSchemaError, match="Mode-2"):
-            validate_live_move_response(
-                self._payload(hint="Castle kingside with 0-0 next move.")
-            )
+            validate_live_move_response(self._payload(hint="Castle kingside with 0-0 next move."))
 
     def test_unknown_move_quality_raises(self):
         from llm.rag.validators.explain_response_schema import (
@@ -1205,9 +1223,7 @@ class TestDeterministicFallbacksPassBoundaryValidator:
                 for query in self._ADVERSARIAL_QUERIES:
                     messages = [ChatTurn(role="user", content=query)]
                     for voice in self._VOICES:
-                        result = generate_chat_reply(
-                            fen=fen, messages=messages, coach_voice=voice
-                        )
+                        result = generate_chat_reply(fen=fen, messages=messages, coach_voice=voice)
                         validate_chat_response(
                             {
                                 "reply": result.reply,
@@ -1234,9 +1250,7 @@ class TestDeterministicFallbacksPassBoundaryValidator:
         ]
         with patch.object(chat_mod, "_LLM_AVAILABLE", False):
             for voice in self._VOICES:
-                result = generate_chat_reply(
-                    fen="startpos", messages=history, coach_voice=voice
-                )
+                result = generate_chat_reply(fen="startpos", messages=history, coach_voice=voice)
                 validate_chat_response(
                     {
                         "reply": result.reply,
@@ -1258,9 +1272,7 @@ class TestDeterministicFallbacksPassBoundaryValidator:
             for fen in self._FENS:
                 for uci in moves:
                     for style in (None, "simple", "intermediate", "advanced"):
-                        result = generate_live_reply(
-                            fen=fen, uci=uci, explanation_style=style
-                        )
+                        result = generate_live_reply(fen=fen, uci=uci, explanation_style=style)
                         validate_live_move_response(
                             {
                                 "status": "ok",
@@ -1309,9 +1321,9 @@ class TestChatStreamBoundaryValidation:
 
             assert validate_pos != -1, "validate_chat_response not called in /chat/stream"
             assert stream_pos != -1, "StreamingResponse not used in /chat/stream"
-            assert validate_pos < stream_pos, (
-                "validate_chat_response must precede StreamingResponse in /chat/stream"
-            )
+            assert (
+                validate_pos < stream_pos
+            ), "validate_chat_response must precede StreamingResponse in /chat/stream"
             return
 
         raise AssertionError("async def chat_stream not found in server.py")
