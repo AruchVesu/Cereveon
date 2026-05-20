@@ -109,21 +109,35 @@ Residual risk: theft within a single token's lifetime. Accepted; the
 mitigation is operator-driven token revocation (a future enhancement
 tracked outside this document).
 
-Residual risk (capture vector): **no TLS certificate pinning** in the
-Android client. The release `network_security_config.xml` rejects
-user-installed CAs (Settings → Security → Install certificate) and the
-release build refuses a non-`https://` `COACH_API_BASE` at configuration
-time, but the client does NOT pin a specific server public key. A device
-with a corporate-managed CA in the **system** trust store, or a rooted
-device with a MITM proxy installed at the system-CA level, terminates
-HTTPS to `cereveon.com` cleanly and captures the JWT in plaintext.
-Compile-time HTTPS enforcement
-(`test_build_gradle_kts_release_enforces_https_and_obfuscation`) closes
-the cleartext path; **system-store CA compromise is in scope** and
-accepted. The trade-off was deferred when this document was written:
-adding `CertificatePinner` would close the gap but costs an ops
-procedure — a Caddy / Let's Encrypt cert rotation would brick every
-Android client that hasn't shipped an update with the new pin.
+Capture vector (closed): **TLS certificate pinning** is enforced in
+the Android client via the `<pin-set>` block on the `cereveon.com`
+domain-config in `network_security_config.xml`. Three SPKI hashes
+are pinned:
+
+- Let's Encrypt **E8** ECDSA intermediate — matches today's chain.
+- **ISRG Root X1** (RSA, valid until 2030) — long-term anchor that
+  survives any Let's Encrypt intermediate rotation (E5/E6/E7/E9/etc.)
+  that still chains to X1.
+- **ISRG Root X2** (ECDSA, valid until 2035) — backup for a future
+  migration where the chain terminates at X2.
+
+A device with a system-store MITM CA can still complete the TLS
+handshake at the OS layer, but `NetworkSecurityConfig` rejects the
+connection in user space because no cert in the MITM chain matches
+the pin set. The previously-accepted "system-store CA compromise"
+residual is therefore closed for `cereveon.com` requests.
+
+Brick-recovery floor: the `<pin-set>` carries an `expiration` ~24
+months out. If pins aren't rotated by that date AND the chain has
+drifted in some way the three pins don't cover, `NetworkSecurityConfig`
+falls back to system-CA trust rather than failing every connection —
+the same posture as before pinning landed. Bricking the app on a
+missed rotation would be worse than the pre-pinning posture; the
+expiration is the deliberate floor.
+
+Rotation procedure: `docs/CERT_PIN_ROTATION.md`. Source-pin test
+(catches drift between the XML and a documented pin list):
+`android/app/src/test/java/ai/chesscoach/app/NetworkSecurityCertPinningTest.kt`.
 
 Residual risk (signing-key disclosure): **JWT is HS256 with a single
 `SECRET_KEY`** that is both the signer and the verifier

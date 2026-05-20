@@ -207,21 +207,35 @@ class TestThreatModelConstants:
             code_origin="llm/seca/auth/tokens.py (consequence of symmetric HS256 + env-readable SECRET_KEY)",
         )
 
-    def test_no_tls_pinning_residual_documented(self):
-        """§ T2 — Android-side no-cert-pinning residual.
+    def test_tls_pinning_posture_documented(self):
+        """§ T2 — Android-side TLS pinning posture.
 
-        Unlike the numeric pins above, this is a **negative-state**
-        pin: the property the test enforces is that no
-        ``CertificatePinner`` (OkHttp) and no ``<pin-set>`` (NSC)
-        exists in ``android/``, AND that the residual is explicitly
-        named in ``THREAT_MODEL.md``.  The bidirectional check
-        (a) catches the regression where someone prunes the residual
-        paragraph from the doc thinking "the Android side is HTTPS,
-        we're good" and (b) catches the inverse — someone adds
-        ``CertificatePinner`` to ``android/`` without updating the
-        threat model.  Both reflect the same drift class the rest of
-        this file pins, just with a Boolean reality instead of a
-        numeric one.
+        Bidirectional pin: the test enforces that the live state of
+        the Android client matches the residual paragraph in
+        ``THREAT_MODEL.md`` § T2.  Two live states are possible:
+
+          STATE A — ``<pin-set>`` declared in Android XML (current).
+              Doc must NAME the pinned roots/intermediates AND the
+              rotation-runbook reference.  The "no TLS certificate
+              pinning" residual MUST be gone — its presence would
+              imply the doc never got updated when pinning was added.
+
+          STATE B — no pinning (pre-2026-05-20 posture).  Doc must
+              name the residual ("no TLS certificate pinning",
+              "system-store CA compromise is in scope") and NOT
+              claim a pin set exists.
+
+        Drift detection:
+          * Pin set in XML + doc still names "no TLS certificate pinning"
+            → contributor added pinning but forgot the doc update.
+          * No pin set in XML + doc names "TLS certificate pinning"
+            is enforced → contributor reverted pinning but forgot
+            to restore the residual.
+          * Pin set in XML + doc lacks the rotation-runbook reference
+            → doc update is partial; operator procedure missing.
+
+        Both directions surface as a labeled assertion failure with
+        the resolution path on the matching side.
         """
         android_root = _REPO_ROOT / "android"
         blob_parts: list[str] = []
@@ -234,33 +248,61 @@ class TestThreatModelConstants:
         blob = "\n".join(blob_parts)
 
         has_pinner = "CertificatePinner" in blob or "<pin-set" in blob
-        if has_pinner:
-            raise AssertionError(
-                "\n  DOC DRIFT — TLS certificate pinning was introduced\n"
-                "  in android/ but THREAT_MODEL.md still names\n"
-                "  'no TLS certificate pinning' as a § T2 residual.\n"
-                "  Resolution: update T2's residual paragraph to\n"
-                "  reflect the new posture (which key(s) are pinned,\n"
-                "  what the operator procedure is for rotation)."
-            )
+        doc_text = _THREAT_MODEL.read_text(encoding="utf-8")
+        doc_names_no_pinning = "no TLS certificate pinning" in doc_text
 
-        # No pinning — the residual paragraph must explicitly name it.
-        _assert_doc_pin(
-            doc=_THREAT_MODEL,
-            needle="no TLS certificate pinning",
-            code_origin=(
-                "android/app/src/main/res/xml/network_security_config.xml "
-                "(and absence of CertificatePinner / <pin-set> across android/)"
-            ),
-        )
-        _assert_doc_pin(
-            doc=_THREAT_MODEL,
-            needle="system-store CA compromise is in scope",
-            code_origin=(
-                "android/app/src/main/res/xml/network_security_config.xml "
-                "(and absence of CertificatePinner / <pin-set> across android/)"
-            ),
-        )
+        if has_pinner:
+            # STATE A — pinning IS enabled.  The doc must reflect that.
+            if doc_names_no_pinning:
+                raise AssertionError(
+                    "\n  DOC DRIFT — TLS certificate pinning is enabled\n"
+                    "  in android/ (CertificatePinner or <pin-set found\n"
+                    "  in source) but THREAT_MODEL.md § T2 still names\n"
+                    "  'no TLS certificate pinning' as a residual.\n"
+                    "  Resolution: rewrite T2's residual paragraph to\n"
+                    "  reflect the new posture (which key(s) are pinned,\n"
+                    "  rotation procedure, brick-recovery floor)."
+                )
+            # Doc must name the rotation runbook so an operator has
+            # somewhere to look when pins age out.
+            _assert_doc_pin(
+                doc=_THREAT_MODEL,
+                needle="docs/CERT_PIN_ROTATION.md",
+                code_origin=(
+                    "android/app/src/main/res/xml/network_security_config.xml "
+                    "<pin-set> (rotation runbook must be referenced from T2)"
+                ),
+            )
+            # Doc must name the brick-recovery floor — the expiration
+            # attribute is the mechanism that prevents a missed
+            # rotation from being catastrophic.
+            _assert_doc_pin(
+                doc=_THREAT_MODEL,
+                needle="Brick-recovery floor",
+                code_origin=(
+                    "android/app/src/main/res/xml/network_security_config.xml "
+                    "<pin-set expiration=...> (graceful-fallback property)"
+                ),
+            )
+        else:
+            # STATE B — no pinning.  The residual paragraph must
+            # explicitly name it.
+            _assert_doc_pin(
+                doc=_THREAT_MODEL,
+                needle="no TLS certificate pinning",
+                code_origin=(
+                    "android/app/src/main/res/xml/network_security_config.xml "
+                    "(absence of CertificatePinner / <pin-set> across android/)"
+                ),
+            )
+            _assert_doc_pin(
+                doc=_THREAT_MODEL,
+                needle="system-store CA compromise is in scope",
+                code_origin=(
+                    "android/app/src/main/res/xml/network_security_config.xml "
+                    "(absence of CertificatePinner / <pin-set> across android/)"
+                ),
+            )
 
 
 # ---------------------------------------------------------------------------
