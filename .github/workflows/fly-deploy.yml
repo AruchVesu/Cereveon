@@ -210,7 +210,12 @@ jobs:
         run: python -m pip_audit -r llm/requirements.txt --strict --ignore-vuln PYSEC-2025-183 --progress-spinner off
 
       - name: Audit CI/toolchain dependencies
-        run: python -m pip_audit -r llm/requirements-ci.txt --strict --progress-spinner off
+        # Same disputed PYSEC-2025-183 suppression rationale as the
+        # runtime audit step above — pyjwt is also pulled in
+        # transitively by the CI dependency tree (e.g. test fixtures
+        # that mint tokens against the auth router), and the disputed
+        # advisory + SECRET_KEY mitigation both apply identically here.
+        run: python -m pip_audit -r llm/requirements-ci.txt --strict --ignore-vuln PYSEC-2025-183 --progress-spinner off
 
   node-security:
     name: Node dependency audit
