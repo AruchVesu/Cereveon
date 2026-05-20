@@ -339,7 +339,22 @@ def _call_finish_game(
             patch("llm.seca.events.router.SkillUpdater"),
         ):
             MockStorage.return_value.store_game.return_value = fake_event
-            result = finish_game(req=req, player=player, request=fake_request, db=db)
+            # The /finish handler accepts a FastAPI ``BackgroundTasks``
+            # instance to schedule the per-mistake study-plan agent
+            # (phase 1 of LLM coaching v1; see
+            # ``llm/seca/coach/study_plan/agent.py``).  Direct handler
+            # invocations bypass FastAPI's DI, so we hand-construct an
+            # empty BackgroundTasks here — its ``add_task`` calls are
+            # collected silently and never executed in tests.
+            from fastapi import BackgroundTasks as _BackgroundTasks  # noqa: PLC0415
+
+            result = finish_game(
+                req=req,
+                player=player,
+                request=fake_request,
+                background_tasks=_BackgroundTasks(),
+                db=db,
+            )
     finally:
         limiter.enabled = prev_enabled
 

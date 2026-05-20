@@ -145,6 +145,13 @@ TEST_TARGETS = [
     # the threshold + POV-flip math is pinned.
     "llm/tests/test_mistake_detector.py",
     "llm/tests/test_verify_replay.py",
+    # Per-mistake study-plan agent (LLM coaching v1, phase 1 scaffold):
+    # 3-puzzle spaced-repetition plan generated as a background task
+    # after /game/finish identifies a FirstMistake.  Phase 1 stub
+    # (no LLM, no library lookup); phases 2-4 add the verdict,
+    # library variants, and Android Home card.  Tests cover the data
+    # model, dedup contract, scheduling layout, and endpoint shape.
+    "llm/tests/test_study_plan_agent.py",
     # Weekly digest agent (v1): deterministic top-3-holes + microtask
     # selection, 7-day window, persistence, refresh/fetch endpoint
     # contract, and no-LLM-imports invariant.
@@ -258,6 +265,12 @@ COVERAGE_TARGETS = [
     # test_verify_replay.py.
     "llm.seca.mistakes.detector",
     "llm.seca.mistakes.verify",
+    # Per-mistake study-plan agent (LLM coaching v1, phase 1 scaffold):
+    # data model + stub generator + GET /coach/plan/today endpoint.
+    # Covered by test_study_plan_agent.py.
+    "llm.seca.coach.study_plan.models",
+    "llm.seca.coach.study_plan.agent",
+    "llm.seca.coach.study_plan.router",
     "llm.seca.mistakes.router",
     # llm.seca.coach.live_controller, llm.seca.coach.executor,
     # llm.seca.coach.confidence_language_controller, and

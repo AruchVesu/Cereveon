@@ -29,6 +29,7 @@ from llm.seca.storage.models import *  # noqa: F401,F403
 from llm.seca.chat.models import *  # noqa: F401,F403
 from llm.seca.lichess.models import *  # noqa: F401,F403
 from llm.seca.training.models import *  # noqa: F401,F403
+from llm.seca.coach.study_plan.models import *  # noqa: F401,F403
 
 # pylint: enable=wildcard-import,unused-wildcard-import
 from .service import AuthService

@@ -7,7 +7,8 @@ import chess
 import chess.pgn
 
 _PGN_HEADER_RE = re.compile(r'^\s*\[\s*\w+\s+"[^"]*"\s*\]', re.MULTILINE)
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 from llm.seca.analysis.historical_pipeline import HistoricalAnalysisPipeline
 from llm.seca.analytics.training_recommendations import generate_training_recommendations
@@ -92,7 +93,7 @@ _DIVERGENCE_WARN_THRESHOLD = 0.20
 
 def _resolve_authoritative_accuracy(
     *,
-    request: Request,
+    engine_pool,
     req,  # GameFinishRequest, forward reference to avoid declaration order
     player_id: str,
 ) -> tuple[float, dict, str, "AccuracyAnalysis | None"]:
@@ -111,8 +112,14 @@ def _resolve_authoritative_accuracy(
     differs from the client value by at least
     ``_DIVERGENCE_WARN_THRESHOLD`` — anti-cheat telemetry that
     operators can grep for in production logs.
+
+    Takes ``engine_pool`` directly rather than reading it off
+    ``request.app.state``: the helper is now also called from a
+    FastAPI BackgroundTask (the ``?async=true`` path), which has no
+    access to the original ``Request``.  The sync handler reads the
+    pool from ``request.app.state`` once and passes it in.
     """
-    pool = getattr(request.app.state, "engine_pool", None)
+    pool = engine_pool
     if pool is None:
         logger.info(
             "ACC_FALLBACK player=%s reason=engine_pool_unavailable",
@@ -413,6 +420,7 @@ class GameFinishRequest(BaseModel):
 def finish_game(
     req: GameFinishRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     player=Depends(get_current_player),
     db: DBSession = Depends(get_db),
 ):
@@ -431,7 +439,7 @@ def finish_game(
     # propagate it onto the response or stored record yet — that's a
     # follow-up if operators want a queryable telemetry column.
     accuracy, weaknesses, _, accuracy_analysis = _resolve_authoritative_accuracy(
-        request=request,
+        engine_pool=getattr(request.app.state, "engine_pool", None),
         req=req,
         player_id=str(player.id),
     )
@@ -662,6 +670,27 @@ def finish_game(
                     "eval_loss_cp": mistake.eval_loss_cp,
                     "source_ref": (f"event_{event.id}:move_{mistake.move_number}"),
                 }
+
+                # Per-mistake study-plan agent (LLM coaching v1, phase 1
+                # scaffold).  Background-task entrypoint runs AFTER the
+                # response is sent — writes a 3-puzzle plan keyed off
+                # this mistake.  Phase 1 stub: all 3 puzzles share the
+                # mistake FEN, theme="generic", verdict="".  Phases
+                # 2-4 light up the LLM verdict, the library variants,
+                # and the Android Home card.  Lazy import to keep
+                # /game/finish hot-path imports unchanged on requests
+                # that don't carry a first-mistake.
+                from llm.seca.coach.study_plan.agent import (
+                    generate_plan_async,
+                )
+
+                background_tasks.add_task(
+                    generate_plan_async,
+                    player_id=str(player.id),
+                    source_event_id=str(event.id),
+                    mistake_fen=mistake.fen_before,
+                    played_uci=mistake.played_uci,
+                )
         except Exception:  # noqa: BLE001 — never 500 /game/finish
             # Detector is non-critical — log and continue without the
             # field.  /game/finish must stay green even if the mistake
@@ -758,30 +787,34 @@ def game_finish_status(
     """Return the persisted ``POST /game/finish`` response payload for
     ``event_id``.
 
-    Two callers today:
+    Callers today:
       * Client retry recovery — if a mobile network drops the POST
         response after the server committed, the client refetches via
         this endpoint instead of replaying the (expensive, Stockfish-
         bound) finish call.
-      * Foundation for the future async-recompute path — when the
-        Stockfish recompute moves off the POST hot path, this endpoint
-        will return ``{status: "pending"}`` until the background
-        worker writes the result row, then the full payload.  Today
-        the row is always written synchronously inside ``finish_game``,
-        so a successful 200 here means the same data the POST
-        returned.
+      * Future async-recompute polling clients — when the recompute
+        moves off the POST hot path, the GameEvent exists immediately
+        but the result row lands later from the background task.
+        The 202 + ``{status: "pending"}`` shape below is the contract
+        those clients poll against.
 
     Authorisation: requires the same ``X-API-Key`` + JWT the rest of
     the SECA surface enforces, plus an explicit ownership check that
-    the event belongs to the calling player.  A 403 is returned
-    rather than 404 when the event exists but belongs to someone else
-    — operators investigating a probe see a distinct signal.
+    the event belongs to the calling player.
 
     Status-code map:
+      200 — result row exists; body is the stored response payload
+      202 — event exists but result row hasn't landed yet.  Polling
+            clients SHOULD retry after a backoff.  Indistinguishable
+            from "legacy event whose result row never materialised"
+            (e.g., a finish that completed before PR #195 shipped,
+            or a finish whose best-effort persistence raised in
+            ``finish_game``).  Both cases share the polling-client
+            contract: keep retrying or give up after a budget; the
+            server can't tell them apart and doesn't try to.
       400 — ``event_id`` longer than the defensive cap
       403 — event exists but the calling player isn't its owner
-      404 — event doesn't exist, OR no persisted result row
-            (graceful for finishes from before this PR shipped)
+      404 — event doesn't exist
     """
     if len(event_id) > _EVENT_ID_MAX_LEN:
         # Distinct from 422 (Pydantic validation) — 400 makes it clear
@@ -805,13 +838,20 @@ def game_finish_status(
 
     result_row = db.query(GameFinishResult).filter(GameFinishResult.event_id == event_id).first()
     if result_row is None:
-        # Graceful degradation: finishes from before this PR shipped
-        # never persisted a result row.  Return 404 rather than try to
-        # re-derive the payload by replaying the Stockfish recompute —
-        # the ~2 s cost is exactly what this endpoint exists to AVOID
-        # re-paying.  Clients fall back to re-POSTing /game/finish if
-        # they truly need the data.
-        raise HTTPException(status_code=404, detail="finish result not available")
+        # Pending shape — the future async-recompute path will reach
+        # this branch every time the background task hasn't written
+        # its result row yet.  Today the same branch fires for
+        # legacy events (finishes that completed before PR #195
+        # shipped) and for finishes whose best-effort
+        # ``GameFinishResult`` persistence raised inside
+        # ``finish_game``.  All three cases share the polling-client
+        # contract: the result is not available right now; retry.
+        # 202 (not 404) is the polling-friendly status — clients
+        # know to keep trying.
+        return JSONResponse(
+            status_code=202,
+            content={"status": "pending", "event_id": event_id},
+        )
 
     try:
         return json.loads(result_row.response_json)

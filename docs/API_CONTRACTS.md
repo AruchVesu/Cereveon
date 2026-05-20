@@ -1449,6 +1449,102 @@ queries against the engine.
 
 ---
 
+## 34. `GET /coach/plan/today`
+
+**Host:** `llm/seca/coach/study_plan/router.py`
+**Auth:** `Authorization: Bearer <token>` (required)
+
+Return the player's most recent active per-mistake study plan + the
+puzzle currently due, or `null` when no active plan exists.
+
+A study plan is generated as a side-effect of `POST /game/finish` when
+that endpoint identified a `biggest_mistake` (§3) — a background task
+on the server writes a 3-puzzle spaced-repetition schedule keyed to
+the one originating mistake.  Day 0 is the exact mistake position;
+days 3 and 7 are theme-matched library variants (phase 3+; phase 1
+ships with all three days pointing at the same mistake FEN).
+
+Phase 1 scope: the endpoint serves the persisted plan but does not yet
+populate `theme` (always `"generic"`) or `verdict` (always `""`); the
+Android `TodaysDrillCard` is not yet built so no client polls this
+endpoint in production today.
+
+### Request
+
+No body.  Reads the authenticated player from the bearer token.
+
+### Response (200, plan exists)
+
+```json
+{
+  "plan_id":      <string>,
+  "theme":        <string>,
+  "verdict":      <string>,
+  "total_days":   3,
+  "today_puzzle": {
+    "day_offset":         <int>,
+    "fen":                <string>,
+    "expected_move_uci":  <string>,
+    "source_type":        <string>,
+    "due_at":             <string>
+  } | null
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `plan_id` | `string` | UUID of the `mistake_study_plans` row.  Stable for the life of the plan. |
+| `theme` | `string` | Theme tag of the mistake (e.g. `"king_safety"`, `"fork"`).  Phase 1 always `"generic"`; phase 2's LLM call replaces with a real tag. |
+| `verdict` | `string` | LLM-written ≤ 100-word retrospective on the originating mistake.  Phase 1 always `""`; phase 2 populates with a Mode-2-validator-clean string. |
+| `total_days` | `int` | Number of puzzles in the plan.  Always `3` in phase 1; surfaced as a field so the UI can render "Day N of M" without hard-coding. |
+| `today_puzzle` | `object \| null` | The puzzle whose `due_at <= now()` AND `completed_at IS NULL`, with the lowest `day_offset`.  `null` when no puzzle is currently due (e.g. day-0 solved, day-3 not yet due). |
+| `today_puzzle.day_offset` | `int` | One of `0`, `3`, `7`.  Maps to "Day 1 / 3", "Day 2 / 3", "Day 3 / 3" via a static client-side label. |
+| `today_puzzle.fen` | `string` | Position the puzzle drops the user into. |
+| `today_puzzle.expected_move_uci` | `string` | The engine's preferred move at that FEN (UCI).  For day-0 puzzles this is the player's ORIGINAL bad move — the puzzle asks the user to find a stronger alternative.  For library variants this is the puzzle's expected solution. |
+| `today_puzzle.source_type` | `string` | `"original"` for day-0 (the player's actual mistake); `"library"` for theme-matched variants (phase 3+).  Lets the UI title the puzzle accordingly. |
+| `today_puzzle.due_at` | `string` | ISO-8601 UTC timestamp of when the puzzle became available.  Invariant: `due_at <= now()` whenever this object is non-null. |
+
+### Response (200, no active plan)
+
+```json
+null
+```
+
+The endpoint returns HTTP 200 with a JSON `null` body when the player
+has no active study plan — either no qualifying game has landed yet,
+or every plan is completed.  The Android client hides the
+`TodaysDrillCard` in this case.
+
+### XP credit on puzzle completion
+
+Puzzle completion goes through the existing `POST /training/verify-replay`
+(§33) → `POST /training/solve` (§32) path.  No new endpoints in phase 1.
+The Android client (phase 4+) will call those with:
+
+* `source_type = "mistake_replay"`
+* `source_ref = "plan_<plan_id>:day_<day_offset>"`
+
+so the `(player, source_type, source_ref)` dedup triple on
+`/training/solve` keeps each individual puzzle credit-once.
+
+### Rate limit
+
+`60/minute` per client (shared slowapi limiter).  Loose because the
+endpoint is a single point read; the client is expected to poll on
+each home-screen open.
+
+### Errors
+
+| Status | Cause |
+|--------|-------|
+| `401`  | Missing or invalid `Authorization` header. |
+| `429`  | Rate limit exceeded. |
+
+No 4xx beyond auth — a missing plan returns 200 with `null` body, not
+404, because the absence is a normal product state.
+
+---
+
 ## Error responses
 
 The API emits **two distinct error-body shapes** that any client (the

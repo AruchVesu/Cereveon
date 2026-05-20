@@ -131,7 +131,15 @@ def _call_finish(req_kwargs, repo_finish_side_effect=None):
             # analysis branch; default MagicMock return makes it iterate
             # over a MagicMock which fails — return an empty list.
             MockStorage.return_value.get_recent_games.return_value = []
-            result = finish_game(req=req, request=request, player=player, db=db)
+            from fastapi import BackgroundTasks as _BackgroundTasks  # noqa: PLC0415
+
+            result = finish_game(
+                req=req,
+                request=request,
+                background_tasks=_BackgroundTasks(),
+                player=player,
+                db=db,
+            )
     finally:
         limiter.enabled = prev
 

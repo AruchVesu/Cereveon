@@ -297,10 +297,13 @@ class TestApiContractStress:
                 _prev = _limiter.enabled
                 _limiter.enabled = False
                 try:
+                    from fastapi import BackgroundTasks as _BackgroundTasks  # noqa: PLC0415
+
                     r = finish_game(
                         req=GameFinishRequest(pgn=pgn, result="win", accuracy=0.80, weaknesses={}),
                         player=player,
                         request=_Req(_scope),
+                        background_tasks=_BackgroundTasks(),
                         db=db,
                     )
                 finally:
@@ -348,12 +351,15 @@ class TestApiContractStress:
                 _prev = _limiter.enabled
                 _limiter.enabled = False
                 try:
+                    from fastapi import BackgroundTasks as _BackgroundTasks  # noqa: PLC0415
+
                     r = finish_game(
                         req=GameFinishRequest(
                             pgn=_HDR + "1. e4 *", result=result_type, accuracy=0.75, weaknesses={}
                         ),
                         player=player,
                         request=_Req(_scope),
+                        background_tasks=_BackgroundTasks(),
                         db=db,
                     )
                 finally:
