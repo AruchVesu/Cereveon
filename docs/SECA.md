@@ -106,9 +106,18 @@ The recompute lives in
 [`llm/seca/analysis/pgn_accuracy.py`](../llm/seca/analysis/pgn_accuracy.py)
 and runs inside `events/router._resolve_authoritative_accuracy`. For
 each player move in the submitted PGN, the engine pool evaluates the
-position at shallow depth (default 50 ms per move; ~2 s for a 40-move
+position at shallow depth (default 200 ms per move; ~8 s for a 40-move
 game; mostly cache hits when `FenMoveCache` was populated during live
-play). Centipawn losses are classified via the same thresholds the
+play). The default was raised from 50 ms on 2026-05-20 after the
+mistake-replay detector kept surfacing the downstream catastrophe
+(move N where eval finally collapsed by thousands of cp once mate was
+concrete to Stockfish) instead of the originating slow-burn mistake
+(earlier moves where the player gradually lost position but each
+step was < 100 cp at depth-7-10). The deeper recompute now feeds the
+dual-signal picker in `llm/seca/mistakes/detector.py` — see that
+module's docstring for the cumulative-eval transition signal that
+closes the gap on the detector side. Centipawn losses are classified
+via the same thresholds the
 live `mistake_classifier` uses (50 / 150 / 300 cp), an Average
 Centipawn Loss is converted to an accuracy figure via a
 diminishing-returns mapping, and a weakness vector (blunders /

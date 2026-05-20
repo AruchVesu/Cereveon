@@ -15,12 +15,24 @@ classifies each player move via centipawn-loss thresholds aligned with
 
 Performance notes
 -----------------
-The default ``movetime_ms=50`` keeps per-move evaluation cheap
-(~50 ms per uncached position).  A 40-move game with a cold cache
-finishes in ~2 s; ``FenMoveCache`` populated during live play makes
-most positions cache hits.  Each move requires exactly one engine
-call (the position-after-the-move serves as the position-before for
-the next iteration).
+The default ``movetime_ms=200`` gives the engine enough depth
+(~12-14 plies on opening positions) to catch the slow-burn losses
+that depth-7-10 shallow eval was missing (e.g., a player walking
+their king out gradually — each individual king step might look
+< 100 cp at shallow depth, while the cumulative position is already
+losing).  A 40-move game with a cold cache finishes in ~8 s;
+``FenMoveCache`` populated during live play makes most positions
+cache hits.  Each move requires exactly one engine call
+(the position-after-the-move serves as the position-before for the
+next iteration).
+
+The 200 ms default was raised from 50 ms on 2026-05-20 after the
+mistake-replay detector consistently surfaced downstream
+catastrophes (move N where eval collapsed by thousands of cp)
+instead of the originating slow-burn mistake (moves earlier where
+the player gradually lost position).  See ``llm.seca.mistakes.detector``
+for the companion dual-signal picker (transition + single-move-delta)
+that closes the gap on the detector side.
 
 The function raises on engine-pool unavailability or malformed PGNs;
 the caller (``llm.seca.events.router.finish_game``) catches and
@@ -126,6 +138,27 @@ class AccuracyAnalysis:
     as a tuple so the frozen dataclass remains hashable / immutable;
     callers that need a list can ``list(...)`` it."""
 
+    player_pov_eval_before_cp: tuple[int, ...]
+    """Engine eval BEFORE each player move, projected to the player's
+    POV (positive = player winning, negative = player losing).  Same
+    length as ``losses_cp``; ``[i]`` is the eval the player faced
+    going into their ``(i + 1)``-th half-move.  Added 2026-05-20 to
+    feed the cumulative-eval transition signal in
+    ``llm.seca.mistakes.detector.find_first_mistake`` — the signal
+    that catches slow-burn mistakes the single-move-delta picker
+    misses (player gradually walks their king out: each step
+    < 150 cp loss individually, but eval crosses from "drawn" to
+    "lost" on a specific move and that's the lesson)."""
+
+    player_pov_eval_after_cp: tuple[int, ...]
+    """Engine eval AFTER each player move, projected to the player's
+    POV (sign convention as above).  Same length as ``losses_cp``;
+    ``[i]`` is the eval the player produced by their ``(i + 1)``-th
+    half-move, BEFORE the opponent's response.  Paired with
+    ``player_pov_eval_before_cp[i]`` to compute the transition
+    condition ``eval_before > -LOSING_THRESHOLD_CP`` AND
+    ``eval_after <= -LOSING_THRESHOLD_CP``."""
+
     source: str
     """``"engine"`` when the analysis was driven by engine evaluation;
     ``"fallback"`` when ``moves_analyzed == 0`` (empty PGN or all moves
@@ -138,7 +171,7 @@ def compute_accuracy_from_pgn(
     engine_pool: StockfishEnginePool,
     *,
     result: str,
-    movetime_ms: int = 50,
+    movetime_ms: int = 200,
     max_plies: int = _MAX_PLIES_ANALYSED,
 ) -> AccuracyAnalysis:
     """Re-analyse ``pgn_text`` and return canonical accuracy + weakness.
@@ -154,8 +187,15 @@ def compute_accuracy_from_pgn(
         Combined with the PGN's Result tag to infer which side was
         the player — see ``_infer_player_color``.
     movetime_ms:
-        Per-move analysis budget.  Defaults to 50 ms — shallow but
-        sufficient for blunder-vs-good-move classification.
+        Per-move analysis budget.  Defaults to 200 ms (raised from
+        50 ms on 2026-05-20 — see module docstring "Performance
+        notes" for the slow-burn-king-walk regression that prompted
+        the bump).  200 ms reaches ~depth 12-14 on opening positions
+        and ~depth 8-10 in complex middlegames, deep enough that the
+        cumulative-eval transition signal in
+        ``llm.seca.mistakes.detector`` can reliably distinguish "you
+        crossed from drawn to lost on this move" from sub-threshold
+        positional noise.
     max_plies:
         Safety cap on plies analysed.  Defaults to 200.
 
@@ -174,6 +214,13 @@ def compute_accuracy_from_pgn(
     board = game.board()
 
     losses_cp: list[int] = []
+    # Per-player-move engine eval, projected to the player's POV
+    # (positive = player winning, negative = player losing).  Feeds the
+    # cumulative-eval transition signal in
+    # ``llm.seca.mistakes.detector.find_first_mistake`` — see the
+    # AccuracyAnalysis field docstrings for the data contract.
+    player_pov_eval_before_cp: list[int] = []
+    player_pov_eval_after_cp: list[int] = []
     # Per-phase loss tracking.  Phase classification matches
     # ``llm.seca.analysis.analyzer.GameWeaknessAnalyzer._phase`` so the
     # downstream ``aggregate_from_weakness_dicts`` aggregator (which
@@ -223,16 +270,28 @@ def compute_accuracy_from_pgn(
             #   Black moves: loss = after - prev  (eval going up hurts Black)
             if player_color == chess.WHITE:
                 loss = max(0, prev_eval_cp - after_eval_cp)
+                eval_before_player_pov = prev_eval_cp
+                eval_after_player_pov = after_eval_cp
             else:
                 loss = max(0, after_eval_cp - prev_eval_cp)
+                eval_before_player_pov = -prev_eval_cp
+                eval_after_player_pov = -after_eval_cp
             losses_cp.append(loss)
+            player_pov_eval_before_cp.append(int(eval_before_player_pov))
+            player_pov_eval_after_cp.append(int(eval_after_player_pov))
             if pre_move_phase is not None:
                 phase_losses_cp[pre_move_phase].append(loss)
 
         prev_eval_cp = after_eval_cp
         plies_seen += 1
 
-    return _summarise(losses_cp, phase_losses_cp, player_color)
+    return _summarise(
+        losses_cp,
+        phase_losses_cp,
+        player_color,
+        player_pov_eval_before_cp,
+        player_pov_eval_after_cp,
+    )
 
 
 def _phase(board: chess.Board) -> str:
@@ -306,6 +365,8 @@ def _summarise(
     losses_cp: list[int],
     phase_losses_cp: dict[str, list[int]],
     player_color: chess.Color,
+    player_pov_eval_before_cp: list[int],
+    player_pov_eval_after_cp: list[int],
 ) -> AccuracyAnalysis:
     """Reduce per-move CP losses to accuracy + phase-keyed weakness rates.
 
@@ -328,6 +389,8 @@ def _summarise(
             moves_analyzed=0,
             player_color=player_color,
             losses_cp=(),
+            player_pov_eval_before_cp=(),
+            player_pov_eval_after_cp=(),
             source="fallback",
         )
 
@@ -379,5 +442,7 @@ def _summarise(
         moves_analyzed=n,
         player_color=player_color,
         losses_cp=tuple(losses_cp),
+        player_pov_eval_before_cp=tuple(player_pov_eval_before_cp),
+        player_pov_eval_after_cp=tuple(player_pov_eval_after_cp),
         source="engine",
     )

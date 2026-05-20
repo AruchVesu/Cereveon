@@ -645,6 +645,8 @@ def finish_game(
             mistake = find_first_mistake(
                 pgn_text=req.pgn,
                 losses_cp=accuracy_analysis.losses_cp,
+                player_pov_eval_before_cp=accuracy_analysis.player_pov_eval_before_cp,
+                player_pov_eval_after_cp=accuracy_analysis.player_pov_eval_after_cp,
                 player_color=accuracy_analysis.player_color,
             )
             if mistake is not None:
