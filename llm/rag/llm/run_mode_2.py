@@ -3,12 +3,52 @@ from llm.rag.validators.mode_2_structure import validate_mode_2_structure
 from llm.rag.validators.mode_2_semantic import Mode2Violation, validate_mode_2_semantic
 from llm.rag.contracts.validate_output import validate_output
 from llm.rag.validators.sanitize import mask_chess_notation
+from llm.rag.validators._rules import (
+    ADVISORY_KEYWORDS,
+    ENGINE_LEXICAL_PHRASES,
+    MATE_CLAIM_KEYWORDS,
+    STRUCTURAL_KEYWORDS,
+)
 from llm.rag.llm.config import MAX_MODE_2_RETRIES
 from llm.rag.llm.fake import FakeLLM
 import re
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# Pre-compiled regexes built from the canonical keyword sets in
+# ``_rules.py``.  Centralising the construction here means a change to
+# the keyword set propagates everywhere: the validator surface (already
+# consuming _rules.py directly) AND the repair-loop sanitization
+# (consuming via these regex objects).
+#
+# Pre-2026-05-20, the repair loop open-coded these alternation regexes
+# six times; that drift caused the latent over-rejection where the
+# aggressive path kept stripping ``should`` from LLM output even after
+# PR #170 retired ``\bshould\b`` from SPECULATIVE_PATTERNS.  Pinned by
+# ``test_validator_taxonomy_invariants``.
+_ADVISORY_RE = re.compile(
+    r"\b(" + "|".join(ADVISORY_KEYWORDS) + r")\b",
+    re.IGNORECASE,
+)
+_MATE_CLAIM_RE = re.compile(
+    r"(?i)\b(checkmate|forced mate)\b",
+)
+_MATE_IN_N_RE = re.compile(
+    r"(?i)\bmate in \d+\b",
+)
+# The engine-phrase regex strips a *subset* of ENGINE_LEXICAL_PHRASES
+# from candidate text.  ``best move`` is omitted here because it is
+# already covered by ``_ADVISORY_RE`` running earlier on the same
+# string in the aggressive path.
+_ENGINE_PHRASES_FOR_STRIP: tuple[str, ...] = tuple(
+    p for p in ENGINE_LEXICAL_PHRASES if p != "best move"
+)
+_ENGINE_PHRASE_RE = re.compile(
+    r"\b(" + "|".join(re.escape(p) for p in _ENGINE_PHRASES_FOR_STRIP) + r")\b",
+    re.IGNORECASE,
+)
 
 
 def _extract_pattern_from_error(err: AssertionError) -> str:
@@ -27,16 +67,7 @@ def _extract_pattern_from_error(err: AssertionError) -> str:
 def _is_structural_pattern(pattern: str) -> bool:
     if not pattern:
         return False
-    structural_indicators = [
-        "recommended move",
-        "example move",
-        "plan",
-        "white can",
-        "black can",
-        "if it",
-        "consider",
-    ]
-    return any(ind in pattern for ind in structural_indicators)
+    return any(ind in pattern for ind in STRUCTURAL_KEYWORDS)
 
 
 def _validate_all(text: str, case_type: str, engine_signal: dict) -> None:
@@ -141,8 +172,8 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
         # Helper sanitization and rewrite utilities
         def text_sanitize(t: str) -> str:
             s = mask_chess_notation(t)
-            s = re.sub(r"(?i)\b(checkmate|forced mate)\b", "decisive advantage", s)
-            s = re.sub(r"(?i)\bmate in \d+\b", "decisive advantage", s)
+            s = _MATE_CLAIM_RE.sub("decisive advantage", s)
+            s = _MATE_IN_N_RE.sub("decisive advantage", s)
             return s
 
         def rewrite_remove_notation(t: str) -> str:
@@ -153,8 +184,9 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
             )
 
         def rewrite_remove_advisory(t: str) -> str:
+            advisory_examples = ", ".join(f"'{k}'" for k in ADVISORY_KEYWORDS)
             return model_rewrite(
-                "Remove ALL advisory or prescriptive language (words like 'should', 'must', 'needs to', 'best move'). Do NOT add new information.",
+                f"Remove ALL advisory or prescriptive language (words like {advisory_examples}). Do NOT add new information.",
                 t,
             )
 
@@ -165,8 +197,10 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
             )
 
         def text_remove_advisory(t: str) -> str:
-            # Remove advisory/prescriptive trigger words conservatively
-            s = re.sub(r"(?i)\b(should|must|needs to|best move)\b", "", t)
+            # Remove advisory/prescriptive trigger words conservatively.
+            # ``should`` was retired from ADVISORY_KEYWORDS in PR #170
+            # (2026-05-16); see _rules.DUAL_USE_TOKENS["should"].
+            s = _ADVISORY_RE.sub("", t)
             # collapse multiple spaces and tidy commas
             s = re.sub(r"\s+", " ", s).strip()
             return s
@@ -188,16 +222,22 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
         # try an immediate deterministic sanitization. Also handle forbidden phrase failures
         # that may prevent pattern extraction (validate_output may raise first).
         err_text = str(err).lower()
+        # ``re.search`` form matches the *substring* keywords with word
+        # boundaries — same membership semantics as ``in pattern`` for
+        # the bare keyword set, but applied to free text.
+        _mate_kw_re = re.compile(
+            r"(?i)\b(" + "|".join(re.escape(k) for k in MATE_CLAIM_KEYWORDS) + r")\b"
+        )
 
         if (
-            (pattern and any(k in pattern for k in ["checkmate", "mate in", "forced mate"]))
-            or re.search(r"(?i)\b(checkmate|mate in|forced mate)\b", output)
-            or re.search(r"(?i)\b(checkmate|mate in|forced mate)\b", err_text)
+            (pattern and any(k in pattern for k in MATE_CLAIM_KEYWORDS))
+            or _mate_kw_re.search(output)
+            or _mate_kw_re.search(err_text)
         ):
             logger.debug("run_mode_2: attempting quick mate sanitization")
             quick = mask_chess_notation(output)
-            quick = re.sub(r"(?i)\b(checkmate|forced mate)\b", "decisive advantage", quick)
-            quick = re.sub(r"(?i)\bmate in \d+\b", "decisive advantage", quick)
+            quick = _MATE_CLAIM_RE.sub("decisive advantage", quick)
+            quick = _MATE_IN_N_RE.sub("decisive advantage", quick)
             try:
                 _validate_all(quick)
                 logger.debug("run_mode_2: quick mate sanitization succeeded")
@@ -213,8 +253,8 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
             quick2 = mask_chess_notation(output)
             quick2 = re.sub(r"(?i)\bstockfish\b", "", quick2)
             quick2 = re.sub(r"(?i)\bbest move\b", "", quick2)
-            quick2 = re.sub(r"(?i)\b(checkmate|forced mate)\b", "decisive advantage", quick2)
-            quick2 = re.sub(r"(?i)\bmate in \d+\b", "decisive advantage", quick2)
+            quick2 = _MATE_CLAIM_RE.sub("decisive advantage", quick2)
+            quick2 = _MATE_IN_N_RE.sub("decisive advantage", quick2)
             quick2 = re.sub(r"\s+", " ", quick2).strip()
             try:
                 _validate_all(quick2)
@@ -234,8 +274,12 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
             pattern = _extract_pattern_from_error(last_err)
             logger.debug("run_mode_2: attempt=%s, pattern=%s", attempts, pattern)
 
-            # If advisory language flagged, try advisory rewrite first
-            if pattern and any(k in pattern for k in ["should", "must", "needs to", "best move"]):
+            # If advisory language flagged, try advisory rewrite first.
+            # ``should`` is no longer in ADVISORY_KEYWORDS (PR #170,
+            # 2026-05-16) — if a validator reports a pattern containing
+            # ``should``, it's a different ADVISORY trigger (must, needs
+            # to, best move) co-occurring with it.
+            if pattern and any(k in pattern for k in ADVISORY_KEYWORDS):
                 # 1) Try LLM advisory-only rewrite
                 try:
                     candidate = rewrite_remove_advisory(candidate)
@@ -255,16 +299,7 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
                     continue
 
             # If structural violation flagged, try structure rewrite then deterministic removal
-            structural_keywords = [
-                "plan",
-                "recommended move",
-                "example move",
-                "white can",
-                "black can",
-                "if it",
-                "consider",
-            ]
-            if pattern and any(k in pattern for k in structural_keywords):
+            if pattern and any(k in pattern for k in STRUCTURAL_KEYWORDS):
                 try:
                     candidate = rewrite_remove_structure(candidate)
                     _validate_all(candidate)
@@ -291,7 +326,7 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
                     continue
 
             # If mate claims flagged, try mate-only rewrite
-            if pattern and any(k in pattern for k in ["checkmate", "mate in", "forced mate"]):
+            if pattern and any(k in pattern for k in MATE_CLAIM_KEYWORDS):
                 try:
                     candidate = rewrite_remove_mate(candidate)
                     _validate_all(candidate)
@@ -319,13 +354,21 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
                 last_err = err2
                 continue
 
-        # Final aggressive sanitization attempt before giving up
+        # Final aggressive sanitization attempt before giving up.
+        # Notes on what is and isn't stripped:
+        #   * Mate claims are softened to "decisive advantage".
+        #   * ``ADVISORY_KEYWORDS`` are replaced with ``[REDACTED]`` —
+        #     ``should`` is NOT in this set (PR #170 retired it because
+        #     coaching imperative ≠ speculative; stripping it here was
+        #     the latent over-rejection the centralisation closes).
+        #   * Engine vocabulary is fully removed.
         aggressive = mask_chess_notation(candidate)
-        aggressive = re.sub(r"(?i)\b(checkmate|forced mate)\b", "decisive advantage", aggressive)
-        aggressive = re.sub(r"(?i)\bmate in \d+\b", "decisive advantage", aggressive)
-        aggressive = re.sub(r"(?i)\b(should|must|needs to|best move)\b", "[REDACTED]", aggressive)
-        # Remove any remaining forbidden phrases to maximize chance of passing validators
-        aggressive = re.sub(r"(?i)\b(stockfish|engine|depth|calculate|variation)\b", "", aggressive)
+        aggressive = _MATE_CLAIM_RE.sub("decisive advantage", aggressive)
+        aggressive = _MATE_IN_N_RE.sub("decisive advantage", aggressive)
+        aggressive = _ADVISORY_RE.sub("[REDACTED]", aggressive)
+        # Remove any remaining forbidden engine phrases to maximise the
+        # chance of passing validators on the last attempt.
+        aggressive = _ENGINE_PHRASE_RE.sub("", aggressive)
         aggressive = re.sub(r"\s+", " ", aggressive).strip()
 
         try:
