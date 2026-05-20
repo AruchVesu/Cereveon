@@ -203,11 +203,27 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
         /**
          * Map a raw [learningStatus] string to a user-visible indicator label.
          *
-         *  - "safe_mode" → "⏸ Tracking paused"  (SECA SAFE_MODE active)
-         *  - any other non-empty value → "✓ Progress saved"
+         * Currently every status value resolves to "✓ Progress saved".  The
+         * server hard-codes `learning_result = {"status": "safe_mode"}` on
+         * every `/game/finish` response (see `llm/seca/events/router.py` —
+         * the pre-PR-20 `else` branch was unreachable and got retired), so
+         * the only status the Android client has ever seen in production is
+         * `safe_mode`.  Earlier copy split that case off as
+         * "⏸ Tracking paused", which read to users as a transient outage —
+         * but their game IS saved (events table), their rating IS updated
+         * (Player.rating), their accuracy IS measured (engine recompute),
+         * and their coaching profile IS updated (SkillUpdater).  What's
+         * actually "paused" is the bandit's online-learning loop, which is
+         * permanently off in production by Project Rule 3 / SAFE_MODE — a
+         * detail invisible to the user.
+         *
+         * The when-block scaffold is kept so a future non-safe-mode
+         * deployment (research / staging with `SECA_SAFE_MODE=false`) can
+         * branch the label without re-introducing the misleading "paused"
+         * wording on the prod path.
          */
         fun learningStatusLabel(status: String): String = when (status.lowercase()) {
-            "safe_mode" -> "⏸ Tracking paused"
+            "safe_mode" -> "✓ Progress saved"
             else        -> "✓ Progress saved"
         }
     }

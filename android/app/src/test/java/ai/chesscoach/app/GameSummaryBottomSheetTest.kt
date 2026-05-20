@@ -35,10 +35,23 @@ import org.junit.Test
  * 18.  BUNDLE_ARGS_NULL_COACH_ACTION:    GameFinishResponse with null weakness/reason doesn't crash.
  * 19.  BUNDLE_ARGS_BLANK_DESCRIPTION:    coachContent description can be empty.
  * 20.  BUNDLE_FULL_RESPONSE_PARSES:      Full GameFinishResponse produces expected formatted strings.
- * 21.  STATUS_SAFE_MODE:                learningStatusLabel "safe_mode" → "⏸ Tracking paused".
+ * 21.  STATUS_SAFE_MODE:                learningStatusLabel "safe_mode" → "✓ Progress saved".
+ *                                        (Collapsed from "⏸ Tracking paused" — see helper KDoc:
+ *                                        the prod server hard-codes status="safe_mode", so the
+ *                                        old branch read to users as a transient outage even
+ *                                        though their game / rating / coaching profile WERE all
+ *                                        being saved.  The "paused" RL detail is invisible to
+ *                                        the user and shouldn't surface as UI copy.)
  * 22.  STATUS_STORED:                   learningStatusLabel "stored" → "✓ Progress saved".
  * 23.  STATUS_OTHER:                    learningStatusLabel any other value → "✓ Progress saved".
- * 24.  STATUS_CASE_INSENSITIVE:         learningStatusLabel "SAFE_MODE" treated same as "safe_mode".
+ * 24.  STATUS_CASE_INSENSITIVE:         learningStatusLabel "SAFE_MODE" treated same as
+ *                                        "safe_mode" — both resolve to "✓ Progress saved".
+ *
+ * RETIRED: SAFE_MODE_BADGE_DISTINCT (asserted safe_mode and stored produce DIFFERENT labels).
+ *          Invariant inverted by design: post-collapse, safe_mode and stored produce the SAME
+ *          label.  Replaced by SAFE_MODE_BADGE_COLLAPSED below, which positively pins the new
+ *          intent so a future reviewer can't accidentally re-split the labels without breaking
+ *          a green test.
  */
 class GameSummaryBottomSheetTest {
 
@@ -211,8 +224,13 @@ class GameSummaryBottomSheetTest {
     // ------------------------------------------------------------------
 
     @Test
-    fun `STATUS_SAFE_MODE - safe_mode returns tracking paused label`() {
-        assertEquals("⏸ Tracking paused", GameSummaryBottomSheet.learningStatusLabel("safe_mode"))
+    fun `STATUS_SAFE_MODE - safe_mode now returns the friendly progress-saved label`() {
+        // Collapsed from "⏸ Tracking paused".  The user's game IS saved
+        // (events table), their rating IS updated (Player.rating), their
+        // coaching profile IS updated (SkillUpdater); only the bandit's
+        // online-learning loop is "paused", and that detail is invisible
+        // to the user.  Surfacing it as "Tracking paused" was misleading.
+        assertEquals("✓ Progress saved", GameSummaryBottomSheet.learningStatusLabel("safe_mode"))
     }
 
     // ------------------------------------------------------------------
@@ -248,8 +266,13 @@ class GameSummaryBottomSheetTest {
 
     @Test
     fun `STATUS_CASE_INSENSITIVE - SAFE_MODE uppercase treated same as safe_mode`() {
-        assertEquals("⏸ Tracking paused", GameSummaryBottomSheet.learningStatusLabel("SAFE_MODE"))
-        assertEquals("⏸ Tracking paused", GameSummaryBottomSheet.learningStatusLabel("Safe_Mode"))
+        // Post-collapse, every casing variant resolves to the same friendly
+        // label (just like every other status string today).  The
+        // lowercase()/when scaffold is preserved so a future non-safe-mode
+        // deployment can branch without re-introducing the misleading
+        // "paused" wording on the prod path.
+        assertEquals("✓ Progress saved", GameSummaryBottomSheet.learningStatusLabel("SAFE_MODE"))
+        assertEquals("✓ Progress saved", GameSummaryBottomSheet.learningStatusLabel("Safe_Mode"))
     }
 
     // ------------------------------------------------------------------
@@ -262,40 +285,53 @@ class GameSummaryBottomSheetTest {
     // ------------------------------------------------------------------
 
     @Test
-    fun `SAFE_MODE_RESPONSE_LABEL - GameFinishResponse with safe_mode produces tracking paused label`() {
+    fun `SAFE_MODE_RESPONSE_LABEL - GameFinishResponse with safe_mode produces friendly progress-saved label`() {
         // Simulate the exact value that learningStatus carries when the backend
-        // returns {"learning": {"status": "safe_mode"}} (SAFE_MODE = True).
+        // returns {"learning": {"status": "safe_mode"}} (the only thing prod
+        // ever sends — see llm/seca/events/router.py, ``learning_result =
+        // {"status": "safe_mode"}`` hard-code).  Post-collapse, that flows
+        // through to the friendly "✓ Progress saved" copy.
         val response = makeResponse()   // learningStatus is null in helper by default
         val statusFromBackend = "safe_mode"
         assertEquals(
-            "⏸ Tracking paused",
+            "✓ Progress saved",
             GameSummaryBottomSheet.learningStatusLabel(statusFromBackend),
         )
     }
 
     @Test
-    fun `SAFE_MODE_BADGE_DISTINCT - safe_mode label is distinct from stored label`() {
+    fun `SAFE_MODE_BADGE_COLLAPSED - safe_mode and stored produce the SAME label by design`() {
+        // Inverse of the retired SAFE_MODE_BADGE_DISTINCT pin.  The two
+        // labels USED to differ ("⏸ Tracking paused" vs "✓ Progress
+        // saved"), which read to users as "your data isn't being saved"
+        // even though it was.  Post-collapse they're identical; this
+        // test positively pins that intent so a reviewer can't
+        // accidentally re-split them in a future refactor without
+        // breaking a green test.
         val safeLabel   = GameSummaryBottomSheet.learningStatusLabel("safe_mode")
         val storedLabel = GameSummaryBottomSheet.learningStatusLabel("stored")
-        assertNotEquals(
-            "safe_mode and stored must produce different labels",
+        assertEquals(
+            "safe_mode and stored must produce the same user-facing label",
             safeLabel,
             storedLabel,
         )
     }
 
     @Test
-    fun `SAFE_MODE_FULL_RESPONSE - response with safe_mode learningStatus maps through label correctly`() {
-        // Full pipeline: response field → learningStatusLabel → display string.
+    fun `SAFE_MODE_FULL_RESPONSE - response with safe_mode learningStatus maps to friendly copy without paused wording`() {
+        // Full pipeline: response field → learningStatusLabel → display
+        // string.  Inverse pin from the retired version: ensure the
+        // label NO LONGER mentions "paused" (the misleading wording)
+        // AND positively contains the friendly "Progress saved" copy.
         val learningStatus = "safe_mode"
         val label = GameSummaryBottomSheet.learningStatusLabel(learningStatus)
-        assertTrue(
-            "Label for safe_mode must contain 'paused', got: $label",
+        assertFalse(
+            "Label for safe_mode must NOT contain 'paused' (collapsed copy), got: $label",
             label.contains("paused", ignoreCase = true),
         )
-        assertFalse(
-            "Label for safe_mode must NOT contain 'saved' (that is the stored label), got: $label",
-            label.contains("saved", ignoreCase = true),
+        assertTrue(
+            "Label for safe_mode MUST contain 'Progress saved' (collapsed copy), got: $label",
+            label.contains("Progress saved"),
         )
     }
 }
