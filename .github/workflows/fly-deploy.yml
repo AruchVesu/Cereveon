@@ -195,7 +195,19 @@ jobs:
           pip install pip-audit==2.8.0
 
       - name: Audit runtime dependencies
-        run: python -m pip_audit -r llm/requirements.txt --strict --progress-spinner off
+        # PYSEC-2025-183 / CVE-2025-45768 is a DISPUTED advisory against
+        # pyjwt: it flags "weak encryption", but the upstream maintainer
+        # rejects the report because key length is application-controlled
+        # — see the NOTE field at
+        # https://api.osv.dev/v1/vulns/PYSEC-2025-183.  Our app already
+        # enforces SECRET_KEY length >= 32 chars in prod (validated at
+        # module load in llm/seca/auth/tokens.py; documented in
+        # .env.example and docs/THREAT_MODEL.md §T2), which is the
+        # strong-key property the advisory complains about.  No upstream
+        # fix version exists and one is unlikely to ship.  Revisit if
+        # pyjwt ever releases a version that explicitly addresses the
+        # advisory, or if our SECRET_KEY guarantees change.
+        run: python -m pip_audit -r llm/requirements.txt --strict --ignore-vuln PYSEC-2025-183 --progress-spinner off
 
       - name: Audit CI/toolchain dependencies
         run: python -m pip_audit -r llm/requirements-ci.txt --strict --progress-spinner off

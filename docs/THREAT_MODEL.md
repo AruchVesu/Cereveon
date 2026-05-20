@@ -154,6 +154,19 @@ asymmetric-signing property from "HMAC secret" alone. Symmetric is
 the current posture and the cost of an env-read disclosure is
 "forge tokens at will until manual rotation."
 
+CI-suppression note (PYSEC-2025-183 / CVE-2025-45768): pip-audit
+suppresses this advisory against pyjwt via `--ignore-vuln` in
+`.github/workflows/fly-deploy.yml` (Python dependency audit step).
+The advisory is **disputed by the upstream pyjwt maintainer** — see
+the NOTE field at https://api.osv.dev/v1/vulns/PYSEC-2025-183 — on
+the grounds that key length is application-controlled, not a library
+defect. Our app already enforces `SECRET_KEY` length `>= 32` chars
+at module load in `llm/seca/auth/tokens.py` (also documented in
+`.env.example`), which is the strong-key property the advisory
+complains about. No upstream fix version exists. Revisit the
+suppression if pyjwt ever ships a release that explicitly addresses
+the advisory, or if our SECRET_KEY-length guarantees change.
+
 ### T3 — Engine-pool DoS (A1, A2)
 
 A player floods `/live/move` (the surviving engine-driven coaching
