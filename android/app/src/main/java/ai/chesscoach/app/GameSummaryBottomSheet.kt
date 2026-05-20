@@ -98,9 +98,22 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
                 // Phase 3 — pass the biggest_mistake DTO through as a
                 // JSON string so the bundle stays primitive-only.
                 // Decoded back into a [BiggestMistakeDto] in
-                // onViewCreated when the card is wired up.
-                response.biggestMistake?.let {
-                    putString(ARG_BIGGEST_MISTAKE_JSON, ApiJson.encodeToString(it))
+                // onViewCreated when the card is wired up.  Encoding
+                // wrapped defensively: a kotlinx-serialization
+                // hiccup must never block the post-game sheet from
+                // appearing.  If the encode throws, the bundle just
+                // doesn't carry the field and the sheet renders
+                // without the replay CTA.
+                try {
+                    response.biggestMistake?.let {
+                        putString(ARG_BIGGEST_MISTAKE_JSON, ApiJson.encodeToString(it))
+                    }
+                } catch (e: Throwable) {
+                    android.util.Log.w(
+                        "MISTAKE_REPLAY",
+                        "Failed to encode biggest_mistake; sheet will show without replay CTA",
+                        e,
+                    )
                 }
             }
         }
@@ -261,11 +274,21 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
         // When the /game/finish response carried a non-null
         // ``biggest_mistake``, surface a "Replay your mistake" CTA above
         // the curriculum training card.  Tap → launches
-        // MistakeReplayBottomSheet preloaded with the worst-loss position
-        // and the move the user actually played.  Falls back gracefully
-        // (card stays gone, sheet doesn't launch) when the JSON arg is
-        // missing or malformed — neither path 500s the post-game flow.
-        wireMistakeReplayCard(view, args.getString(ARG_BIGGEST_MISTAKE_JSON))
+        // MistakeReplayBottomSheet preloaded with the first-mistake
+        // position (the player's first move whose centipawn loss
+        // cleared the server-side 150 cp threshold) and the move the
+        // user actually played.  Falls back gracefully (card stays
+        // gone, sheet doesn't launch) when the JSON arg is missing or
+        // malformed — neither path 500s the post-game flow.
+        try {
+            wireMistakeReplayCard(view, args.getString(ARG_BIGGEST_MISTAKE_JSON))
+        } catch (e: Throwable) {
+            android.util.Log.w(
+                "MISTAKE_REPLAY",
+                "wireMistakeReplayCard failed; card will stay hidden",
+                e,
+            )
+        }
 
         // ── P3-A: payload detail section (DRILL / PUZZLE only) ────────────────
         val layoutPayload = view.findViewById<LinearLayout>(R.id.layoutPayload)
