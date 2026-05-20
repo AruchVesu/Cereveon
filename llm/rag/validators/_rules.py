@@ -29,6 +29,32 @@ and is intentionally NOT migrated here: its concerns (PII / identity /
 prompt-leak / bypass / harmful) are non-chess and its categories are
 already named + bundled in that module.
 
+Repair-loop keyword constants
+-----------------------------
+The bottom half of this module exports three bare-string tuples used
+by ``llm.rag.llm.run_mode_2``'s repair loop:
+
+  MATE_CLAIM_KEYWORDS    bare form of MATE_CLAIM_PATTERNS
+  ADVISORY_KEYWORDS      advisory tokens that the repair loop strips
+  STRUCTURAL_KEYWORDS    bare form of MOVE_ADVISORY_PATTERNS
+
+Pre-2026-05-20, these lists were open-coded six times across
+``run_mode_2.py``.  A retirement at the validator layer (PR #170
+retired ``\\bshould\\b`` from SPECULATIVE_PATTERNS) did not propagate
+to the repair loop, so the loop kept stripping the retired token
+from LLM output — an over-rejection that defeated the validator
+change.  Centralising the constants here closes that drift class.
+
+DUAL_USE_TOKENS
+---------------
+``DUAL_USE_TOKENS`` is the registry of words whose lexical / semantic
+treatment is *deliberately* lopsided — one surface accepts, the
+other rejects, or a compound is forbidden while the bare word is
+required.  Each entry names which surface enforces the token, the
+PR that established the asymmetry, and the rationale.  When a future
+contributor reaches for "just add the regex", they should consult
+this registry first.
+
 The underscore-prefixed module name marks this as the internal source of
 truth: callsites and tests should import the public constants from the
 validator modules, not from here.  Direct imports work but are not part
@@ -207,3 +233,133 @@ TACTICAL_NOUN_WORDS: tuple[str, ...] = (
     "attack",
     "threat",
 )
+
+
+# ---------------------------------------------------------------------------
+# Repair-loop keyword sets (consumed by ``llm.rag.llm.run_mode_2``)
+# ---------------------------------------------------------------------------
+# These are NOT validator rules — they are the bare-string keyword sets
+# the repair loop uses to (a) classify which validator complaint a given
+# error message refers to, and (b) sanitize candidate text before
+# re-running validators.  Each set has a corresponding regex form above
+# (or is derived from one); the bare-string form is what ``run_mode_2``
+# needs to splice into its ``re.sub`` calls and ``any(k in p for k in
+# ...)`` membership checks.
+#
+# Pinned by ``test_validator_taxonomy_invariants`` (drift guard).
+
+# Bare form of MATE_CLAIM_PATTERNS, minus the ``\b...\b`` and the
+# ``mate in \d+`` variable-length form (the repair loop handles digits
+# separately in its mate-sanitization regex).
+MATE_CLAIM_KEYWORDS: tuple[str, ...] = (
+    "checkmate",
+    "mate in",
+    "forced mate",
+)
+
+# Advisory / prescriptive vocabulary the repair loop strips when the
+# validator complained about advisory language.  ``should`` is
+# DELIBERATELY ABSENT here — see DUAL_USE_TOKENS["should"] below for
+# the rationale.  Pre-2026-05-20, this list contained ``should`` and
+# the repair loop's aggressive sanitization replaced it with
+# ``[REDACTED]``, which silently undid PR #170's intent (PR #170
+# retired ``\bshould\b`` from SPECULATIVE_PATTERNS because it
+# over-rejected imperative coaching, but ``run_mode_2`` kept stripping
+# it from LLM output).
+ADVISORY_KEYWORDS: tuple[str, ...] = (
+    "must",
+    "needs to",
+    "best move",
+)
+
+# Bare form of MOVE_ADVISORY_PATTERNS (Row 3) without the ``\b...\b``
+# wrappers.  Order matches MOVE_ADVISORY_PATTERNS so a side-by-side
+# review is unambiguous.
+STRUCTURAL_KEYWORDS: tuple[str, ...] = (
+    "recommended move",
+    "example move",
+    "plan",
+    "white can",
+    "black can",
+    "if it",
+    "consider",
+)
+
+
+# ---------------------------------------------------------------------------
+# Dual-use token registry
+# ---------------------------------------------------------------------------
+# Words whose lexical / semantic treatment is *deliberately* asymmetric.
+# Future contributors who reach for "just add a regex" for one of these
+# words should read the entry first.
+#
+# Each entry:
+#   enforced_at  — which surface enforces the token, or "none" if it
+#                  was retired and is now accept-only at every surface
+#   rationale    — why the asymmetry exists, in plain prose
+#   pr           — the PR that established the current state (or None
+#                  if the asymmetry predates the registry)
+#   date         — the date the asymmetry was established (yyyy-mm-dd)
+#
+# Pinned by ``test_validator_taxonomy_invariants`` — every entry must
+# have a passing-sample row in ``llm/rag/validators/_fixtures.py`` so
+# adding a token without a regression sample is loud at CI time.
+DUAL_USE_TOKENS: dict[str, dict[str, object]] = {
+    "should": {
+        "enforced_at": "none",
+        "rationale": (
+            "Imperative in coaching prose ('you should develop your knight'); "
+            "regex cannot distinguish from speculative ('White should likely "
+            "convert').  Speculative compounds remain caught via the other "
+            "patterns that match their hedging marker: 'should likely' → "
+            "\\blikely\\b, 'should consider' → \\bconsider\\b, 'I think you "
+            "should' → \\bI think\\b."
+        ),
+        "pr": 170,
+        "date": "2026-05-16",
+    },
+    "consider": {
+        "enforced_at": "lexical+structural",
+        "rationale": (
+            "Dual-use: coaching directive ('consider the open file') vs "
+            "advisory section header ('Consider trading queens:').  Enforced "
+            "at BOTH surfaces deliberately — the structural match catches the "
+            "section-header form (MOVE_ADVISORY_PATTERNS row 3); the lexical "
+            "match catches inline advisory phrasing (SPECULATIVE_PATTERNS "
+            "row 4).  An LLM that drops both surfaces' triggers has phrased "
+            "its coaching without prescriptive register."
+        ),
+        "pr": None,
+        "date": None,
+    },
+    "plan": {
+        "enforced_at": "structural",
+        "rationale": (
+            "Strategic noun ('White's plan involves piece activity') vs "
+            "advisory section header ('Plan: trade pieces and convert').  "
+            "Enforced at the structural surface only; a bare \\bplan\\b "
+            "in SPECULATIVE_PATTERNS would over-reject the strategic-noun "
+            "form.  The structural surface's MOVE_ADVISORY_PATTERNS row 3 "
+            "catches the header form, which is the actually-forbidden shape."
+        ),
+        "pr": None,
+        "date": None,
+    },
+    "forced": {
+        "enforced_at": "semantic-required",
+        "rationale": (
+            "Required by MATE_INEVITABILITY_SEMANTIC when "
+            "ESV.evaluation.type == 'mate'.  Distinct from the lexical "
+            "MATE_CLAIM_PATTERNS forbidden bigram '\\bforce(?:d)? mate\\b' — "
+            "bare 'forced' is accept-only; the bigram 'forced mate' is "
+            "the forbidden compound.  PR #167 (2026-05-15) traced the "
+            "lockout: the deterministic fallback wrote 'this is a forced "
+            "mate' thinking the bare 'forced' satisfied the semantic "
+            "require, not realising the bigram tripped the lexical reject.  "
+            "Pinned accept-carrier: 'Mate is inevitable' (uses the safer "
+            "MATE_INEVITABILITY_PHRASES vocabulary)."
+        ),
+        "pr": 167,
+        "date": "2026-05-15",
+    },
+}

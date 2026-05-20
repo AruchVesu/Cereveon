@@ -57,7 +57,8 @@ from __future__ import annotations
 
 import pytest
 
-from llm.rag.validators._rules import SPECULATIVE_PATTERNS
+from llm.rag.validators._fixtures import DUAL_USE_PASSING_SAMPLES
+from llm.rag.validators._rules import DUAL_USE_TOKENS, SPECULATIVE_PATTERNS
 from llm.rag.validators.mode_2_negative import validate_mode_2_negative
 
 
@@ -81,6 +82,25 @@ class TestShouldNotInSpeculativePatterns:
             "below for the inverse pin."
         )
 
+    def test_should_remains_documented_as_dual_use(self):
+        """The DUAL_USE_TOKENS registry MUST keep documenting why
+        ``should`` is accept-only.  If a future contributor removes
+        the registry entry, the rationale + PR reference disappear and
+        the next retirement candidate starts from zero context."""
+        assert "should" in DUAL_USE_TOKENS, (
+            "`should` is missing from DUAL_USE_TOKENS in _rules.py.  "
+            "Keep the registry entry alive — it carries the PR #170 "
+            "rationale that future contributors need before adding any "
+            "speculative-token regex."
+        )
+        entry = DUAL_USE_TOKENS["should"]
+        assert entry["enforced_at"] == "none", (
+            "DUAL_USE_TOKENS['should'] must record enforced_at='none' — "
+            "PR #170 retired the token from every surface.  If you are "
+            "re-introducing a `should` regex at any surface, also update "
+            "this registry entry with the new surface name."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Pin 2 — bare 'should' coaching passes
@@ -90,23 +110,14 @@ class TestShouldNotInSpeculativePatterns:
 class TestBareShouldCoachingAccepted:
     """Coaching sentences using bare ``should`` (imperative form) must
     pass ``validate_mode_2_negative`` — this is the high-bar pin that
-    re-introducing ``\\bshould\\b`` would break."""
+    re-introducing ``\\bshould\\b`` would break.
 
-    @pytest.mark.parametrize(
-        "phrase",
-        [
-            "You should develop your pieces toward the centre.",
-            "White should castle quickly to safeguard the king.",
-            "Black should activate the rook on the open file.",
-            "You should look at piece safety before committing.",
-            # Bare "should" embedded in a fuller coaching paragraph.
-            (
-                "The position is roughly equal in the opening. "
-                "You should focus on completing your development "
-                "before launching any pawn push."
-            ),
-        ],
-    )
+    Samples now sourced from
+    ``llm.rag.validators._fixtures.DUAL_USE_PASSING_SAMPLES['should']``
+    so a future retirement test can reuse the canonical list rather
+    than re-author it."""
+
+    @pytest.mark.parametrize("phrase", DUAL_USE_PASSING_SAMPLES["should"])
     def test_SHOULD_BARE_PASSES(self, phrase):
         # No exception → passes the negative gate.
         validate_mode_2_negative(phrase)
