@@ -167,7 +167,7 @@ def generate_plan(
             # IntegrityError implies a row exists; not finding one is
             # a real bug.  Loud signal.
             logger.error(
-                "study_plan IntegrityError but no row found for " "player_id=%s source_event_id=%s",
+                "study_plan IntegrityError but no row found for player_id=%s source_event_id=%s",
                 player_id,
                 source_event_id,
             )
@@ -222,7 +222,7 @@ def generate_plan_async(
         # logger anyway, and an unswallowed exception here would
         # poison the threadpool worker.
         logger.exception(
-            "study_plan generate_plan_async failed for " "player_id=%s source_event_id=%s",
+            "study_plan generate_plan_async failed for player_id=%s source_event_id=%s",
             player_id,
             source_event_id,
         )
