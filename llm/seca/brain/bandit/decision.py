@@ -45,6 +45,7 @@ by the time anyone enables it.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Sequence
 
 import numpy as np
@@ -53,6 +54,9 @@ from llm.seca.runtime.safe_mode import assert_safe
 from llm.seca.storage.repo import load_bandit_weights, save_bandit_weights
 
 assert_safe()
+
+
+logger = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------------
@@ -128,6 +132,15 @@ def select_action(
     Pure read (no DB write); deterministic given the stored weights
     + the input context.  Tied scores break by the order in
     [candidate_actions] — first-listed wins.
+
+    Emits one INFO log per call carrying the full per-action score
+    breakdown (exploit term + exploration bonus + total) under
+    ``extra["bandit_selection"]``.  Operators aggregating these logs
+    can answer "which action does the bandit prefer for which
+    contexts" and "how is the exploration bonus decaying over time as
+    A accumulates observations" without instrumentation-time code
+    changes — see [[project-bandit-observability]] for the dashboard
+    roadmap.
     """
     if not candidate_actions:
         raise ValueError("candidate_actions must not be empty")
@@ -135,14 +148,71 @@ def select_action(
     ctx = np.asarray(context, dtype=float).reshape(-1, 1)
     n_features = ctx.shape[0]
 
-    best_action = candidate_actions[0]
-    best_score = -1e18
+    # Compute per-action scores up front so the structured payload
+    # can carry the full landscape, not just the winner.  Score
+    # components (exploit / explore) are computed here too — replicated
+    # from ``_ucb_score`` because that helper returns only the total
+    # and we want both halves in the log for the exploration-decay
+    # dashboard.
+    per_action: dict[str, dict[str, float]] = {}
     for action in candidate_actions:
         A, b, a_alpha = _load_or_init(player_id, action, n_features, alpha)
-        score = _ucb_score(ctx, A, b, a_alpha)
-        if score > best_score:
-            best_score = score
+        A_inv = np.linalg.pinv(A)
+        theta_hat = A_inv @ b
+        exploit = float((theta_hat.T @ ctx).item())
+        explore = a_alpha * float(np.sqrt(max(0.0, (ctx.T @ A_inv @ ctx).item())))
+        per_action[action] = {
+            "exploit": exploit,
+            "explore": explore,
+            "total": exploit + explore,
+            "alpha": a_alpha,
+        }
+
+    # Pick the winner — first-listed on ties (preserves the existing
+    # SELECT_TIE_BREAK invariant pinned by test_bandit_decision).
+    best_action = candidate_actions[0]
+    best_score = per_action[best_action]["total"]
+    for action in candidate_actions:
+        if per_action[action]["total"] > best_score:
+            best_score = per_action[action]["total"]
             best_action = action
+
+    # Runner-up scoring — gives operators a regret-proxy signal: a
+    # narrow margin between #1 and #2 means the bandit is uncertain
+    # about its pick (high "missed opportunity" cost); a wide margin
+    # means it's confident.  When the candidate list has only one
+    # entry, runner-up fields are None.
+    runner_up_action: str | None = None
+    runner_up_score: float | None = None
+    margin: float | None = None
+    if len(candidate_actions) > 1:
+        runner_up_score = -1e18
+        for action in candidate_actions:
+            if action == best_action:
+                continue
+            if per_action[action]["total"] > runner_up_score:
+                runner_up_score = per_action[action]["total"]
+                runner_up_action = action
+        margin = best_score - runner_up_score
+
+    selection_payload = {
+        "player_id": player_id,
+        "candidate_actions": list(candidate_actions),
+        "n_features": n_features,
+        "scores": per_action,
+        "chosen_action": best_action,
+        "chosen_score": best_score,
+        "runner_up_action": runner_up_action,
+        "runner_up_score": runner_up_score,
+        "margin": margin,
+    }
+    logger.info(
+        "bandit select_action chosen=%s margin=%s",
+        best_action,
+        f"{margin:.4f}" if margin is not None else "n/a",
+        extra={"bandit_selection": selection_payload},
+    )
+
     return best_action
 
 
@@ -163,6 +233,13 @@ def record_observation(
     No gradient step, no optimiser state, no batched fit.  This is
     the canonical LinUCB observation operator and falls cleanly
     inside SECA v1's "lightweight decision-layer adaptation" envelope.
+
+    Emits one INFO log per call carrying the action + reward + post-
+    observation diagnostic state under ``extra["bandit_observation"]``.
+    Operators aggregating these can answer "what reward distribution
+    has each action seen so far" and "how many observations has each
+    (player, action) cell accumulated" — see
+    [[project-bandit-observability]].
     """
     ctx = np.asarray(context, dtype=float).reshape(-1, 1)
     n_features = ctx.shape[0]
@@ -180,6 +257,30 @@ def record_observation(
         A_json=A_json,
         b_json=b_json,
         alpha=a_alpha,
+    )
+
+    # Observation count proxy — A is identity-initialised on cold
+    # start, so trace(A) starts at n_features and grows by ||x||² with
+    # each observation.  (Not an integer count when contexts have
+    # mixed magnitude, but monotonically tracks "how warmed up is
+    # this cell".)  trace(b) is the bias-direction cumulative reward
+    # projection — useful as a signed "is this action net-positive
+    # for this player" indicator.
+    observation_payload = {
+        "player_id": player_id,
+        "action": action,
+        "reward": float(reward),
+        "n_features": n_features,
+        "alpha": a_alpha,
+        "context_l2_norm": float(np.linalg.norm(ctx)),
+        "trace_a_after": float(A.trace()),
+        "observation_count_proxy": float(A.trace() - n_features),
+    }
+    logger.info(
+        "bandit record_observation action=%s reward=%.4f",
+        action,
+        float(reward),
+        extra={"bandit_observation": observation_payload},
     )
 
 
