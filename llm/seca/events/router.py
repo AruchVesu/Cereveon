@@ -624,20 +624,25 @@ def finish_game(
         logger.exception("HistoricalAnalysisPipeline failed; recommendations omitted")
 
     # Mistake-replay extraction (Phase 3).  Cheap piggy-back on the
-    # accuracy recompute the engine pool already ran above — find the
-    # player's biggest centipawn loss, walk the PGN back to that
-    # position, and surface it on the response so the Android replay
-    # sheet can launch.  Skipped entirely when the recompute fell
-    # back to client values (analysis is None) or when the worst loss
-    # is below the mistake threshold; in both cases the response
+    # accuracy recompute the engine pool already ran above — walk the
+    # PGN to the player's FIRST move whose centipawn loss clears
+    # ``MIN_MISTAKE_LOSS_CP`` and surface it on the response so the
+    # Android replay sheet can launch.  Picks the first above-threshold
+    # loss (not the largest) so the user learns the originating
+    # mistake before its downstream cascade.  Skipped entirely when
+    # the recompute fell back to client values (analysis is None) or
+    # when no move clears the threshold; in both cases the response
     # carries ``biggest_mistake: null`` and the client doesn't show
-    # the replay CTA.
+    # the replay CTA.  The wire field name remains ``biggest_mistake``
+    # for backward compatibility with the Android decoder; see
+    # ``llm/seca/mistakes/detector.py`` module docstring for the
+    # rationale.
     biggest_mistake_field: dict | None = None
     if accuracy_analysis is not None:
         try:
-            from llm.seca.mistakes.detector import find_biggest_mistake
+            from llm.seca.mistakes.detector import find_first_mistake
 
-            mistake = find_biggest_mistake(
+            mistake = find_first_mistake(
                 pgn_text=req.pgn,
                 losses_cp=accuracy_analysis.losses_cp,
                 player_color=accuracy_analysis.player_color,
@@ -664,7 +669,7 @@ def finish_game(
             # extractor blows up on a malformed PGN that somehow
             # passed the accuracy recompute.
             logger.exception(
-                "biggest_mistake extraction failed for player=%s",
+                "first-mistake extraction failed for player=%s",
                 _safe_log(str(player.id)),
             )
 
@@ -688,10 +693,14 @@ def finish_game(
             "games_analyzed": analysis_games_analyzed,
             "recommendations": analysis_recommendations,
         },
-        # Always present on the wire — null when there's no mistake
-        # worth replaying or the recompute fell back.  The Android
-        # client checks ``biggest_mistake !== null`` to decide whether
-        # to show the "Replay your mistake" CTA on GameSummary.
+        # Always present on the wire — null when no player move
+        # cleared MIN_MISTAKE_LOSS_CP or the recompute fell back to
+        # client values.  Field name retained for backward compat with
+        # the Android decoder (``BiggestMistakeDto``); selection
+        # policy is "first above threshold", not "largest loss".  The
+        # Android client checks ``biggest_mistake !== null`` to decide
+        # whether to show the "Replay your mistake" CTA on
+        # GameSummary.
         "biggest_mistake": biggest_mistake_field,
     }
 

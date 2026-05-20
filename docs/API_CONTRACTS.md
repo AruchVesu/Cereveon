@@ -146,7 +146,7 @@ the surviving training-recommendation contract.
 | `coach_content.title` | `string` | Content title shown to player |
 | `coach_content.description` | `string` | Content description |
 | `coach_content.payload` | `object` | Type-specific content payload |
-| `biggest_mistake` | `object \| null` | The player's worst-loss move in this game, or `null` when (a) the engine recompute fell back to client values, or (b) no move clears `MIN_MISTAKE_LOSS_CP` (150 cp).  Drives the Android Phase-3 mistake-replay sheet. |
+| `biggest_mistake` | `object \| null` | The player's **first** move whose centipawn loss clears `MIN_MISTAKE_LOSS_CP` (150 cp), or `null` when (a) the engine recompute fell back to client values, or (b) no move clears the threshold.  Drives the Android Phase-3 mistake-replay sheet.  Selection policy is "first above threshold" (not "largest loss") so the player learns the originating mistake before its downstream cascade — the wire field name is retained from PR #192's original "biggest loss" picker for backward compatibility with the Android decoder. |
 | `biggest_mistake.fen` | `string` | FEN of the position **before** the bad move. |
 | `biggest_mistake.played_move` | `string` | UCI of the move the player actually played at that position. |
 | `biggest_mistake.move_number` | `int` | 1-indexed Nth player half-move (not Nth ply).  Used in the replay sheet header copy. |

@@ -138,7 +138,7 @@ TEST_TARGETS = [
     # + endpoint integration tests run in-memory SQLite against the
     # full SECA Base so every Phase-3 caller has the contract pinned.
     "llm/tests/test_training_solve.py",
-    # Mistake-replay (Phase 3): biggest-mistake extraction at
+    # Mistake-replay (Phase 3): first-mistake extraction at
     # /game/finish time + POST /training/verify-replay engine
     # verification.  Detector tests are pool-free; verifier tests
     # stand up a FakePool that returns rigged PovScore objects so
@@ -252,9 +252,9 @@ COVERAGE_TARGETS = [
     # listed above in TEST_TARGETS.
     "llm.seca.training.models",
     "llm.seca.training.router",
-    # Mistake-replay (Phase 3): detector picks the worst player move
-    # from losses_cp + PGN; verify runs the engine and answers
-    # is_correct.  Covered by test_mistake_detector.py and
+    # Mistake-replay (Phase 3): detector picks the FIRST above-threshold
+    # player move from losses_cp + PGN; verify runs the engine and
+    # answers is_correct.  Covered by test_mistake_detector.py and
     # test_verify_replay.py.
     "llm.seca.mistakes.detector",
     "llm.seca.mistakes.verify",

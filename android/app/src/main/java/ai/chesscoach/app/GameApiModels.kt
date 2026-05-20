@@ -330,19 +330,26 @@ data class LearningStatusDto(
 )
 
 /**
- * The biggest mistake the player made in this game.
+ * The first move in the game whose centipawn loss cleared the
+ * server-side mistake threshold (150 cp).
  *
  * Surfaced on the /game/finish response (Phase 3) so the Android
  * client can show a "Replay your mistake" CTA on the post-game sheet
  * and launch ``MistakeReplayBottomSheet`` with the position + the
- * move the player originally played.
+ * move the player originally played.  Server-side selection policy
+ * is "first above threshold" rather than "largest loss" so the user
+ * learns the originating mistake before its downstream cascade.
  *
  * Always present on the wire, but ``null`` when (a) the engine
  * recompute fell back to client values, or (b) no move clears the
  * server-side ``MIN_MISTAKE_LOSS_CP`` threshold (150 cp).  The
  * client just hides the CTA in those cases.
  *
- * Wire shape pinned by ``docs/API_CONTRACTS.md`` §3.
+ * The DTO is named ``BiggestMistakeDto`` and decodes the
+ * ``biggest_mistake`` wire field for backward compatibility with
+ * PR #192's original "biggest loss" picker; the selection semantics
+ * flipped to "first above threshold" without breaking the wire
+ * contract.  See ``docs/API_CONTRACTS.md`` §3.
  */
 @Serializable
 data class BiggestMistakeDto(

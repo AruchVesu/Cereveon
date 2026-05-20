@@ -1,23 +1,33 @@
-"""Pick the single biggest mistake out of a finished game.
+"""Pick the first mistake the player made in a finished game.
 
 Given the ``AccuracyAnalysis`` already produced at /game/finish time
 (which carries per-player-move centipawn-loss numbers in
-``losses_cp``), walk the PGN to find the position immediately before
-the worst-loss move.  Return a ``BiggestMistake`` describing:
+``losses_cp``), walk the PGN in move order and return the FIRST
+position whose loss clears ``MIN_MISTAKE_LOSS_CP``.  Return a
+``FirstMistake`` describing:
 
 * the FEN the player was looking at when they erred,
 * the move they actually played (UCI),
 * the move number they'll see in the replay sheet header,
 * the eval loss (centipawns).
 
-The detector intentionally does NOT compute the engine's preferred
-move here.  That comes later, on the verify path: the replay sheet
-shows the position + the user's bad move, lets them try a new one,
-and the ``POST /training/verify-replay`` endpoint compares the
-attempt against the engine's best move at that point.  Keeping the
-detector engine-call-free at /game/finish time means biggest-mistake
-extraction is essentially free piggy-backed on the accuracy recompute
-the route already runs.
+Pedagogical rationale for "first" rather than "largest"
+-------------------------------------------------------
+A losing game often contains a single originating blunder followed by
+several larger-centipawn-loss moves that are downstream symptoms — you
+hung a piece on move 14, then on move 22 you tried to save the
+position and gave up the exchange.  The 22-cp swing is bigger, but
+the 14-cp swing is the lesson.  Surfacing the first above-threshold
+loss teaches the user to avoid the root error before it cascades.
+
+This is also the reason the detector intentionally does NOT compute
+the engine's preferred move here.  That comes later, on the verify
+path: the replay sheet shows the position + the user's bad move, lets
+them try a new one, and the ``POST /training/verify-replay`` endpoint
+compares the attempt against the engine's best move at that point.
+Keeping the detector engine-call-free at /game/finish time means
+mistake extraction is essentially free piggy-backed on the accuracy
+recompute the route already runs.
 
 A "mistake" worth replaying is a loss >= ``MIN_MISTAKE_LOSS_CP``
 centipawns.  Smaller losses (inaccuracies) are not surfaced because
@@ -25,6 +35,16 @@ the replay UI's point is to teach the user a lesson on a clear
 blunder, not to second-guess a borderline move.  When no move clears
 the threshold (a clean game), the detector returns ``None`` and the
 caller omits the ``biggest_mistake`` field from the response.
+
+Wire-name note
+--------------
+The /game/finish response field is still ``biggest_mistake`` for
+backward compatibility with the Android client decoded shape.  The
+field name is a historical artifact of PR #192's original "pick the
+worst loss" picker; the wire contract was kept stable when the
+selection policy flipped to "first above threshold" so old client
+builds keep decoding.  Internal Python identifiers (``FirstMistake``,
+``find_first_mistake``) reflect the actual semantics.
 """
 
 from __future__ import annotations
@@ -48,8 +68,10 @@ MIN_MISTAKE_LOSS_CP: int = 150
 
 
 @dataclass(frozen=True)
-class BiggestMistake:
-    """One identified mistake-replay target."""
+class FirstMistake:
+    """One identified mistake-replay target — the player's first move
+    whose centipawn loss cleared ``MIN_MISTAKE_LOSS_CP`` in PGN order.
+    """
 
     fen_before: str
     """FEN of the position the player was looking at, BEFORE they made
@@ -76,12 +98,17 @@ class BiggestMistake:
     knows how big the hole was."""
 
 
-def find_biggest_mistake(  # pylint: disable=too-many-return-statements
+def find_first_mistake(
     pgn_text: str,
     losses_cp: tuple[int, ...] | list[int],
     player_color: chess.Color,
-) -> BiggestMistake | None:
-    """Return the worst mistake the player made in ``pgn_text``.
+) -> FirstMistake | None:
+    """Return the FIRST mistake the player made in ``pgn_text``.
+
+    Walks the PGN in move order and stops at the first player move
+    whose corresponding entry in ``losses_cp`` is at least
+    ``MIN_MISTAKE_LOSS_CP``.  Later, larger-loss moves are ignored
+    deliberately — see the module docstring for the pedagogical reason.
 
     Parameters
     ----------
@@ -96,34 +123,25 @@ def find_biggest_mistake(  # pylint: disable=too-many-return-statements
         on the player's ``i+1``-th half-move.
     player_color:
         Which side the analysis was attributed to.  Used to skip
-        opponent moves while walking the PGN to the i-th player move.
+        opponent moves while walking the PGN.
 
     Returns
     -------
-    ``BiggestMistake`` describing the worst player move, or ``None``
-    when the worst loss is below ``MIN_MISTAKE_LOSS_CP`` (i.e. the
-    game was clean enough that there's nothing to replay).
+    ``FirstMistake`` describing the first player move whose loss
+    clears the threshold, or ``None`` when no move clears it (a clean
+    game, an empty PGN, or losses_cp / PGN drift).
 
     Errors
     ------
     Malformed PGN or per-move losses that don't line up with the
     PGN's player-move count both return ``None`` rather than raising
-    — /game/finish must not 500 because the replay-extractor mis-
-    counted; the caller falls back to omitting the field.
+    — /game/finish must not 500 because the detector mis-counted; the
+    caller falls back to omitting the field.
     """
     if not losses_cp:
         return None
 
-    worst_loss = max(losses_cp)
-    if worst_loss < MIN_MISTAKE_LOSS_CP:
-        # Clean game.  Nothing worth a replay sheet.
-        return None
-
-    # Player-move index of the worst loss.  ``losses_cp.index(worst_loss)``
-    # picks the FIRST occurrence if a player blundered twice with the
-    # same magnitude — fine, the replay sheet handles one mistake per
-    # game in Phase 3.
-    worst_player_move_index = list(losses_cp).index(worst_loss)
+    losses_list = list(losses_cp)
 
     try:
         game = chess.pgn.read_game(io.StringIO(pgn_text))
@@ -140,18 +158,19 @@ def find_biggest_mistake(  # pylint: disable=too-many-return-statements
         side_to_move = board.turn
         is_player_move = side_to_move == player_color
 
-        if is_player_move and player_moves_seen == worst_player_move_index:
-            # ``board`` is the position the player faced; ``node.move``
-            # is what they played.  Capture both before mutating
-            # ``board`` (so we don't return a post-move FEN).
-            return BiggestMistake(
-                fen_before=board.fen(),
-                played_uci=node.move.uci(),
-                # 1-indexed for user-facing display.  ``worst_player_move_index``
-                # is 0-based.
-                move_number=worst_player_move_index + 1,
-                eval_loss_cp=int(worst_loss),
-            )
+        if is_player_move and player_moves_seen < len(losses_list):
+            loss = losses_list[player_moves_seen]
+            if loss >= MIN_MISTAKE_LOSS_CP:
+                # ``board`` is the position the player faced; ``node.move``
+                # is what they played.  Capture both before mutating
+                # ``board`` (so we don't return a post-move FEN).
+                return FirstMistake(
+                    fen_before=board.fen(),
+                    played_uci=node.move.uci(),
+                    # 1-indexed for user-facing display.
+                    move_number=player_moves_seen + 1,
+                    eval_loss_cp=int(loss),
+                )
 
         if is_player_move:
             player_moves_seen += 1
@@ -166,13 +185,20 @@ def find_biggest_mistake(  # pylint: disable=too-many-return-statements
             )
             return None
 
-    # Fell off the end without finding the worst-move ply.  Indicates
-    # losses_cp / PGN drift — log and return None so /game/finish stays
-    # green.
-    logger.warning(
-        "Mistake detector: losses_cp claimed %d player moves but PGN "
-        "yielded only %d; biggest_mistake omitted",
-        len(losses_cp),
-        player_moves_seen,
-    )
+    # Walked the entire PGN without finding a player move whose loss
+    # cleared the threshold.  Two reasons we land here:
+    #   1. Clean game — every player loss < MIN_MISTAKE_LOSS_CP.
+    #   2. losses_cp / PGN drift — losses_cp claimed more player
+    #      moves than the PGN actually contains, and the only
+    #      above-threshold entries lived past the PGN's last move.
+    # Both collapse to the same caller-visible answer ("no mistake
+    # worth replaying"); we log the drift case so an upstream
+    # AccuracyAnalysis bug surfaces in operator logs.
+    if len(losses_list) > player_moves_seen:
+        logger.warning(
+            "Mistake detector: losses_cp claimed %d player moves but PGN "
+            "yielded only %d; no in-range loss cleared threshold",
+            len(losses_list),
+            player_moves_seen,
+        )
     return None

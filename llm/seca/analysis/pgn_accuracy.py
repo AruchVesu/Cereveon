@@ -122,7 +122,7 @@ class AccuracyAnalysis:
     is the loss for the player's ``(i + 1)``-th half-move; opponent
     moves are not included.  Exposed so downstream consumers (e.g. the
     mistake-replay detector in ``llm.seca.mistakes.detector``) can
-    pick the worst-loss index without re-running the engine.  Stored
+    pick a mistake index without re-running the engine.  Stored
     as a tuple so the frozen dataclass remains hashable / immutable;
     callers that need a list can ``list(...)`` it."""
 

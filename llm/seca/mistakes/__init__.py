@@ -1,15 +1,18 @@
 """Mistake-replay surface.
 
-This package owns two pieces of the post-game "replay your worst move"
+This package owns two pieces of the post-game "replay your mistake"
 loop that drives Phase 3 of the training-XP rollout:
 
 * ``detector`` — given the AccuracyAnalysis already computed at
-  /game/finish time, find the position where the player made their
-  largest centipawn loss.  Returns a ``BiggestMistake`` dataclass with
-  the FEN before that move, the move the player actually played, and
-  the eval loss.  Costs at most one extra engine call (a re-analysis
-  of the mistake position to surface the engine's preferred move at
-  context-display time).
+  /game/finish time, walk the PGN and return the FIRST player move
+  whose centipawn loss clears ``MIN_MISTAKE_LOSS_CP`` (150 cp).
+  Returns a ``FirstMistake`` dataclass with the FEN before that move,
+  the move the player actually played, and the eval loss.  "First"
+  (rather than "largest") so the surfaced lesson is the originating
+  mistake, not a downstream symptom that's only big because the
+  position was already lost.  The /game/finish response wire field
+  is still named ``biggest_mistake`` — see the detector module
+  docstring for the backward-compat rationale.
 
 * ``verify`` + ``router`` — ``POST /training/verify-replay`` accepts
   ``{fen, move_uci}`` from the Android replay sheet, runs the Stockfish
