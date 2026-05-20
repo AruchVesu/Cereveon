@@ -51,3 +51,45 @@ class GameEvent(Base):
     __table_args__ = (
         UniqueConstraint("source", "external_game_id", name="uq_game_events_source_external_id"),
     )
+
+
+class GameFinishResult(Base):
+    """Persisted response payload for one ``POST /game/finish`` call.
+
+    Today this exists purely so ``GET /game/finish/{event_id}/status``
+    can return the same body the synchronous POST already returned —
+    useful for client retry recovery when a slow mobile network drops
+    the response after the server already committed.  Storing the
+    payload here also lays the foundation for a future PR that moves
+    the ~2 s Stockfish recompute off the POST hot path: the recompute
+    worker will write to this table instead, and the GET endpoint will
+    return ``{status: "pending"}`` until the row exists.
+
+    The ``response_json`` column stores the full assistant-visible
+    response body as a JSON string — same shape as what ``finish_game``
+    returns today.  Storing as JSON-in-TEXT (rather than Postgres
+    JSONB) keeps the schema portable to the SQLite test runs.  Row
+    width is bounded by the response shape (coach_content + analysis +
+    biggest_mistake), typically well under 4 KB.
+    """
+
+    __tablename__ = "game_finish_results"
+
+    event_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("game_events.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    # Full response payload from the POST /game/finish call that
+    # produced this event, encoded as JSON.  ``Text`` (not String)
+    # because the typical row is several KB; Postgres has no length
+    # limit on TEXT and SQLite treats both interchangeably.
+    response_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+
+    # Eager relationship for the rare admin/debug query that wants the
+    # GameEvent + its result together.  Routine reads go directly via
+    # ``event_id`` so we don't pay the join cost.
+    event: Mapped["GameEvent"] = relationship("GameEvent")

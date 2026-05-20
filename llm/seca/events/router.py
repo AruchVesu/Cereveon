@@ -25,7 +25,7 @@ from llm.seca.coach.live_controller import (
     PostGameCoachController,
     GameSummary,
 )
-from llm.seca.events.models import GameEvent
+from llm.seca.events.models import GameEvent, GameFinishResult
 from llm.seca.coach.executor import CoachContent, CoachExecutor
 from llm.seca.analysis.pgn_accuracy import (
     AccuracyAnalysis,
@@ -380,7 +380,7 @@ class GameFinishRequest(BaseModel):
             # check an attacker could plant a CRLF or null byte that surfaces
             # in downstream log/audit-tooling consumers.
             for ch in k:
-                if ord(ch) < 0x20 or ord(ch) == 0x7f:
+                if ord(ch) < 0x20 or ord(ch) == 0x7F:
                     raise ValueError("weakness key contains control characters")
             if not isinstance(val, (int, float)):
                 raise ValueError("weakness values must be numeric")
@@ -403,7 +403,7 @@ class GameFinishRequest(BaseModel):
         # same reason we reject them in weakness keys — they end up in
         # log lines consumers may parse line-by-line.
         for ch in v:
-            if ord(ch) < 0x20 or ord(ch) == 0x7f:
+            if ord(ch) < 0x20 or ord(ch) == 0x7F:
                 raise ValueError("game_id contains control characters")
         return v
 
@@ -458,6 +458,7 @@ def finish_game(
     if req.game_id:
         try:
             from llm.seca.storage.repo import finish_game as _repo_finish_game
+
             _repo_finish_game(req.game_id, req.result)
         except Exception:
             logger.exception(
@@ -587,9 +588,7 @@ def finish_game(
         coach_content = executor.execute(coach_action, game=game_summary)
     except Exception:
         logger.exception("Coach pipeline failed")
-        coach_action = CoachAction(
-            type="ERROR", weakness=None, reason="coach_pipeline_error"
-        )
+        coach_action = CoachAction(type="ERROR", weakness=None, reason="coach_pipeline_error")
         coach_content = CoachContent(
             title="Keep playing",
             description="No special training needed right now.",
@@ -661,9 +660,7 @@ def finish_game(
                     "played_move": mistake.played_uci,
                     "move_number": mistake.move_number,
                     "eval_loss_cp": mistake.eval_loss_cp,
-                    "source_ref": (
-                        f"event_{event.id}:move_{mistake.move_number}"
-                    ),
+                    "source_ref": (f"event_{event.id}:move_{mistake.move_number}"),
                 }
         except Exception:  # noqa: BLE001 — never 500 /game/finish
             # Detector is non-critical — log and continue without the
@@ -675,8 +672,20 @@ def finish_game(
                 _safe_log(str(player.id)),
             )
 
-    return {
+    response = {
         "status": "stored",
+        # ``event_id`` exposes the server-generated GameEvent.id on the
+        # wire so clients can fetch the same payload via
+        # ``GET /game/finish/{event_id}/status``.  Useful today for
+        # retry-after-network-drop recovery (the GET endpoint reads
+        # from the persisted ``game_finish_results`` row); foundation
+        # for the future async-recompute shape where POST returns
+        # immediately and GET polls until the background task lands
+        # the result.  Distinct from the optional client-supplied
+        # ``game_id`` (which references the ``games`` row from
+        # /game/start) — ``event_id`` always references this
+        # particular finish call's GameEvent.
+        "event_id": str(event.id),
         "new_rating": rating_after,
         "confidence": confidence_after,
         "learning": learning_result,
@@ -706,6 +715,121 @@ def finish_game(
         "biggest_mistake": biggest_mistake_field,
     }
 
+    # Persist the response so ``GET /game/finish/{event_id}/status``
+    # can return it later — covers client retry-after-network-drop
+    # today and prepares the table for the future async-recompute
+    # path (background worker will write here when the Stockfish
+    # recompute lands off the hot path).  Best-effort: the GameEvent
+    # + RatingUpdate writes above are the load-bearing commits;
+    # losing the result row only loses the retry-recovery convenience.
+    try:
+        db.add(
+            GameFinishResult(
+                event_id=str(event.id),
+                response_json=json.dumps(response),
+            )
+        )
+        db.commit()
+    except Exception:
+        logger.exception(
+            "Persisting GameFinishResult failed for event_id=%s; "
+            "GET /game/finish/<id>/status will 404 for this event but "
+            "POST response is unaffected",
+            _safe_log(str(event.id)),
+        )
+        db.rollback()
+
+    return response
+
+
+# Cap the path-segment width that ``event_id`` can take so a malicious
+# probe can't waste a DB round-trip on a 10 MB string.  GameEvent.id is a
+# uuid4 hex (36 chars); 64 is the same defensive cap GameFinishRequest
+# applies to game_id.
+_EVENT_ID_MAX_LEN = 64
+
+
+@router.get("/finish/{event_id}/status")
+def game_finish_status(
+    event_id: str,
+    player=Depends(get_current_player),
+    db: DBSession = Depends(get_db),
+):
+    """Return the persisted ``POST /game/finish`` response payload for
+    ``event_id``.
+
+    Two callers today:
+      * Client retry recovery — if a mobile network drops the POST
+        response after the server committed, the client refetches via
+        this endpoint instead of replaying the (expensive, Stockfish-
+        bound) finish call.
+      * Foundation for the future async-recompute path — when the
+        Stockfish recompute moves off the POST hot path, this endpoint
+        will return ``{status: "pending"}`` until the background
+        worker writes the result row, then the full payload.  Today
+        the row is always written synchronously inside ``finish_game``,
+        so a successful 200 here means the same data the POST
+        returned.
+
+    Authorisation: requires the same ``X-API-Key`` + JWT the rest of
+    the SECA surface enforces, plus an explicit ownership check that
+    the event belongs to the calling player.  A 403 is returned
+    rather than 404 when the event exists but belongs to someone else
+    — operators investigating a probe see a distinct signal.
+
+    Status-code map:
+      400 — ``event_id`` longer than the defensive cap
+      403 — event exists but the calling player isn't its owner
+      404 — event doesn't exist, OR no persisted result row
+            (graceful for finishes from before this PR shipped)
+    """
+    if len(event_id) > _EVENT_ID_MAX_LEN:
+        # Distinct from 422 (Pydantic validation) — 400 makes it clear
+        # the value WAS well-formed enough to reach the handler but
+        # exceeded the defensive bound.
+        raise HTTPException(status_code=400, detail="event_id too long")
+
+    event = db.query(GameEvent).filter(GameEvent.id == event_id).first()
+    if event is None:
+        raise HTTPException(status_code=404, detail="event not found")
+
+    if event.player_id != str(player.id):
+        # 403 (not 404) so operators see the cross-player probe
+        # signal in access logs.  The same convention is used by
+        # finish_game's player_id check at the top of the POST
+        # handler.
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot read game finish result for another player",
+        )
+
+    result_row = db.query(GameFinishResult).filter(GameFinishResult.event_id == event_id).first()
+    if result_row is None:
+        # Graceful degradation: finishes from before this PR shipped
+        # never persisted a result row.  Return 404 rather than try to
+        # re-derive the payload by replaying the Stockfish recompute —
+        # the ~2 s cost is exactly what this endpoint exists to AVOID
+        # re-paying.  Clients fall back to re-POSTing /game/finish if
+        # they truly need the data.
+        raise HTTPException(status_code=404, detail="finish result not available")
+
+    try:
+        return json.loads(result_row.response_json)
+    except (json.JSONDecodeError, TypeError):
+        # Corrupted row — the persisted JSON should always be valid
+        # because we constructed it via ``json.dumps`` in
+        # ``finish_game``.  Surface as 500 so the alert path fires;
+        # don't fall back silently because the response shape is a
+        # client contract.
+        logger.exception(
+            "GameFinishResult.response_json failed to decode for event_id=%s",
+            _safe_log(event_id),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Stored finish result is unreadable",
+        )
+
 
 @router.get("/history")
 def game_history(
@@ -721,20 +845,14 @@ def game_history(
     )
     games = []
     for ev in events:
-        rating_update = (
-            db.query(RatingUpdate)
-            .filter(RatingUpdate.event_id == str(ev.id))
-            .first()
-        )
+        rating_update = db.query(RatingUpdate).filter(RatingUpdate.event_id == str(ev.id)).first()
         games.append(
             {
                 "id": str(ev.id),
                 "result": ev.result,
                 "accuracy": ev.accuracy,
                 "created_at": ev.created_at.isoformat() if ev.created_at else None,
-                "rating_after": float(rating_update.rating_after)
-                if rating_update
-                else None,
+                "rating_after": float(rating_update.rating_after) if rating_update else None,
             }
         )
     return {"games": games}
