@@ -6,6 +6,12 @@
     Debug:   cleartext is permitted only to the Android emulator host (10.0.2.2) and
              localhost so the app can reach the dev backend over plain HTTP.
              User-added CA certificates are also trusted in debug builds.
+
+    TLS certificate pinning (release path): see the <pin-set> on the
+    cereveon.com domain-config below.  Closes the THREAT_MODEL.md § T2
+    residual where a system-store MITM CA could terminate HTTPS to
+    cereveon.com cleanly.  See docs/CERT_PIN_ROTATION.md for the
+    rotation procedure.
 -->
 <network-security-config>
 
@@ -17,15 +23,46 @@
     </base-config>
 
     <!--
-        Debug overrides:
-        - Trust user-installed CAs (Charles, mitmproxy, etc.) in debug builds.
-        - Allow cleartext only to the emulator host and localhost.
-        These settings are stripped from release builds by the build toolchain.
+        Production API hostname.  TLS is enforced via the base-config above;
+        the pin-set narrows trust further by requiring the cert chain to
+        match one of three SPKI hashes.
+
+        Three pins covers the realistic rotation surface:
+          E8       — current Let's Encrypt ECDSA intermediate.  Matches
+                     today's chain (leaf → E8 → ISRG Root X1).
+          ISRG X1  — RSA root, valid until 2030.  Survives E8 rotation
+                     to a sibling LE intermediate (E5/E6/E7/E9/etc.) that
+                     still chains to X1.
+          ISRG X2  — ECDSA root, valid until 2035.  Backup for the
+                     scenario where Let's Encrypt migrates the chain
+                     to terminate at X2 instead of X1.
+
+        ``expiration`` is the graceful-fallback floor: if pins aren't
+        rotated by that date and the chain has drifted in some way the
+        three roots above don't cover, NetworkSecurityConfig falls back
+        to system-CA trust (same posture as before this pin set landed).
+        That's deliberate — bricking the app on a missed rotation would
+        be worse than the pre-pinning posture.
+
+        Rotation procedure: docs/CERT_PIN_ROTATION.md.
+        Source-pin test: NetworkSecurityCertPinningTest.kt.
     -->
+    <domain-config>
+        <domain includeSubdomains="true">cereveon.com</domain>
+        <pin-set expiration="2028-05-20">
+            <!-- Let's Encrypt E8 ECDSA intermediate (current). -->
+            <pin digest="SHA-256">iFvwVyJSxnQdyaUvUERIf+8qk7gRze3612JMwoO3zdU=</pin>
+            <!-- ISRG Root X1 (RSA root, valid until 2030). -->
+            <pin digest="SHA-256">C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=</pin>
+            <!-- ISRG Root X2 (ECDSA root, valid until 2035) — backup. -->
+            <pin digest="SHA-256">diGVwiVYbubAI3RW4hB9xU8e/CH2GnkuvVFZE8zmgzI=</pin>
+        </pin-set>
+    </domain-config>
+
     <!--
         Cleartext is permitted to the Android emulator host and localhost so the
         app can reach the dev backend over plain HTTP. Applies to all build types;
-        release builds connect to https:// Hetzner only and never use these hosts.
+        release builds connect to https:// cereveon.com only and never use these hosts.
         Kept at the top level because <debug-overrides> does not allow child
         <domain-config> elements (NetworkSecurityConfig lint rule).
     -->
