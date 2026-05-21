@@ -253,7 +253,17 @@ def generate_validated_explanation(
         )
 
     last_error = None
-    esv: dict = {}
+    # Mypy flags ``esv: dict = {}`` here as a redefinition of the
+    # ``esv = extract_engine_signal(...)`` assignment in the injection-
+    # detected branch above (lines 245-253), even though that branch
+    # always returns before this line is reached.  Drop the redundant
+    # type annotation — the assignment from the early-return branch
+    # already establishes ``esv`` as a ``dict`` for mypy's narrowing,
+    # and the loop below reassigns it on every attempt anyway.  The
+    # bug only surfaced when study-plan's ``verdict.py`` (phase 2)
+    # started importing ``validate_output``, which pulled this file
+    # into mypy's reachable check set on incremental runs.
+    esv = {}
 
     for attempt in range(MAX_RETRIES + 1):
         if attempt > 0:
