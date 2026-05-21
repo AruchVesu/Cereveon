@@ -471,3 +471,62 @@ data class TrainingSolveResponse(
     @SerialName("training_xp") val trainingXp: Int = 0,
     @SerialName("completed_at") val completedAt: String = "",
 )
+
+
+// ── /coach/plan/today ────────────────────────────────────────────────────────
+
+
+/**
+ * Today's due puzzle from the per-mistake study plan.
+ *
+ * Nullable inside [CoachPlanResponse] because a plan can be active
+ * but have no puzzle currently due (e.g. day-0 has been completed
+ * and day-3 isn't due for another two days).  Android renders
+ * "Next drill in N days" copy in that case.
+ *
+ * Wire shape pinned by ``docs/API_CONTRACTS.md`` §34.
+ */
+@Serializable
+data class TodayPuzzleDto(
+    /** One of 0, 3, 7 — which step of the spaced-repetition program. */
+    @SerialName("day_offset") val dayOffset: Int = 0,
+    /** Position the puzzle drops the user into. */
+    val fen: String = "",
+    /** Engine's preferred move at [fen] (UCI), used by the verifier. */
+    @SerialName("expected_move_uci") val expectedMoveUci: String = "",
+    /** ``"original"`` for day-0 (the player's actual mistake) or
+     *  ``"library"`` for theme-matched corpus variants. */
+    @SerialName("source_type") val sourceType: String = "",
+    /** ISO-8601 UTC timestamp; invariant: ``due_at <= now()`` when this
+     *  object is non-null. */
+    @SerialName("due_at") val dueAt: String = "",
+)
+
+
+/**
+ * Top-level shape of ``GET /coach/plan/today`` when the player has an
+ * active per-mistake study plan.
+ *
+ * The endpoint also returns JSON ``null`` (HTTP 200) when no active
+ * plan exists; the Android client decodes that to a Kotlin ``null``
+ * via the [GameApiClient.getCoachPlanToday] parse step.
+ *
+ * Wire shape pinned by ``docs/API_CONTRACTS.md`` §34.
+ */
+@Serializable
+data class CoachPlanResponse(
+    @SerialName("plan_id") val planId: String = "",
+    /** One of [llm.seca.coach.study_plan.verdict.THEME_VOCABULARY]
+     *  on the server side; the Android client treats it as opaque
+     *  and renders it via [formatTheme] for display. */
+    val theme: String = "generic",
+    /** LLM-written ≤ 60-word retrospective.  Empty string when the
+     *  LLM was unreachable or failed validators — TodaysDrillCard
+     *  hides the verdict line in that case. */
+    val verdict: String = "",
+    /** Always 3 today; surfaced for "Day N of M" rendering. */
+    @SerialName("total_days") val totalDays: Int = 3,
+    /** ``null`` when no puzzle's ``due_at`` has elapsed yet (e.g.
+     *  day-0 solved, day-3 not yet due). */
+    @SerialName("today_puzzle") val todayPuzzle: TodayPuzzleDto? = null,
+)

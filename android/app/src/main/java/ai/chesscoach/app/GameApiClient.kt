@@ -206,6 +206,30 @@ interface GameApiClient {
         sourceType: String,
         sourceRef: String?,
     ): ApiResult<TrainingSolveResponse> = ApiResult.HttpError(501)
+
+    /**
+     * GET /coach/plan/today — Phase 4 study-plan surface.
+     *
+     * Returns the player's most recent active per-mistake study plan
+     * + the puzzle currently due (the lowest-day-offset puzzle whose
+     * ``due_at <= now()`` AND ``completed_at IS NULL``), or
+     * [ApiResult.Success] wrapping ``null`` when no active plan
+     * exists (no qualifying game played yet, or every plan
+     * completed).
+     *
+     * Bearer auth required.  Returns:
+     *   - 200 + [CoachPlanResponse] — active plan + populated theme,
+     *     verdict, and (optional) today's puzzle.
+     *   - 200 + ``null`` body — no active plan; Android caller hides
+     *     the TodaysDrillCard.  Modelled as [ApiResult.Success(null)]
+     *     so the caller doesn't have to special-case a 404 (there
+     *     is no 404 on this endpoint — absence is a normal product
+     *     state).
+     *
+     * Default implementation returns [ApiResult.HttpError(501)] so
+     * test fakes don't have to implement it.
+     */
+    suspend fun getCoachPlanToday(): ApiResult<CoachPlanResponse?> = ApiResult.HttpError(501)
 }
 
 // ── HTTP implementation ───────────────────────────────────────────────────────
@@ -441,6 +465,27 @@ class HttpGameApiClient(
         ),
         onResponse = refreshOnSuccess(),
         parse = { body -> ApiJson.decodeFromString<TrainingSolveResponse>(body) },
+    )
+
+    override suspend fun getCoachPlanToday(): ApiResult<CoachPlanResponse?> = http.request(
+        path = "/coach/plan/today",
+        method = "GET",
+        // Bearer-only — /coach/plan/today never carries X-Api-Key.
+        // The server identifies the player via JWT.
+        headers = authHeaders(includeApiKey = false),
+        onResponse = refreshOnSuccess(),
+        parse = { body ->
+            // The endpoint returns JSON ``null`` (HTTP 200) when the
+            // player has no active plan.  kotlinx-serialization
+            // happily decodes a literal ``null`` to a nullable type
+            // via ``decodeFromString<CoachPlanResponse?>``.
+            val trimmed = body.trim()
+            if (trimmed.isEmpty() || trimmed == "null") {
+                null
+            } else {
+                ApiJson.decodeFromString<CoachPlanResponse>(trimmed)
+            }
+        },
     )
 
     /**

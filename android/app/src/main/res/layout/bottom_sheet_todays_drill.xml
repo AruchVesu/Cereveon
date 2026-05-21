@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Today's drill sheet (study-plan phase 4).
+
+    Launched from the TodaysDrillCard on HomeActivity when
+    /coach/plan/today returns a non-null today_puzzle.  Modelled on
+    the mistake-replay sheet (same board + verify+solve flow), with
+    two header differences:
+
+      * Kicker reads "Day N of 3 · <theme>" (the spaced-repetition
+        context) instead of "Mistake · Move N" (the original blunder
+        position the user just played).
+      * The "You played …" subline is replaced with the LLM-written
+        coach verdict — the conceptual explanation that drove this
+        plan's theme classification.
+
+    Verify + solve flow is identical: each attempt round-trips
+    POST /training/verify-replay; the first verified-correct attempt
+    posts to POST /training/solve (source_type="mistake_replay",
+    source_ref="plan_<plan_id>:day_<day_offset>") and credits +10 XP.
+
+    Top to bottom:
+      1.  Drag handle.
+      2.  Kicker — "Day N of 3 · <theme>" (cyan accent).
+      3.  Italic title — "Find a stronger move." (Cormorant).
+      4.  Verdict — multi-line LLM-written coaching paragraph.
+          Hidden when ``CoachPlanResponse.verdict`` is blank
+          (LLM failed validators / unreachable).
+      5.  ChessBoardView (interactive=true; sized to fit a portrait sheet).
+      6.  Status row — Activity rewrites the text + tone on every attempt.
+      7.  Footer — "Close" secondary action.
+
+    IDs preserved (every findViewById in TodaysDrillBottomSheet.kt
+    resolves unchanged): todaysDrillKicker, todaysDrillTitle,
+    todaysDrillVerdict, todaysDrillBoard, todaysDrillStatus,
+    todaysDrillCloseButton.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_atrium_gradient"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/atrium_space_24"
+        android:paddingEnd="@dimen/atrium_space_24"
+        android:paddingTop="@dimen/atrium_space_16"
+        android:paddingBottom="@dimen/atrium_space_24">
+
+        <View
+            android:layout_width="36dp"
+            android:layout_height="4dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginBottom="@dimen/atrium_space_12"
+            android:background="@color/atrium_hairline" />
+
+        <TextView
+            android:id="@+id/todaysDrillKicker"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker.Cyan"
+            tools:text="Day 2 of 3 · King safety" />
+
+        <TextView
+            android:id="@+id/todaysDrillTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_4"
+            android:fontFamily="@font/cormorant_garamond"
+            android:textStyle="italic"
+            android:textColor="@color/atrium_ink"
+            android:textSize="28sp"
+            android:lineSpacingMultiplier="1.05"
+            android:text="Find a stronger move." />
+
+        <TextView
+            android:id="@+id/todaysDrillVerdict"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_12"
+            android:textColor="@color/atrium_muted"
+            android:textSize="14sp"
+            android:lineSpacingMultiplier="1.25"
+            android:text=""
+            tools:text="Bringing the king toward the centre with pieces still on the board exposes it to a quick attack; the resulting tempo loss let your opponent build pressure faster than you could defend." />
+
+        <FrameLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/atrium_space_16"
+            android:padding="@dimen/atrium_space_8"
+            android:background="@drawable/board_mat_atrium"
+            android:elevation="6dp">
+
+            <ai.chesscoach.app.ChessBoardView
+                android:id="@+id/todaysDrillBoard"
+                android:layout_width="312dp"
+                android:layout_height="312dp" />
+
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/todaysDrillStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_16"
+            android:textAppearance="@style/Atrium.Kicker"
+            android:gravity="center"
+            android:text="Find a stronger move."
+            tools:text="+10 XP" />
+
+        <Button
+            android:id="@+id/todaysDrillCloseButton"
+            style="@style/Atrium.Button.Secondary"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_tap_target"
+            android:layout_marginTop="@dimen/atrium_space_20"
+            android:text="Close" />
+
+    </LinearLayout>
+
+</ScrollView>

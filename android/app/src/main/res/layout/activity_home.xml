@@ -275,6 +275,77 @@
 
             </LinearLayout>
 
+            <!-- Today's drill card (study-plan phase 4).
+                 Surfaces the player's most recent active per-mistake study
+                 plan + the puzzle currently due, when /coach/plan/today
+                 returns a non-null body with a non-null today_puzzle.
+                 HIDDEN by default; HomeActivity.onResume calls
+                 GameApiClient.getCoachPlanToday() and toggles visibility +
+                 populates the kicker / verdict / day indicator. -->
+            <LinearLayout
+                android:id="@+id/homeTodaysDrillBlock"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="@dimen/atrium_space_24"
+                android:visibility="gone"
+                tools:visibility="visible">
+
+                <TextView
+                    android:id="@+id/homeTodaysDrillKicker"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textAppearance="@style/Atrium.Kicker"
+                    android:text="Today's drill"
+                    tools:text="Today's drill · Day 1 of 3" />
+
+                <LinearLayout
+                    android:id="@+id/homeTodaysDrillCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/atrium_space_8"
+                    android:orientation="vertical"
+                    android:background="@drawable/atrium_home_resume_bg"
+                    android:padding="@dimen/atrium_space_16"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <TextView
+                        android:id="@+id/homeTodaysDrillTheme"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/cormorant_garamond"
+                        android:textStyle="italic"
+                        android:textColor="@color/atrium_accent_cyan"
+                        android:textSize="17sp"
+                        android:text="—"
+                        tools:text="Practice · King safety" />
+
+                    <TextView
+                        android:id="@+id/homeTodaysDrillVerdict"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/atrium_space_8"
+                        android:textColor="@color/atrium_ink"
+                        android:textSize="14sp"
+                        android:lineSpacingMultiplier="1.25"
+                        android:maxLines="4"
+                        android:ellipsize="end"
+                        android:text=""
+                        tools:text="Bringing the king toward the centre with pieces still on the board exposes it to a quick attack; the resulting tempo loss let your opponent build pressure faster than you could defend." />
+
+                    <Button
+                        android:id="@+id/homeTodaysDrillStartButton"
+                        style="@style/Atrium.Button.Primary"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/atrium_space_16"
+                        android:text="Start drill" />
+
+                </LinearLayout>
+
+            </LinearLayout>
+
             <!-- Library section. -->
             <TextView
                 android:layout_width="wrap_content"

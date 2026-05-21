@@ -152,10 +152,11 @@ TEST_TARGETS = [
     # library variants, and Android Home card.  Tests cover the data
     # model, dedup contract, scheduling layout, and endpoint shape.
     "llm/tests/test_study_plan_agent.py",
-    # Weekly digest agent (v1): deterministic top-3-holes + microtask
-    # selection, 7-day window, persistence, refresh/fetch endpoint
-    # contract, and no-LLM-imports invariant.
-    "llm/tests/test_weekly_digest.py",
+    # Weekly-digest agent (v1) was retired in study-plan phase 4
+    # (2026-05-21) — its "top-3 holes + 3 microtasks" framing
+    # competed with the per-mistake study-plan agent's Home-screen
+    # surface.  The module + test file were deleted; no Android
+    # caller depended on it.
     # Bug regression suite: guards the surviving confirmed fixes (reward
     # ZeroDivision, spacing zero-interval, trainer empty-events, bandit
     # empty-actions + singular matrix).  The flat engine_eval / engine_pool

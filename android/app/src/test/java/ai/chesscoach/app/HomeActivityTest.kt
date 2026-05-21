@@ -208,4 +208,70 @@ class HomeActivityTest {
             TimeZone.setDefault(tz)
         }
     }
+
+    // ── formatTodaysDrillKicker / formatTodaysDrillTheme ────────────
+    //
+    // Pure formatters for the new TodaysDrillCard.  Day 0 displays
+    // as "Day 1" because the user thinks 1-indexed; the wire field
+    // is the spaced-repetition step (0 / 3 / 7) — that mapping is
+    // pinned below so a future contributor adding a 4th day must
+    // touch this test.
+
+    @Test
+    fun `TODAYS_DRILL_KICKER_DAY0 - day-0 reads as Day 1 of 3`() {
+        assertEquals(
+            "Today's drill · Day 1 of 3",
+            HomeActivity.formatTodaysDrillKicker(dayOffset = 0, totalDays = 3),
+        )
+    }
+
+    @Test
+    fun `TODAYS_DRILL_KICKER_DAY3 - day-3 reads as Day 2 of 3`() {
+        assertEquals(
+            "Today's drill · Day 2 of 3",
+            HomeActivity.formatTodaysDrillKicker(dayOffset = 3, totalDays = 3),
+        )
+    }
+
+    @Test
+    fun `TODAYS_DRILL_KICKER_DAY7 - day-7 reads as Day 3 of 3`() {
+        assertEquals(
+            "Today's drill · Day 3 of 3",
+            HomeActivity.formatTodaysDrillKicker(dayOffset = 7, totalDays = 3),
+        )
+    }
+
+    @Test
+    fun `TODAYS_DRILL_THEME_GENERIC - generic collapses to bare Practice`() {
+        // No "Practice · Generic" — that reads as filler copy.
+        assertEquals("Practice", HomeActivity.formatTodaysDrillTheme("generic"))
+        assertEquals("Practice", HomeActivity.formatTodaysDrillTheme(""))
+    }
+
+    @Test
+    fun `TODAYS_DRILL_THEME_SNAKE_CASE - snake_case becomes sentence case`() {
+        assertEquals(
+            "Practice · King safety",
+            HomeActivity.formatTodaysDrillTheme("king_safety"),
+        )
+        assertEquals(
+            "Practice · Back rank",
+            HomeActivity.formatTodaysDrillTheme("back_rank"),
+        )
+        assertEquals(
+            "Practice · Hung piece",
+            HomeActivity.formatTodaysDrillTheme("hung_piece"),
+        )
+        assertEquals(
+            "Practice · Opening principles",
+            HomeActivity.formatTodaysDrillTheme("opening_principles"),
+        )
+    }
+
+    @Test
+    fun `TODAYS_DRILL_THEME_SINGLE_WORD - single word capitalises first letter`() {
+        assertEquals("Practice · Fork", HomeActivity.formatTodaysDrillTheme("fork"))
+        assertEquals("Practice · Pin", HomeActivity.formatTodaysDrillTheme("pin"))
+        assertEquals("Practice · Tempo", HomeActivity.formatTodaysDrillTheme("tempo"))
+    }
 }
