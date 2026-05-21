@@ -1464,10 +1464,31 @@ the one originating mistake.  Day 0 is the exact mistake position;
 days 3 and 7 are theme-matched library variants (phase 3+; phase 1
 ships with all three days pointing at the same mistake FEN).
 
-Phase 1 scope: the endpoint serves the persisted plan but does not yet
-populate `theme` (always `"generic"`) or `verdict` (always `""`); the
-Android `TodaysDrillCard` is not yet built so no client polls this
+Phase 2 (live): the endpoint serves the persisted plan with the
+LLM-generated `theme` + `verdict` populated.  The Android
+`TodaysDrillCard` is still pending (phase 4) so no client polls this
 endpoint in production today.
+
+The `theme` field is one of the following tags:
+
+```
+king_safety
+fork
+pin
+back_rank
+hung_piece
+queen_safety
+tempo
+opening_principles
+endgame_technique
+generic
+```
+
+`"generic"` is both an explicit theme (used by the LLM when none of
+the named themes fit) AND the fallback value when the LLM path failed
+— clients should not treat the two cases differently.  An empty
+`verdict` is the only signal that the LLM did not produce a usable
+output.
 
 ### Request
 
@@ -1494,8 +1515,8 @@ No body.  Reads the authenticated player from the bearer token.
 | Field | Type | Notes |
 |-------|------|-------|
 | `plan_id` | `string` | UUID of the `mistake_study_plans` row.  Stable for the life of the plan. |
-| `theme` | `string` | Theme tag of the mistake (e.g. `"king_safety"`, `"fork"`).  Phase 1 always `"generic"`; phase 2's LLM call replaces with a real tag. |
-| `verdict` | `string` | LLM-written ≤ 100-word retrospective on the originating mistake.  Phase 1 always `""`; phase 2 populates with a Mode-2-validator-clean string. |
+| `theme` | `string` | Theme tag of the mistake, from a fixed vocabulary (see below).  Populated by a single-shot LLM call run in the background after `/game/finish`.  Falls back to `"generic"` when the LLM was unreachable, returned out-of-vocabulary, or its output failed the Mode-2 validators on both retries. |
+| `verdict` | `string` | LLM-written ≤ 60-word retrospective on the originating mistake.  Mode-2-validator-clean: no specific moves (no algebraic notation, no UCI), no engine mentions, no advisory phrasing.  Empty string when the LLM path failed unrecoverably; Android `TodaysDrillCard` hides the coach-note line in that case. |
 | `total_days` | `int` | Number of puzzles in the plan.  Always `3` in phase 1; surfaced as a field so the UI can render "Day N of M" without hard-coding. |
 | `today_puzzle` | `object \| null` | The puzzle whose `due_at <= now()` AND `completed_at IS NULL`, with the lowest `day_offset`.  `null` when no puzzle is currently due (e.g. day-0 solved, day-3 not yet due). |
 | `today_puzzle.day_offset` | `int` | One of `0`, `3`, `7`.  Maps to "Day 1 / 3", "Day 2 / 3", "Day 3 / 3" via a static client-side label. |

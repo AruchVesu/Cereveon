@@ -265,12 +265,15 @@ COVERAGE_TARGETS = [
     # test_verify_replay.py.
     "llm.seca.mistakes.detector",
     "llm.seca.mistakes.verify",
-    # Per-mistake study-plan agent (LLM coaching v1, phase 1 scaffold):
-    # data model + stub generator + GET /coach/plan/today endpoint.
+    # Per-mistake study-plan agent (LLM coaching v1).  Phase 1: data
+    # model + stub generator + GET /coach/plan/today endpoint.
+    # Phase 2: LLM-generated theme + verdict via single-shot call,
+    # gated by Mode-2 negative validator + output firewall.
     # Covered by test_study_plan_agent.py.
     "llm.seca.coach.study_plan.models",
     "llm.seca.coach.study_plan.agent",
     "llm.seca.coach.study_plan.router",
+    "llm.seca.coach.study_plan.verdict",
     "llm.seca.mistakes.router",
     # llm.seca.coach.live_controller, llm.seca.coach.executor,
     # llm.seca.coach.confidence_language_controller, and

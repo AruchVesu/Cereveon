@@ -72,6 +72,45 @@ _MISTAKE_FEN = "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
 _PLAYED_UCI = "f3e5"
 
 
+# ---------------------------------------------------------------------------
+# Tiny in-test LLM helpers
+# ---------------------------------------------------------------------------
+#
+# The shipped ``FakeLLM`` modes don't include "return structured JSON"
+# shapes, so phase 2's verdict path needs its own scripted fakes.
+# Keeping them inline here (rather than extending FakeLLM with more
+# modes) avoids polluting the production fixture with study-plan-
+# specific behaviour.
+
+
+class _ScriptedLLM:
+    """A BaseLLM-shaped fake that returns a queued sequence of strings.
+
+    Each call to ``generate`` pops the next entry; if the queue is
+    exhausted, the LAST entry is returned again (so a single-entry
+    queue acts as a constant generator).  Subclassing BaseLLM is not
+    required at the Python level because verdict.generate_verdict
+    only uses ``.generate(prompt)`` — duck typing is enough."""
+
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = responses
+        self.calls: list[str] = []
+
+    def generate(self, prompt: str) -> str:
+        self.calls.append(prompt)
+        if len(self.calls) <= len(self.responses):
+            return self.responses[len(self.calls) - 1]
+        return self.responses[-1]
+
+
+class _RaisingLLM:
+    """A BaseLLM-shaped fake whose ``generate`` always raises.  Used to
+    exercise the LLM-unreachable fallback path in verdict.py."""
+
+    def generate(self, prompt: str) -> str:
+        raise RuntimeError("simulated LLM provider outage")
+
+
 def _fake_request() -> StarletteRequest:
     """Minimal Request for slowapi's isinstance check."""
     return StarletteRequest(
@@ -324,6 +363,366 @@ class TestCoachAgentGeneratePlan:
 # ---------------------------------------------------------------------------
 
 
+class TestVerdictGeneration:
+    """LLM verdict path (phase 2).  The agent calls
+    ``generate_verdict(...)`` after committing the plan + 3 puzzle
+    rows; the result populates ``plan.theme`` + ``plan.verdict``.
+    Failure paths leave the plan at the phase-1 stub values so the
+    schedule + dedup contract is preserved even when DeepSeek is
+    down.
+
+    All tests inject a scripted in-test fake LLM so no real DeepSeek
+    calls happen during the suite."""
+
+    _CLEAN_VERDICT = (
+        "Bringing the king toward the centre with pieces still on the "
+        "board exposes it to a quick attack; the resulting tempo loss "
+        "let the opponent build pressure faster than it could be defended."
+    )
+
+    def _clean_json(self, theme: str = "king_safety") -> str:
+        return f'{{"theme": "{theme}", "verdict": "{self._CLEAN_VERDICT}"}}'
+
+    def test_verdict_happy_path(self, db_session, player, game_event):
+        """VERDICT_HAPPY_PATH — LLM returns a valid JSON; plan.theme +
+        plan.verdict are populated.  Day-0 puzzle FEN is unchanged
+        (the verdict step doesn't touch puzzles)."""
+        llm = _ScriptedLLM([self._clean_json()])
+
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=llm,
+        )
+
+        assert plan is not None
+        assert plan.theme == "king_safety"
+        assert plan.verdict == self._CLEAN_VERDICT
+        # Puzzles are still the phase-1 stub (day-3/day-7 unchanged).
+        assert len(plan.puzzles) == 3
+
+    def test_verdict_json_parse_failure_falls_back(
+        self, db_session, player, game_event
+    ):
+        """VERDICT_JSON_PARSE_FAILURE — LLM returns garbage; plan keeps
+        the phase-1 stub values.  ``("generic", "")`` is the documented
+        fallback shape so the Android Home card hides the coach-note
+        line cleanly."""
+        # Two responses because verdict.py retries once on parse failure.
+        llm = _ScriptedLLM(["not json", "still not json"])
+
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=llm,
+        )
+
+        assert plan is not None
+        assert plan.theme == "generic"
+        assert plan.verdict == ""
+
+    def test_verdict_unknown_theme_collapses_to_generic(
+        self, db_session, player, game_event
+    ):
+        """VERDICT_UNKNOWN_THEME — LLM returns a valid JSON but the
+        theme tag is not in ``THEME_VOCABULARY``.  Theme collapses to
+        ``"generic"``; verdict text is preserved because the verdict
+        itself passed every validator."""
+        bad_theme_json = (
+            f'{{"theme": "made_up_tag_xyz", "verdict": "{self._CLEAN_VERDICT}"}}'
+        )
+        llm = _ScriptedLLM([bad_theme_json])
+
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=llm,
+        )
+
+        assert plan is not None
+        assert plan.theme == "generic"
+        assert plan.verdict == self._CLEAN_VERDICT
+
+    def test_verdict_validator_retry_succeeds(
+        self, db_session, player, game_event
+    ):
+        """VERDICT_VALIDATOR_RETRY — first LLM response trips the
+        Mode-2 negative validator (mentions the engine), the retry
+        produces a clean verdict, the clean one wins."""
+        forbidden_json = (
+            '{"theme": "king_safety", '
+            '"verdict": "Stockfish evaluates this position as losing for you."}'
+        )
+        llm = _ScriptedLLM([forbidden_json, self._clean_json()])
+
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=llm,
+        )
+
+        assert plan is not None
+        assert plan.theme == "king_safety"
+        assert plan.verdict == self._CLEAN_VERDICT
+        # Verdict module called the LLM exactly twice (one retry).
+        assert len(llm.calls) == 2
+
+    def test_verdict_validator_double_fail_falls_back(
+        self, db_session, player, game_event
+    ):
+        """VERDICT_VALIDATOR_DOUBLE_FAIL — both LLM responses trip the
+        validators; plan falls back to ``("generic", "")``.  The
+        prompt-engineering effort to coax a clean rewrite gave up
+        after one retry."""
+        forbidden_json = (
+            '{"theme": "king_safety", '
+            '"verdict": "Stockfish evaluates this position as losing."}'
+        )
+        llm = _ScriptedLLM([forbidden_json, forbidden_json])
+
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=llm,
+        )
+
+        assert plan is not None
+        assert plan.theme == "generic"
+        assert plan.verdict == ""
+
+    def test_verdict_llm_unreachable_falls_back(
+        self, db_session, player, game_event
+    ):
+        """VERDICT_LLM_TIMEOUT_FALLBACK — every ``llm.generate`` call
+        raises (provider down).  Plan stays at the stub; no exception
+        propagates out of the agent."""
+        llm = _RaisingLLM()
+
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=llm,
+        )
+
+        assert plan is not None
+        assert plan.theme == "generic"
+        assert plan.verdict == ""
+
+    def test_verdict_skipped_when_llm_is_none(
+        self, db_session, player, game_event
+    ):
+        """VERDICT_SKIPPED_WHEN_LLM_NONE — phase-1 callers that pass
+        ``llm=None`` get the stub values without any LLM round-trip
+        and without raising.  Pins the optional-injection contract
+        so existing tests stay valid."""
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=None,
+        )
+
+        assert plan is not None
+        assert plan.theme == "generic"
+        assert plan.verdict == ""
+
+
+class TestVerdictBranchCoverage:
+    """Direct unit tests for the verdict module's narrower failure
+    paths.  These call ``generate_verdict`` directly with rigged
+    inputs to exercise branches the higher-level ``generate_plan``
+    path doesn't hit naturally.
+
+    The function never raises — every test asserts the documented
+    fallback shape ``("generic", "")`` or a valid ``(theme, verdict)``."""
+
+    _CLEAN_VERDICT = (
+        "Bringing the king toward the centre with pieces still on the "
+        "board exposes it to a quick attack; the resulting tempo loss "
+        "let the opponent build pressure faster than it could be defended."
+    )
+
+    def test_non_dict_json_falls_back(self):
+        """VERDICT_NON_DICT_JSON — LLM returns valid JSON but it's an
+        array, not an object.  Falls back after the single retry."""
+        from llm.seca.coach.study_plan.verdict import generate_verdict
+
+        llm = _ScriptedLLM(['["not", "a", "dict"]', '["still not"]'])
+        result = generate_verdict(
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            player_skill_hint="intermediate",
+            llm=llm,
+        )
+        assert result == ("generic", "")
+        # Both attempts were called (retry path).
+        assert len(llm.calls) == 2
+
+    def test_missing_theme_field_falls_back(self):
+        """VERDICT_MISSING_THEME — LLM returns valid JSON but theme
+        field is absent (or non-string)."""
+        from llm.seca.coach.study_plan.verdict import generate_verdict
+
+        json_without_theme = '{"verdict": "some content here that is plenty long."}'
+        llm = _ScriptedLLM([json_without_theme, json_without_theme])
+        result = generate_verdict(
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            player_skill_hint="intermediate",
+            llm=llm,
+        )
+        assert result == ("generic", "")
+
+    def test_empty_verdict_falls_back(self):
+        """VERDICT_EMPTY_AFTER_STRIP — LLM returns valid JSON with
+        verdict="" (or whitespace only).  After ``.strip()`` it's
+        empty and the function falls back."""
+        from llm.seca.coach.study_plan.verdict import generate_verdict
+
+        empty_verdict_json = '{"theme": "fork", "verdict": "   "}'
+        llm = _ScriptedLLM([empty_verdict_json, empty_verdict_json])
+        result = generate_verdict(
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            player_skill_hint="intermediate",
+            llm=llm,
+        )
+        assert result == ("generic", "")
+
+    def test_oversized_verdict_falls_back(self):
+        """VERDICT_OVERSIZED — LLM returns a verdict over 500 chars.
+        Falls back without surfacing the wall-of-text to the user
+        (the UI's one-glance card can't render it anyway)."""
+        from llm.seca.coach.study_plan.verdict import generate_verdict
+
+        huge = "x" * 600
+        json_huge = f'{{"theme": "fork", "verdict": "{huge}"}}'
+        llm = _ScriptedLLM([json_huge, json_huge])
+        result = generate_verdict(
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            player_skill_hint="intermediate",
+            llm=llm,
+        )
+        assert result == ("generic", "")
+
+    def test_code_fence_wrapper_is_stripped(self):
+        """VERDICT_CODE_FENCE_STRIPPED — some models wrap JSON in a
+        ```json ... ``` fence despite the prompt instruction; the
+        parser strips the fence and accepts the inner JSON."""
+        from llm.seca.coach.study_plan.verdict import generate_verdict
+
+        wrapped = (
+            "```json\n"
+            f'{{"theme": "king_safety", "verdict": "{self._CLEAN_VERDICT}"}}\n'
+            "```"
+        )
+        llm = _ScriptedLLM([wrapped])
+        theme, verdict = generate_verdict(
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            player_skill_hint="intermediate",
+            llm=llm,
+        )
+        assert theme == "king_safety"
+        assert verdict == self._CLEAN_VERDICT
+
+    def test_empty_llm_output_falls_back(self):
+        """VERDICT_EMPTY_LLM_OUTPUT — LLM returns an empty string or
+        whitespace.  The pre-JSON ``cleaned`` check short-circuits
+        before json.loads is attempted."""
+        from llm.seca.coach.study_plan.verdict import generate_verdict
+
+        llm = _ScriptedLLM(["", "   "])
+        result = generate_verdict(
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            player_skill_hint="intermediate",
+            llm=llm,
+        )
+        assert result == ("generic", "")
+
+    def test_retry_raise_falls_back(self):
+        """VERDICT_RETRY_LLM_RAISES — first attempt succeeds at JSON
+        parse but trips a validator; retry attempt raises (provider
+        died between calls).  Falls back to ``("generic", "")``."""
+        from llm.seca.coach.study_plan.verdict import generate_verdict
+
+        forbidden = (
+            '{"theme": "king_safety", '
+            '"verdict": "Stockfish evaluates this position as losing."}'
+        )
+
+        class _FlakyLLM:
+            """First call returns forbidden text; second call raises."""
+
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            def generate(self, prompt: str) -> str:
+                self.call_count += 1
+                if self.call_count == 1:
+                    return forbidden
+                raise RuntimeError("simulated mid-retry provider drop")
+
+        llm = _FlakyLLM()
+        result = generate_verdict(
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            player_skill_hint="intermediate",
+            llm=llm,
+        )
+        assert result == ("generic", "")
+        assert llm.call_count == 2
+
+
+class TestSkillHintForRating:
+    """``skill_hint_for_rating`` maps a Player.rating value to one of
+    three bands the LLM prompt uses to shape vocabulary.  Bands pinned
+    so a future tuning pass changes one place, not 30 string asserts."""
+
+    def test_below_1200_is_beginner(self):
+        from llm.seca.coach.study_plan.verdict import skill_hint_for_rating
+
+        assert skill_hint_for_rating(0.0) == "beginner"
+        assert skill_hint_for_rating(800.0) == "beginner"
+        assert skill_hint_for_rating(1199.9) == "beginner"
+
+    def test_1200_to_1800_is_intermediate(self):
+        from llm.seca.coach.study_plan.verdict import skill_hint_for_rating
+
+        assert skill_hint_for_rating(1200.0) == "intermediate"
+        assert skill_hint_for_rating(1500.0) == "intermediate"
+        assert skill_hint_for_rating(1799.9) == "intermediate"
+
+    def test_1800_and_above_is_advanced(self):
+        from llm.seca.coach.study_plan.verdict import skill_hint_for_rating
+
+        assert skill_hint_for_rating(1800.0) == "advanced"
+        assert skill_hint_for_rating(2200.0) == "advanced"
+        assert skill_hint_for_rating(2800.0) == "advanced"
+
+
 class TestGeneratePlanAsync:
     """Background-task wrapper tests.  ``generate_plan_async`` opens
     its own ``SessionLocal`` session (because the request-scoped one
@@ -342,20 +741,28 @@ class TestGeneratePlanAsync:
         row when given valid inputs.  Verifies the SessionLocal
         injection, the call-through to generate_plan, and the
         commit happened before the wrapper's ``finally`` closed the
-        session."""
+        session.
+
+        Passes an explicit ``llm=`` so the wrapper doesn't try to
+        construct a real ``DeepseekLLM`` (which would attempt a
+        network call during the unit test).  A scripted in-test fake
+        returning a valid JSON-shaped verdict exercises the phase-2
+        verdict path end-to-end at the same time."""
         from llm.seca.auth import router as auth_router_module
         from llm.seca.coach.study_plan.agent import generate_plan_async
 
-        # Build a SessionLocal-shaped factory that returns the
-        # in-memory session ALREADY bound to the test's engine.  The
-        # wrapper expects a no-arg callable; ``lambda: db_session``
-        # hands back the same session for the test's assertions.  We
-        # also patch ``close`` to a no-op so the wrapper's
-        # ``finally: db.close()`` doesn't tear down the connection
-        # before the test can query.
         original_close = db_session.close
         db_session.close = lambda: None
         monkeypatch.setattr(auth_router_module, "SessionLocal", lambda: db_session)
+
+        fake_llm = _ScriptedLLM(
+            [
+                '{"theme": "king_safety", '
+                '"verdict": "Bringing the king toward the centre with pieces still '
+                "on the board exposes it to a quick attack; the resulting tempo "
+                'loss let the opponent build pressure faster than it could be defended."}'
+            ]
+        )
 
         try:
             generate_plan_async(
@@ -363,6 +770,7 @@ class TestGeneratePlanAsync:
                 source_event_id=game_event.id,
                 mistake_fen=_MISTAKE_FEN,
                 played_uci=_PLAYED_UCI,
+                llm=fake_llm,
             )
         finally:
             db_session.close = original_close
@@ -371,6 +779,9 @@ class TestGeneratePlanAsync:
         puzzles = db_session.query(MistakeStudyPuzzle).all()
         assert len(plans) == 1
         assert len(puzzles) == 3
+        # Verdict path also fired end-to-end through the async wrapper.
+        assert plans[0].theme == "king_safety"
+        assert plans[0].verdict.startswith("Bringing the king")
 
     def test_async_swallows_exceptions(self, monkeypatch):
         """PLAN_ASYNC_SWALLOWS_EXCEPTION — a raise inside

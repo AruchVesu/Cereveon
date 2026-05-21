@@ -1,14 +1,18 @@
 """CoachAgent — the orchestrator for per-mistake study plans.
 
-Phase 1 ships a STUB.  ``generate_plan`` is fully wired but writes:
+Phase 1 shipped the data model + dedup contract + scheduling.  Phase 2
+(this commit) adds the LLM-generated coach verdict + theme tag:
 
-* ``theme = "generic"`` (phase 2 replaces with an LLM-classified tag)
-* ``verdict = ""`` (phase 2 replaces with an LLM-written retrospective)
-* All three puzzles point at the mistake FEN+UCI (phase 3 replaces
-  day-3 and day-7 with library variants on the same theme)
+* ``theme`` — populated by a single-shot ``llm.generate`` call,
+  collapsed to ``"generic"`` if the LLM picks a tag outside
+  ``study_plan.verdict.THEME_VOCABULARY``.
+* ``verdict`` — ≤ 60-word retrospective, gated by Mode-2 negative +
+  output firewall.  Empty string when the LLM was unreachable or
+  failed validators on both attempts; the Home-screen card simply
+  hides the coach-note line in that case.
 
-The wire shape, dedup contract, and scheduling layout are locked here
-so phases 2-4 don't have to re-litigate the data model.
+Phase 3 will replace the day-3 / day-7 puzzles (currently stub copies
+of the mistake position) with theme-matched library variants.
 
 Background-task entrypoint
 --------------------------
@@ -41,10 +45,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 
+from llm.seca.auth.models import Player
 from llm.seca.coach.study_plan.models import (
     PLAN_DAY_OFFSETS,
     PUZZLE_SOURCE_ORIGINAL,
@@ -52,6 +58,13 @@ from llm.seca.coach.study_plan.models import (
     MistakeStudyPlan,
     MistakeStudyPuzzle,
 )
+from llm.seca.coach.study_plan.verdict import (
+    generate_verdict,
+    skill_hint_for_rating,
+)
+
+if TYPE_CHECKING:
+    from llm.rag.llm.base import BaseLLM
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +76,20 @@ def generate_plan(
     source_event_id: str,
     mistake_fen: str,
     played_uci: str,
+    llm: "BaseLLM | None" = None,
 ) -> MistakeStudyPlan | None:
     """Create (or return existing) a 3-puzzle study plan for one mistake.
 
-    Phase 1 stub: all three puzzles share the mistake FEN+UCI,
-    ``theme="generic"``, ``verdict=""``.  Status lands at ``active``
-    immediately because no LLM call gates the transition yet.
+    Phase 2 wires the LLM verdict path: after the plan + 3 puzzle
+    rows commit, the agent calls ``generate_verdict`` with the
+    player's rating-derived skill hint and updates ``plan.theme`` +
+    ``plan.verdict`` in a second commit.  If the LLM path fails for
+    any reason, the plan stays at the phase-1 stub values
+    (``theme="generic"``, ``verdict=""``) — the plan is still usable;
+    the Home card just hides the coach-note line.
+
+    The day-3 / day-7 puzzles still mirror the mistake FEN (phase 3
+    will replace them with theme-matched library variants).
 
     Parameters
     ----------
@@ -92,6 +113,14 @@ def generate_plan(
         Used as the day-0 puzzle's ``expected_move_uci`` — the
         client-side replay sheet uses it to short-circuit a
         re-submission of the same wrong move.
+    llm:
+        Optional ``BaseLLM`` instance.  ``None`` (the default) skips
+        the verdict generation step and leaves the plan at the
+        phase-1 stub values — useful for unit tests that only care
+        about the plan/puzzle plumbing.  Production callers
+        (``generate_plan_async``) construct a ``DeepseekLLM`` and
+        inject it here.  Tests that need verdict-path coverage
+        inject a ``FakeLLM`` with rigged output.
 
     Returns
     -------
@@ -175,7 +204,72 @@ def generate_plan(
         return existing
 
     db.refresh(plan)
+
+    # Phase 2: populate ``theme`` + ``verdict`` via a single-shot LLM
+    # call.  Best-effort — any failure (LLM unreachable, validator
+    # rejected twice, JSON parse failed) leaves the row at the phase-1
+    # stub values.  The verdict module returns the fallback tuple
+    # ``("generic", "")`` on its own error paths, so we can blindly
+    # write whatever it returns without re-checking.
+    if llm is not None:
+        _populate_verdict(
+            db=db,
+            plan=plan,
+            player_id=player_id,
+            mistake_fen=mistake_fen,
+            played_uci=played_uci,
+            llm=llm,
+        )
+
     return plan
+
+
+def _populate_verdict(
+    *,
+    db: DBSession,
+    plan: MistakeStudyPlan,
+    player_id: str,
+    mistake_fen: str,
+    played_uci: str,
+    llm: "BaseLLM",
+) -> None:
+    """Second-pass write that fills in the LLM-generated theme + verdict.
+
+    Split out from ``generate_plan`` so the LLM call doesn't sit
+    inside the plan/puzzle transaction — if the verdict commit raises,
+    the plan + puzzles are already durable and the user still gets a
+    usable (degraded) plan.  All exceptions are swallowed: this path
+    is non-critical and the caller (background task) can't surface
+    a failure to the user anyway.
+    """
+    try:
+        player = db.query(Player).filter(Player.id == player_id).first()
+        rating = float(player.rating) if player is not None else 1500.0
+        skill_hint = skill_hint_for_rating(rating)
+
+        theme, verdict = generate_verdict(
+            mistake_fen=mistake_fen,
+            played_uci=played_uci,
+            player_skill_hint=skill_hint,
+            llm=llm,
+        )
+
+        plan.theme = theme
+        plan.verdict = verdict
+        db.commit()
+        db.refresh(plan)
+    except Exception:  # noqa: BLE001
+        # LLM ran but DB write failed, or any other unexpected hiccup.
+        # Roll back so the failed write doesn't poison the txn for
+        # whatever the caller does next, but DON'T propagate — the
+        # plan + puzzles are already committed and the user-facing
+        # /game/finish response has shipped.
+        logger.exception(
+            "study_plan _populate_verdict failed for plan_id=%s player_id=%s",
+            plan.id,
+            player_id,
+        )
+        db.rollback()
 
 
 def generate_plan_async(
@@ -184,11 +278,13 @@ def generate_plan_async(
     source_event_id: str,
     mistake_fen: str,
     played_uci: str,
+    llm: "BaseLLM | None" = None,
 ) -> None:
     """FastAPI ``BackgroundTasks`` entrypoint — runs after /game/finish.
 
     Opens its own DB session (the request-scoped one is closed by the
-    time this fires), invokes ``generate_plan``, and swallows
+    time this fires), constructs a default ``DeepseekLLM`` if the
+    caller didn't inject one, invokes ``generate_plan``, and swallows
     exceptions so a generator hiccup never surfaces as a 500 the user
     can't see anyway.
 
@@ -204,6 +300,14 @@ def generate_plan_async(
     # background-task paths.
     from llm.seca.auth.router import SessionLocal  # noqa: PLC0415
 
+    # Default LLM construction also lazy so unit tests of
+    # ``generate_plan`` itself (which inject a FakeLLM) don't pay the
+    # cost of importing the DeepSeek adapter.
+    if llm is None:
+        from llm.rag.llm.deepseek import DeepseekLLM  # noqa: PLC0415
+
+        llm = DeepseekLLM()
+
     db = SessionLocal()
     try:
         generate_plan(
@@ -212,6 +316,7 @@ def generate_plan_async(
             source_event_id=source_event_id,
             mistake_fen=mistake_fen,
             played_uci=played_uci,
+            llm=llm,
         )
     except Exception:  # noqa: BLE001
         # Plan generation is non-critical: the user-facing
