@@ -33,7 +33,6 @@ from llm.seca.analysis.pgn_accuracy import (
 )
 from llm.seca.events.router import _resolve_authoritative_accuracy
 
-
 # ---------------------------------------------------------------------------
 # Fake engine pool
 # ---------------------------------------------------------------------------
@@ -354,7 +353,9 @@ class TestResolveAuthoritativeAccuracy:
 
         with caplog.at_level(logging.INFO):
             acc, wks, source, _ = _resolve_authoritative_accuracy(
-                request=request, req=req, player_id="p1"
+                engine_pool=getattr(request.app.state, "engine_pool", None),
+                req=req,
+                player_id="p1",
             )
 
         assert source == "client"
@@ -388,7 +389,9 @@ class TestResolveAuthoritativeAccuracy:
 
         with caplog.at_level(logging.WARNING):
             acc, wks, source, _ = _resolve_authoritative_accuracy(
-                request=request, req=req, player_id="p1"
+                engine_pool=getattr(request.app.state, "engine_pool", None),
+                req=req,
+                player_id="p1",
             )
 
         assert source == "engine"
@@ -404,8 +407,7 @@ class TestResolveAuthoritativeAccuracy:
             f"if this fails, the post-PR-171 aggregator pipeline is broken."
         )
         assert any(v > 0 for v in wks.values()), (
-            f"blundered game should produce at least one positive phase rate, "
-            f"got {wks}"
+            f"blundered game should produce at least one positive phase rate, " f"got {wks}"
         )
         # Divergence warning fired (|0.95 - acc| > 0.20).
         assert any("ACC_DIVERGENCE" in rec.message for rec in caplog.records)
@@ -413,7 +415,7 @@ class TestResolveAuthoritativeAccuracy:
     def test_no_divergence_warning_when_client_agrees(self, caplog):
         """PGNACC_RES_NO_DIVERGENCE: when client's accuracy is close
         to the server's recompute, no ACC_DIVERGENCE warning is logged."""
-# Clean game — both client and server should land near 1.0.
+        # Clean game — both client and server should land near 1.0.
         pgn = _pgn(["e4", "e5"], result="1-0")
         pool = _FakeEvalPool(cp_by_fen={})
         req = _StubGameFinishRequest(
@@ -426,7 +428,9 @@ class TestResolveAuthoritativeAccuracy:
 
         with caplog.at_level(logging.WARNING):
             _, _, source, _ = _resolve_authoritative_accuracy(
-                request=request, req=req, player_id="p1"
+                engine_pool=getattr(request.app.state, "engine_pool", None),
+                req=req,
+                player_id="p1",
             )
 
         assert source == "engine"
@@ -461,7 +465,9 @@ class TestResolveAuthoritativeAccuracy:
 
         with pytest.raises(HTTPException) as exc_info:
             _resolve_authoritative_accuracy(
-                request=request, req=req, player_id="p1"
+                engine_pool=getattr(request.app.state, "engine_pool", None),
+                req=req,
+                player_id="p1",
             )
         assert exc_info.value.status_code == 422
         assert "no player moves" in str(exc_info.value.detail).lower()
@@ -481,7 +487,9 @@ class TestResolveAuthoritativeAccuracy:
 
         with caplog.at_level(logging.INFO):
             acc, wks, source, _ = _resolve_authoritative_accuracy(
-                request=request, req=req, player_id="p1"
+                engine_pool=getattr(request.app.state, "engine_pool", None),
+                req=req,
+                player_id="p1",
             )
 
         assert source == "client"
@@ -524,10 +532,7 @@ def test_recent_weakness_loop_does_not_shadow_authoritative():
     import pathlib
 
     src = (
-        pathlib.Path(__file__).resolve().parent.parent
-        / "seca"
-        / "events"
-        / "router.py"
+        pathlib.Path(__file__).resolve().parent.parent / "seca" / "events" / "router.py"
     ).read_text(encoding="utf-8")
     forbidden = "weaknesses = json.loads(ev.weaknesses_json)"
     assert forbidden not in src, (

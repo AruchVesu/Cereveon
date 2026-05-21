@@ -29,10 +29,12 @@ Pinned invariants
         event's owner gets 403, not 404.
  4. GFS_UNKNOWN_EVENT_404
         A well-formed event_id that doesn't exist gets 404.
- 5. GFS_MISSING_RESULT_ROW_404
+ 5. GFS_MISSING_RESULT_ROW_202
         An event that exists but has no ``game_finish_results`` row
-        (a pre-PR finish or a persistence failure) gets 404 with a
-        distinct ``detail`` so operators can tell which case fired.
+        (a pre-PR finish, a persistence failure, OR a future async-
+        recompute path that hasn't completed yet) returns 202 +
+        ``{status: "pending", event_id}`` so polling clients know
+        to retry rather than give up.
  6. GFS_OVERSIZED_EVENT_ID_400
         An event_id longer than 64 chars rejects with 400 before any
         DB query, so a malicious probe can't waste a round-trip.
@@ -243,16 +245,24 @@ def test_GFS_UNKNOWN_EVENT_404(db_session):
 # ---------------------------------------------------------------------------
 
 
-def test_GFS_MISSING_RESULT_ROW_404(db_session):
-    """404 when the GameEvent exists but no GameFinishResult was
-    persisted — graceful path for finishes that completed before this
-    PR shipped (legacy data) or for cases where the best-effort
-    persistence in ``finish_game`` raised and rolled back.
+def test_GFS_MISSING_RESULT_ROW_202(db_session):
+    """202 + {status: "pending", event_id} when the GameEvent exists
+    but no GameFinishResult was persisted.
 
-    Distinct ``detail`` from the "event not found" 404 so operators
-    can tell the cases apart when investigating retry failures —
-    different remediation: legacy events can't be recovered; failed-
-    persistence cases mean the row write needs investigating."""
+    Three causes all reach this branch and the server cannot
+    distinguish them:
+      * legacy events that completed before PR #195 shipped
+      * finishes whose best-effort GameFinishResult persistence
+        inside ``finish_game`` raised and rolled back
+      * future async-recompute finishes whose background task
+        hasn't written the result row yet
+
+    All three share the polling-client contract: the result is not
+    available right now; retry.  The 202 (not 404) status signals
+    polling clients to keep trying rather than give up.
+
+    Pre-PR-2 (today's code, before this commit) returned 404 here;
+    the test was updated together with the route change."""
     _make_event_and_result(
         db_session,
         player_id="player-A",
@@ -260,18 +270,27 @@ def test_GFS_MISSING_RESULT_ROW_404(db_session):
         response_payload=None,  # no GameFinishResult written
     )
 
-    with pytest.raises(HTTPException) as exc_info:
-        game_finish_status(
-            event_id="event-no-result",
-            player=_player("player-A"),
-            db=db_session,
-        )
-    assert exc_info.value.status_code == 404
-    assert "finish result not available" in exc_info.value.detail.lower()
-    # Sanity: the detail message must NOT match the "event not found"
-    # detail.  A future refactor that unifies the two paths would
-    # erase the operator-visible distinction this test is pinning.
-    assert "event not found" not in exc_info.value.detail.lower()
+    # The handler now returns a JSONResponse (instead of raising
+    # HTTPException) when the result row is missing — pollers need
+    # the body shape, not just the status code.
+    from fastapi.responses import JSONResponse
+
+    out = game_finish_status(
+        event_id="event-no-result",
+        player=_player("player-A"),
+        db=db_session,
+    )
+    assert isinstance(out, JSONResponse), (
+        "Expected JSONResponse so the pending shape can carry a body; "
+        f"got {type(out).__name__}.  If you intentionally changed the "
+        "shape, update this test in the same commit."
+    )
+    assert out.status_code == 202
+    body = json.loads(out.body)
+    assert body == {"status": "pending", "event_id": "event-no-result"}, (
+        f"Pending body shape must be {{status, event_id}}; got {body!r}.  "
+        "Polling clients depend on this exact shape."
+    )
 
 
 # ---------------------------------------------------------------------------
