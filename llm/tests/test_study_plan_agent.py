@@ -696,6 +696,429 @@ class TestVerdictBranchCoverage:
         assert llm.call_count == 2
 
 
+class TestPuzzleLibraryLoad:
+    """``library.load_library`` reads YAML, validates every entry,
+    and crashes on the FIRST failure with an identifying error
+    message."""
+
+    def _write_yaml(self, tmp_path, content: str, name: str = "p.yaml") -> None:
+        (tmp_path / name).write_text(content, encoding="utf-8")
+
+    def test_loads_shipped_corpus(self):
+        """LIBRARY_LOAD_SHIPPED_CORPUS — the loader succeeds against
+        the repo's seed corpus."""
+        from llm.seca.coach.study_plan.library import load_library
+
+        lib = load_library()
+        total = sum(len(v) for v in lib.values())
+        assert total >= 1
+
+    def test_rejects_unknown_theme(self, tmp_path, monkeypatch):
+        from llm.seca.coach.study_plan import library as lib_module
+
+        self._write_yaml(
+            tmp_path,
+            content=(
+                "- id: bad_theme_x\n"
+                "  theme: not_a_real_theme\n"
+                "  difficulty: beginner\n"
+                '  fen: "8/4P3/8/8/8/8/8/4K2k w - - 0 1"\n'
+                '  expected_move_uci: "e7e8q"\n'
+                '  description: "stub"\n'
+            ),
+        )
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", tmp_path)
+        with pytest.raises(lib_module.LibraryValidationError, match="unknown theme"):
+            lib_module.load_library()
+
+    def test_rejects_unknown_difficulty(self, tmp_path, monkeypatch):
+        from llm.seca.coach.study_plan import library as lib_module
+
+        self._write_yaml(
+            tmp_path,
+            content=(
+                "- id: bad_diff_x\n"
+                "  theme: generic\n"
+                "  difficulty: master\n"
+                '  fen: "8/4P3/8/8/8/8/8/4K2k w - - 0 1"\n'
+                '  expected_move_uci: "e7e8q"\n'
+                '  description: "stub"\n'
+            ),
+        )
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", tmp_path)
+        with pytest.raises(lib_module.LibraryValidationError, match="unknown difficulty"):
+            lib_module.load_library()
+
+    def test_rejects_illegal_move(self, tmp_path, monkeypatch):
+        from llm.seca.coach.study_plan import library as lib_module
+
+        self._write_yaml(
+            tmp_path,
+            content=(
+                "- id: illegal_move_x\n"
+                "  theme: generic\n"
+                "  difficulty: beginner\n"
+                '  fen: "8/4P3/8/8/8/8/8/4K2k w - - 0 1"\n'
+                '  expected_move_uci: "a1a8"\n'
+                '  description: "stub"\n'
+            ),
+        )
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", tmp_path)
+        with pytest.raises(lib_module.LibraryValidationError, match="not a legal move"):
+            lib_module.load_library()
+
+    def test_rejects_unparseable_fen(self, tmp_path, monkeypatch):
+        from llm.seca.coach.study_plan import library as lib_module
+
+        self._write_yaml(
+            tmp_path,
+            content=(
+                "- id: bad_fen_x\n"
+                "  theme: generic\n"
+                "  difficulty: beginner\n"
+                '  fen: "this is not a fen at all"\n'
+                '  expected_move_uci: "e2e4"\n'
+                '  description: "stub"\n'
+            ),
+        )
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", tmp_path)
+        with pytest.raises(lib_module.LibraryValidationError):
+            lib_module.load_library()
+
+    def test_rejects_duplicate_id(self, tmp_path, monkeypatch):
+        from llm.seca.coach.study_plan import library as lib_module
+
+        self._write_yaml(
+            tmp_path,
+            content=(
+                "- id: same_id\n"
+                "  theme: generic\n"
+                "  difficulty: beginner\n"
+                '  fen: "8/4P3/8/8/8/8/8/4K2k w - - 0 1"\n'
+                '  expected_move_uci: "e7e8q"\n'
+                '  description: "first"\n'
+                "- id: same_id\n"
+                "  theme: generic\n"
+                "  difficulty: beginner\n"
+                '  fen: "8/4P3/8/8/8/8/8/4K2k w - - 0 1"\n'
+                '  expected_move_uci: "e7e8q"\n'
+                '  description: "second"\n'
+            ),
+        )
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", tmp_path)
+        with pytest.raises(lib_module.LibraryValidationError, match="duplicate puzzle id"):
+            lib_module.load_library()
+
+    def test_rejects_missing_field(self, tmp_path, monkeypatch):
+        from llm.seca.coach.study_plan import library as lib_module
+
+        self._write_yaml(
+            tmp_path,
+            content=(
+                "- id: missing_desc_x\n"
+                "  theme: generic\n"
+                "  difficulty: beginner\n"
+                '  fen: "8/4P3/8/8/8/8/8/4K2k w - - 0 1"\n'
+                '  expected_move_uci: "e7e8q"\n'
+            ),
+        )
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", tmp_path)
+        with pytest.raises(lib_module.LibraryValidationError, match="missing required field"):
+            lib_module.load_library()
+
+    def test_rejects_non_string_field(self, tmp_path, monkeypatch):
+        from llm.seca.coach.study_plan import library as lib_module
+
+        self._write_yaml(
+            tmp_path,
+            content=(
+                "- id: non_string_x\n"
+                "  theme: 42\n"
+                "  difficulty: beginner\n"
+                '  fen: "8/4P3/8/8/8/8/8/4K2k w - - 0 1"\n'
+                '  expected_move_uci: "e7e8q"\n'
+                '  description: "stub"\n'
+            ),
+        )
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", tmp_path)
+        with pytest.raises(lib_module.LibraryValidationError, match="must be a string"):
+            lib_module.load_library()
+
+    def test_rejects_non_list_top_level(self, tmp_path, monkeypatch):
+        from llm.seca.coach.study_plan import library as lib_module
+
+        self._write_yaml(
+            tmp_path,
+            content="wrong_shape:\n  - foo\n",
+        )
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", tmp_path)
+        with pytest.raises(lib_module.LibraryValidationError, match="top-level must be a list"):
+            lib_module.load_library()
+
+    def test_rejects_non_dict_entry(self, tmp_path, monkeypatch):
+        from llm.seca.coach.study_plan import library as lib_module
+
+        self._write_yaml(tmp_path, content="- just_a_string\n")
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", tmp_path)
+        with pytest.raises(lib_module.LibraryValidationError, match="entry must be a dict"):
+            lib_module.load_library()
+
+    def test_empty_yaml_file_skipped(self, tmp_path, monkeypatch):
+        from llm.seca.coach.study_plan import library as lib_module
+
+        self._write_yaml(tmp_path, content="", name="empty.yaml")
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", tmp_path)
+        lib = lib_module.load_library()
+        assert all(v == [] for v in lib.values())
+
+    def test_unparseable_uci_falls_back_to_validation_error(self, tmp_path, monkeypatch):
+        from llm.seca.coach.study_plan import library as lib_module
+
+        self._write_yaml(
+            tmp_path,
+            content=(
+                "- id: bad_uci_x\n"
+                "  theme: generic\n"
+                "  difficulty: beginner\n"
+                '  fen: "8/4P3/8/8/8/8/8/4K2k w - - 0 1"\n'
+                '  expected_move_uci: "???"\n'
+                '  description: "stub"\n'
+            ),
+        )
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", tmp_path)
+        with pytest.raises(lib_module.LibraryValidationError):
+            lib_module.load_library()
+
+    def test_missing_library_dir_returns_empty(self, tmp_path, monkeypatch):
+        from llm.seca.coach.study_plan import library as lib_module
+
+        missing = tmp_path / "does_not_exist"
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", missing)
+        lib = lib_module.load_library()
+        assert lib == {theme: [] for theme in lib_module.THEME_VOCABULARY}
+
+
+class TestPuzzleLibraryPicker:
+    """``library.pick_two_puzzles`` — deterministic per plan_id."""
+
+    def _puzzle(self, pid: str, theme: str, difficulty: str = "intermediate"):
+        from llm.seca.coach.study_plan.library import LibraryPuzzle
+
+        return LibraryPuzzle(
+            id=pid,
+            theme=theme,
+            difficulty=difficulty,
+            fen="8/4P3/8/8/8/8/8/4K2k w - - 0 1",
+            expected_move_uci="e7e8q",
+            description="stub",
+        )
+
+    def test_returns_two_distinct(self):
+        from llm.seca.coach.study_plan.library import pick_two_puzzles
+
+        library = {
+            "fork": [self._puzzle("a", "fork"), self._puzzle("b", "fork"), self._puzzle("c", "fork")],
+            "generic": [],
+        }
+        d3, d7 = pick_two_puzzles(library, "fork", "intermediate", "plan-1")
+        assert d3 is not None and d7 is not None
+        assert d3.id != d7.id
+
+    def test_deterministic_per_plan_id(self):
+        from llm.seca.coach.study_plan.library import pick_two_puzzles
+
+        library = {"fork": [self._puzzle(c, "fork") for c in "abcdef"], "generic": []}
+        first = pick_two_puzzles(library, "fork", "intermediate", "plan-42")
+        second = pick_two_puzzles(library, "fork", "intermediate", "plan-42")
+        assert (first[0].id, first[1].id) == (second[0].id, second[1].id)
+
+    def test_different_plan_ids_can_pick_different_puzzles(self):
+        from llm.seca.coach.study_plan.library import pick_two_puzzles
+
+        library = {"fork": [self._puzzle(c, "fork") for c in "abcdefgh"], "generic": []}
+        pairs = set()
+        for plan_id in [f"plan-{i}" for i in range(50)]:
+            d3, d7 = pick_two_puzzles(library, "fork", "intermediate", plan_id)
+            pairs.add((d3.id, d7.id))
+        assert len(pairs) >= 3
+
+    def test_falls_back_to_generic(self):
+        from llm.seca.coach.study_plan.library import pick_two_puzzles
+
+        library = {
+            "fork": [],
+            "generic": [self._puzzle("g1", "generic"), self._puzzle("g2", "generic")],
+        }
+        d3, d7 = pick_two_puzzles(library, "fork", "intermediate", "plan-1")
+        assert d3.theme == "generic" and d7.theme == "generic"
+
+    def test_returns_none_when_library_empty(self):
+        from llm.seca.coach.study_plan.library import pick_two_puzzles
+
+        result = pick_two_puzzles({"fork": [], "generic": []}, "fork", "intermediate", "plan-1")
+        assert result == (None, None)
+
+    def test_single_puzzle_returned_twice(self):
+        from llm.seca.coach.study_plan.library import pick_two_puzzles
+
+        only = self._puzzle("solo", "fork")
+        d3, d7 = pick_two_puzzles(
+            {"fork": [only], "generic": []}, "fork", "intermediate", "plan-1"
+        )
+        assert d3 is only and d7 is only
+
+    def test_skill_filter_biases_band(self):
+        from llm.seca.coach.study_plan.library import pick_two_puzzles
+
+        library = {
+            "fork": [
+                self._puzzle("b1", "fork", "beginner"),
+                self._puzzle("b2", "fork", "beginner"),
+                self._puzzle("a1", "fork", "advanced"),
+                self._puzzle("a2", "fork", "advanced"),
+            ],
+            "generic": [],
+        }
+        picked_ids: set[str] = set()
+        for plan_id in [f"p-{i}" for i in range(30)]:
+            d3, d7 = pick_two_puzzles(library, "fork", "beginner", plan_id)
+            picked_ids.add(d3.id)
+            picked_ids.add(d7.id)
+        assert "a1" not in picked_ids
+        assert "a2" not in picked_ids
+
+    def test_unknown_skill_hint_falls_through(self):
+        """When skill_hint isn't a known band (defensive), the filter
+        doesn't crash — it just returns the whole candidate pool."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles
+
+        library = {
+            "fork": [self._puzzle("a", "fork"), self._puzzle("b", "fork")],
+            "generic": [],
+        }
+        d3, d7 = pick_two_puzzles(library, "fork", "unknown_band", "plan-1")
+        assert d3 is not None and d7 is not None
+
+    def test_skill_filter_falls_through_when_empty(self):
+        """When the skill filter would empty the candidate pool, fall
+        through to the unfiltered pool rather than returning (None, None)."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles
+
+        library = {
+            "fork": [self._puzzle("a1", "fork", "advanced"), self._puzzle("a2", "fork", "advanced")],
+            "generic": [],
+        }
+        # Beginner skill_hint + advanced-only puzzles: filter would
+        # empty (band gap is 2).  Should fall through to the full pool.
+        d3, d7 = pick_two_puzzles(library, "fork", "beginner", "plan-1")
+        assert d3 is not None and d7 is not None
+
+
+class TestAgentLibraryIntegration:
+    """``generate_plan`` end-to-end with verdict + library wired."""
+
+    _CLEAN_VERDICT = (
+        "Bringing the king toward the centre with pieces still on the "
+        "board exposes it to a quick attack; the resulting tempo loss "
+        "let the opponent build pressure faster than it could be defended."
+    )
+
+    def _puzzle(self, pid, theme, fen, move="e2e4", difficulty="intermediate"):
+        from llm.seca.coach.study_plan.library import LibraryPuzzle
+
+        return LibraryPuzzle(
+            id=pid,
+            theme=theme,
+            difficulty=difficulty,
+            fen=fen,
+            expected_move_uci=move,
+            description="stub",
+        )
+
+    def test_phase_3_replaces_day_3_and_day_7(self, db_session, player, game_event):
+        from llm.seca.coach.study_plan.models import (
+            PUZZLE_SOURCE_LIBRARY,
+            PUZZLE_SOURCE_ORIGINAL,
+        )
+
+        json_clean = f'{{"theme": "king_safety", "verdict": "{self._CLEAN_VERDICT}"}}'
+        llm = _ScriptedLLM([json_clean])
+        library = {
+            "king_safety": [
+                self._puzzle(
+                    "ks_a", "king_safety",
+                    "8/4P3/8/8/8/8/8/4K2k w - - 0 1", "e7e8q",
+                ),
+                self._puzzle(
+                    "ks_b", "king_safety",
+                    "4k3/8/8/8/3b4/4Q3/8/4K3 w - - 0 1", "e3d4",
+                ),
+            ],
+            "generic": [],
+        }
+
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=llm,
+            library=library,
+        )
+
+        by_offset = {p.day_offset: p for p in plan.puzzles}
+        assert by_offset[0].fen == _MISTAKE_FEN
+        assert by_offset[0].source_type == PUZZLE_SOURCE_ORIGINAL
+        for offset in (3, 7):
+            assert by_offset[offset].source_type == PUZZLE_SOURCE_LIBRARY
+            assert by_offset[offset].fen != _MISTAKE_FEN
+        assert by_offset[3].fen != by_offset[7].fen
+
+    def test_phase_3_falls_back_when_library_empty(self, db_session, player, game_event):
+        from llm.seca.coach.study_plan.models import PUZZLE_SOURCE_ORIGINAL
+
+        llm = _ScriptedLLM(
+            [f'{{"theme": "king_safety", "verdict": "{self._CLEAN_VERDICT}"}}']
+        )
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=llm,
+            library={"king_safety": [], "generic": []},
+        )
+        for puzzle in plan.puzzles:
+            assert puzzle.fen == _MISTAKE_FEN
+            assert puzzle.source_type == PUZZLE_SOURCE_ORIGINAL
+
+    def test_phase_3_skipped_when_llm_is_none(self, db_session, player, game_event):
+        from llm.seca.coach.study_plan.models import PUZZLE_SOURCE_ORIGINAL
+
+        library = {
+            "generic": [
+                self._puzzle(
+                    "gn_test", "generic",
+                    "8/4P3/8/8/8/8/8/4K2k w - - 0 1", "e7e8q",
+                ),
+            ]
+        }
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=None,
+            library=library,
+        )
+        for puzzle in plan.puzzles:
+            assert puzzle.fen == _MISTAKE_FEN
+            assert puzzle.source_type == PUZZLE_SOURCE_ORIGINAL
+
+
 class TestSkillHintForRating:
     """``skill_hint_for_rating`` maps a Player.rating value to one of
     three bands the LLM prompt uses to shape vocabulary.  Bands pinned

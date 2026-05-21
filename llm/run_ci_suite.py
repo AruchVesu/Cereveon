@@ -269,11 +269,14 @@ COVERAGE_TARGETS = [
     # model + stub generator + GET /coach/plan/today endpoint.
     # Phase 2: LLM-generated theme + verdict via single-shot call,
     # gated by Mode-2 negative validator + output firewall.
+    # Phase 3: theme-matched library variants for day-3 / day-7
+    # puzzles from the curated YAML corpus.
     # Covered by test_study_plan_agent.py.
     "llm.seca.coach.study_plan.models",
     "llm.seca.coach.study_plan.agent",
     "llm.seca.coach.study_plan.router",
     "llm.seca.coach.study_plan.verdict",
+    "llm.seca.coach.study_plan.library",
     "llm.seca.mistakes.router",
     # llm.seca.coach.live_controller, llm.seca.coach.executor,
     # llm.seca.coach.confidence_language_controller, and

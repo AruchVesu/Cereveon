@@ -1464,10 +1464,12 @@ the one originating mistake.  Day 0 is the exact mistake position;
 days 3 and 7 are theme-matched library variants (phase 3+; phase 1
 ships with all three days pointing at the same mistake FEN).
 
-Phase 2 (live): the endpoint serves the persisted plan with the
-LLM-generated `theme` + `verdict` populated.  The Android
-`TodaysDrillCard` is still pending (phase 4) so no client polls this
-endpoint in production today.
+Phase 3 (live): the endpoint serves the persisted plan with
+LLM-generated `theme` + `verdict` (phase 2) AND with day-3 / day-7
+puzzles replaced by theme-matched library variants from the curated
+YAML corpus.  Day-0 is always the player's original mistake position.
+The Android `TodaysDrillCard` is still pending (phase 4) so no
+client polls this endpoint in production today.
 
 The `theme` field is one of the following tags:
 
@@ -1522,7 +1524,7 @@ No body.  Reads the authenticated player from the bearer token.
 | `today_puzzle.day_offset` | `int` | One of `0`, `3`, `7`.  Maps to "Day 1 / 3", "Day 2 / 3", "Day 3 / 3" via a static client-side label. |
 | `today_puzzle.fen` | `string` | Position the puzzle drops the user into. |
 | `today_puzzle.expected_move_uci` | `string` | The engine's preferred move at that FEN (UCI).  For day-0 puzzles this is the player's ORIGINAL bad move — the puzzle asks the user to find a stronger alternative.  For library variants this is the puzzle's expected solution. |
-| `today_puzzle.source_type` | `string` | `"original"` for day-0 (the player's actual mistake); `"library"` for theme-matched variants (phase 3+).  Lets the UI title the puzzle accordingly. |
+| `today_puzzle.source_type` | `string` | `"original"` for day-0 (the player's actual mistake) and any day whose library lookup didn't find a match; `"library"` for day-3 / day-7 puzzles served from the curated YAML corpus (`llm/seca/coach/study_plan/library/`).  Lets the UI title the puzzle accordingly ("Replay your mistake" vs "Practice: <theme>"). |
 | `today_puzzle.due_at` | `string` | ISO-8601 UTC timestamp of when the puzzle became available.  Invariant: `due_at <= now()` whenever this object is non-null. |
 
 ### Response (200, no active plan)

@@ -51,8 +51,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 
 from llm.seca.auth.models import Player
+from llm.seca.coach.study_plan.library import (
+    LibraryPuzzle,
+    load_library,
+    pick_two_puzzles,
+)
 from llm.seca.coach.study_plan.models import (
     PLAN_DAY_OFFSETS,
+    PUZZLE_SOURCE_LIBRARY,
     PUZZLE_SOURCE_ORIGINAL,
     STATUS_ACTIVE,
     MistakeStudyPlan,
@@ -66,6 +72,13 @@ from llm.seca.coach.study_plan.verdict import (
 if TYPE_CHECKING:
     from llm.rag.llm.base import BaseLLM
 
+
+# Phase 3: module-level singleton.  Load the curated YAML corpus once
+# at import time so per-plan path is a cheap dict lookup.  A malformed
+# YAML crashes the import (loud failure at server boot, not a silent
+# skip), which surfaces corpus drift in CI rather than in prod logs.
+_LIBRARY: dict[str, list[LibraryPuzzle]] = load_library()
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,6 +90,7 @@ def generate_plan(
     mistake_fen: str,
     played_uci: str,
     llm: "BaseLLM | None" = None,
+    library: dict[str, list[LibraryPuzzle]] | None = None,
 ) -> MistakeStudyPlan | None:
     """Create (or return existing) a 3-puzzle study plan for one mistake.
 
@@ -221,6 +235,19 @@ def generate_plan(
             llm=llm,
         )
 
+        # Phase 3: replace day-3 / day-7 puzzles with theme-matched
+        # library variants.  Runs AFTER the verdict commit so the
+        # selector sees the LLM-classified theme.  Defensive: any
+        # selector / commit failure leaves day-3 / day-7 at the
+        # phase-1 stub (original mistake position).
+        active_library = library if library is not None else _LIBRARY
+        _populate_library_variants(
+            db=db,
+            plan=plan,
+            player_id=player_id,
+            library=active_library,
+        )
+
     return plan
 
 
@@ -266,6 +293,60 @@ def _populate_verdict(
         # /game/finish response has shipped.
         logger.exception(
             "study_plan _populate_verdict failed for plan_id=%s player_id=%s",
+            plan.id,
+            player_id,
+        )
+        db.rollback()
+
+
+def _populate_library_variants(
+    *,
+    db: DBSession,
+    plan: MistakeStudyPlan,
+    player_id: str,
+    library: dict[str, list[LibraryPuzzle]],
+) -> None:
+    """Phase 3: replace day-3 / day-7 stub puzzles with theme-matched
+    library variants.  Day 0 (the player's actual mistake) is never
+    touched.  Selection is deterministic per plan_id (see
+    ``library.pick_two_puzzles``) so a re-fired BackgroundTask doesn't
+    shuffle the schedule under the user.
+
+    When the requested theme AND the ``"generic"`` fallback bucket
+    are both empty, no update happens — the day-3 / day-7 rows stay
+    at the phase-1 stub (original mistake position).
+    """
+    try:
+        player = db.query(Player).filter(Player.id == player_id).first()
+        rating = float(player.rating) if player is not None else 1500.0
+        skill_hint = skill_hint_for_rating(rating)
+
+        puzzle_day_3, puzzle_day_7 = pick_two_puzzles(
+            library=library,
+            theme=plan.theme,
+            skill_hint=skill_hint,
+            plan_id=plan.id,
+        )
+        if puzzle_day_3 is None or puzzle_day_7 is None:
+            logger.info(
+                "study_plan no library puzzles for theme=%s; days 3/7 stay at mistake position",
+                plan.theme,
+            )
+            return
+
+        db.refresh(plan)
+        by_offset = {p.day_offset: p for p in plan.puzzles}
+        for offset, picked in ((3, puzzle_day_3), (7, puzzle_day_7)):
+            row = by_offset.get(offset)
+            if row is None:
+                continue
+            row.fen = picked.fen
+            row.expected_move_uci = picked.expected_move_uci
+            row.source_type = PUZZLE_SOURCE_LIBRARY
+        db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "study_plan _populate_library_variants failed for plan_id=%s player_id=%s",
             plan.id,
             player_id,
         )
