@@ -330,6 +330,26 @@ async def lifespan(app: FastAPI):
 
         logger.info("DB initialized")
         logger.info("Stockfish engine pool initialized (size=%d)", settings.pool_size)
+    except SystemExit:
+        # The SECA safety freeze (``llm.seca.safety.freeze._crash``)
+        # raises ``SystemExit(1)`` via ``sys.exit`` when the runtime
+        # is unsafe (forbidden brain module pre-loaded, SAFE_MODE off
+        # in prod, ...).  ``SystemExit`` inherits from
+        # ``BaseException``, not ``Exception``, so the broad
+        # ``except Exception`` below does not catch it by construction
+        # — pinned by ``test_safety_freeze.py::
+        # test_lifespan_crashes_with_forbidden_brain_module``.  This
+        # explicit re-raise is defensive: it documents the
+        # "freeze-must-propagate" invariant so a future contributor
+        # cannot accidentally widen the catch (e.g. to
+        # ``except BaseException``) and silently downgrade the safety
+        # refusal to an "engine pool disabled" warning that lets the
+        # process keep serving.  The "memory" note on lifespan testing
+        # (anyio TaskGroup wrapping under TestClient) documents the
+        # one path where this re-raise is not enough on its own — that
+        # path is exclusive to tests; production uvicorn propagates
+        # ``SystemExit`` unwrapped.
+        raise
     except Exception as e:
         if engine_pool:
             engine_pool.close()
