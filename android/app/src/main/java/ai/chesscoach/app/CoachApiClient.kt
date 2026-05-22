@@ -206,9 +206,24 @@ class HttpCoachApiClient(
         coachVoice: String?,
     ): Flow<StreamChunk> = channelFlow {
         withContext(Dispatchers.IO) {
+            // Declared outside the body try so the finally block can
+            // disconnect on any exit path — happy completion, HTTP
+            // error, or transport exception.  Without the disconnect,
+            // ``inputStream.use {}`` closes the read pipe but the
+            // underlying socket can linger up to ``readTimeoutMs``
+            // (60 s) before the platform reclaims it.
+            //
+            // Residual gap: under coroutine cancellation while
+            // ``reader.readLine()`` is blocked, the finally only runs
+            // after the JVM read returns (worst case: readTimeoutMs).
+            // ``Dispatchers.IO`` does not interrupt threads on cancel,
+            // so a future improvement is to register a cancel-hook
+            // (suspendCancellableCoroutine / runInterruptible) that
+            // closes the socket from outside the blocked thread.
+            var conn: HttpURLConnection? = null
             try {
                 val url = URL("$baseUrl$CHAT_STREAM_PATH")
-                val conn = url.openConnection() as HttpURLConnection
+                conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.setRequestProperty("Accept", "text/event-stream")
@@ -250,6 +265,16 @@ class HttpCoachApiClient(
                 send(StreamChunk.StreamError("Timeout"))
             } catch (e: Exception) {
                 send(StreamChunk.StreamError(e.message ?: "Network error"))
+            } finally {
+                // ``disconnect()`` is documented to be safe to call
+                // multiple times and on connections that never opened
+                // a socket.  Swallow any teardown exception so a
+                // dying socket doesn't mask the original error path.
+                try {
+                    conn?.disconnect()
+                } catch (_: Exception) {
+                    // intentionally ignored — teardown best-effort
+                }
             }
         }
     }
