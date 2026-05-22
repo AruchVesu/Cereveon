@@ -60,6 +60,16 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
     private var isStreaming = false
 
     /**
+     * True while [preloadServerHistory] is in flight on a fresh open.
+     * Gates [sendBtn] so a user who taps Send before the server's
+     * history fetch lands does not race the preloaded turns —
+     * otherwise the about-to-be-sent message renders first and the
+     * server's older turns append after it, breaking chronological
+     * order in the bubble list.
+     */
+    private var isPreloading = false
+
+    /**
      * Player profile injected by the host Activity when a game has been completed.
      * Sourced from [GameFinishResponse.newRating] and [GameFinishResponse.confidence].
      * Null when no game has finished in this session (opening/pre-game chat).
@@ -289,28 +299,45 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
             // greeting based on what landed.  Network failure is
             // non-fatal: an empty history shows the greeting just like a
             // brand-new player would see it.
+            //
+            // Disable Send synchronously, BEFORE the coroutine launches,
+            // so a user who taps the button between launch and preload
+            // completion does not append their message above the
+            // about-to-land server history.  Re-enabled in the launch's
+            // finally block to cover network failure / coroutine cancel.
+            isPreloading = true
+            sendBtn.isEnabled = false
             viewLifecycleOwner.lifecycleScope.launch {
-                preloadServerHistory()
-                val seed = seedPrompt
-                when {
-                    seed != null -> {
-                        appendUser(seed)
-                        sendToBackend(seed)
+                try {
+                    preloadServerHistory()
+                    val seed = seedPrompt
+                    when {
+                        seed != null -> {
+                            appendUser(seed)
+                            sendToBackend(seed)
+                        }
+                        sessionStore.messages.isEmpty() -> {
+                            appendAssistant(
+                                "Hi! Ask me about the current position, strategy, or your recent mistakes."
+                            )
+                        }
+                        // else: history loaded — let the user see their
+                        // prior conversation without an injected greeting.
                     }
-                    sessionStore.messages.isEmpty() -> {
-                        appendAssistant(
-                            "Hi! Ask me about the current position, strategy, or your recent mistakes."
-                        )
-                    }
-                    // else: history loaded — let the user see their
-                    // prior conversation without an injected greeting.
+                } finally {
+                    // Re-enable Send regardless of preload outcome —
+                    // network failure, success, or coroutine cancel.
+                    // Without the finally, a getHistory() throw would
+                    // leave the button permanently dead until reopen.
+                    isPreloading = false
+                    sendBtn.isEnabled = true
                 }
             }
         }
 
         sendBtn.setOnClickListener {
             val text = input.text.toString().trim()
-            if (text.isNotEmpty() && !isStreaming) {
+            if (text.isNotEmpty() && !isStreaming && !isPreloading) {
                 input.setText("")
                 appendUser(text)
                 sendToBackend(text)
