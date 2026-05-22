@@ -44,6 +44,13 @@ class EventStorage:
             # self.db.add(confidence_update)
             self.db.commit()
         except Exception:
+            # Rollback before re-raising so a Postgres commit failure
+            # cannot leave the session in InFailedSqlTransaction — same
+            # cascade class as the 2026-05-15 /game/finish incident
+            # (PR #165).  SQLAlchemy's pool reset_on_return saves us at
+            # connection-return, but a caller that catches this and
+            # reuses the same Session would 500 on the next ORM call.
+            self.db.rollback()
             logger.exception("Learning pipeline crash in EventStorage.store_game")
             raise
         self.db.refresh(event)

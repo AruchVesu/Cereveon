@@ -101,8 +101,10 @@ def test_estore_01_store_game_persists_event_and_logs_analytics(db, player):
 def test_estore_02_commit_crash_propagates_after_logging(db, player, caplog):
     """If the DB commit raises mid-store_game, the except branch in
     EventStorage.store_game must:
-      1. emit a logger.exception so operators see the traceback,
-      2. re-raise so the caller knows the write failed (rather than
+      1. rollback so the session is not left in InFailedSqlTransaction
+         (Postgres cascade class — see PR #165 /game/finish incident),
+      2. emit a logger.exception so operators see the traceback,
+      3. re-raise so the caller knows the write failed (rather than
          silently dropping the game event).
 
     Implemented by monkey-patching ``db.commit`` to raise after the
@@ -115,6 +117,8 @@ def test_estore_02_commit_crash_propagates_after_logging(db, player, caplog):
         pass
 
     original_commit = db.commit
+    rollback_calls: list[int] = []
+    original_rollback = db.rollback
 
     def _exploding_commit():
         # Restore the real commit before raising so the rollback that
@@ -122,7 +126,12 @@ def test_estore_02_commit_crash_propagates_after_logging(db, player, caplog):
         db.commit = original_commit  # type: ignore[method-assign]
         raise _BoomError("simulated DB crash mid-commit")
 
+    def _counting_rollback():
+        rollback_calls.append(1)
+        return original_rollback()
+
     db.commit = _exploding_commit  # type: ignore[method-assign]
+    db.rollback = _counting_rollback  # type: ignore[method-assign]
 
     import logging
 
@@ -135,6 +144,15 @@ def test_estore_02_commit_crash_propagates_after_logging(db, player, caplog):
                 accuracy=0.1,
                 weaknesses={},
             )
+
+    # The except branch must rollback before re-raising — without this,
+    # a Postgres commit failure leaves the session in
+    # InFailedSqlTransaction and the next ORM call in any caller that
+    # reuses the session cascades to a second 500.
+    assert rollback_calls, (
+        "EventStorage.store_game must call db.rollback() in its except "
+        "branch before re-raising (see PR #165 /game/finish cascade incident)"
+    )
 
     # The except branch must log before re-raising — without this,
     # production lost the stack trace and only saw a 500 in the
