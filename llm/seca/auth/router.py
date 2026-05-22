@@ -6,6 +6,8 @@
 
 import json
 import os
+
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, Header, Request, Response
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, Session as DBSession
@@ -262,7 +264,14 @@ def get_current_player(
         raise HTTPException(status_code=401, detail="Invalid token")
     try:
         payload = decode_token(token)
-    except Exception:
+    except jwt.InvalidTokenError:
+        # Narrow catch: only JWT-level failures (expired / tampered /
+        # wrong secret / malformed / alg:none) map to 401.  Any other
+        # exception out of decode_token — pyjwt API drift, import-time
+        # failure, SECRET_KEY length guard misfire — is a programming /
+        # deploy error that must surface as a 500 with a traceback so
+        # operators see it, not be silently downgraded to a 401 storm
+        # in which "users can't log in" is the only symptom.
         raise HTTPException(status_code=401, detail="Invalid token")
 
     service = AuthService(db)
@@ -473,7 +482,10 @@ def logout(
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     try:
         payload = decode_token(token)
-    except Exception:
+    except jwt.InvalidTokenError:
+        # See get_current_player above — narrow to jwt.InvalidTokenError
+        # so non-JWT exceptions surface as 500 instead of masquerading
+        # as bad-token 401s.
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     AuthService(db).logout(payload["session_id"])
     return {"status": "logged_out"}
