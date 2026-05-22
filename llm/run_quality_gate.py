@@ -94,7 +94,6 @@ FORMAT_TARGETS = [
     "llm/seca/safety/freeze.py",
     "llm/seca/shared_limiter.py",
     "llm/seca/storage/db.py",
-    "llm/seca/storage/event_storage.py",
     "llm/seca/storage/models.py",
     "llm/seca/storage/repo.py",
     "llm/seca/training/__init__.py",
@@ -180,7 +179,6 @@ PYLINT_TARGETS = [
     "llm/seca/shared_limiter.py",
     "llm/seca/skills/updater.py",
     "llm/seca/storage/db.py",
-    "llm/seca/storage/event_storage.py",
     "llm/seca/storage/models.py",
     "llm/seca/storage/repo.py",
     "llm/seca/training/__init__.py",
@@ -281,7 +279,6 @@ MYPY_TARGETS = [
     "llm/seca/training/__init__.py",
     "llm/seca/training/models.py",
     "llm/seca/training/router.py",
-    "llm/seca/storage/event_storage.py",
     "llm/seca/storage/repo.py",
 ]
 

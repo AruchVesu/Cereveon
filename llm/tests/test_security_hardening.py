@@ -31,6 +31,9 @@ Stable test IDs (do NOT rename):
   SH_15  repo.py contains no f-string SQL interpolation
   SH_15b event_store.py must NOT exist on disk (file retired in PR 20; the
          class was unused and shadowed the live ``events/storage.EventStorage``)
+  SH_15d storage/event_storage.py must NOT exist on disk (sibling cleanup —
+         raw sqlite3 + AUTOINCREMENT class, unused; shadowed the live
+         ``events/storage.EventStorage`` the same way ``event_store.py`` did)
   SH_16  seca_doctor.py defines _ALLOWED_TABLES before any SQL execution
   SH_16b seca_doctor.py references _ALLOWED_TABLES in its body
   SH_17  /auth/register has @limiter.limit rate-limiting decorator
@@ -579,6 +582,37 @@ class TestSQLSafety:
         source = _read("seca/storage/db.py")
         hits = self._FSTRING_SQL.findall(source)
         assert not hits, f"storage/db.py contains f-string SQL: {hits}"
+
+    def test_sh15d_event_storage_file_is_gone(self):
+        """SH_15d: ``llm/seca/storage/event_storage.py`` must NOT exist on disk.
+
+        The file held a parallel ``EventStorage`` class built on raw
+        ``sqlite3`` with ``CREATE TABLE … AUTOINCREMENT`` DDL — a
+        SQLite-only syntax that parse-fails on Postgres before
+        ``IF NOT EXISTS`` can fire, exactly the failure mode pinned by
+        memory ``feedback_raw_ddl_dialect_drift``.  It had no callers
+        anywhere in the live tree (grep ``from llm.seca.storage.event_storage``
+        returned no matches), and its class name shadowed the live
+        ``llm.seca.events.storage.EventStorage`` the same way
+        ``event_store.py`` did before SH_15b retired that one.
+
+        Same deletion-discipline rationale as SH_15b: assert the file
+        stays gone, so a future contributor reverting a stale import
+        sees an immediate test failure with the rationale in this
+        docstring.  The live event-persistence surface is
+        ``llm/seca/events/storage.py``.
+        """
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[2]
+        path = repo_root / "llm" / "seca" / "storage" / "event_storage.py"
+        assert not path.exists(), (
+            f"{path} must not exist post-cleanup. If you re-added it as "
+            "part of a revert, the live event surface is at "
+            "llm/seca/events/storage.py (EventStorage).  The retired "
+            "class used SQLite-only AUTOINCREMENT DDL that would "
+            "parse-fail on Postgres if ever activated."
+        )
 
     def test_sh16_seca_doctor_defines_allowed_tables_before_sql(self):
         """SH_16: seca_doctor.py must define _ALLOWED_TABLES before any cur.execute call."""
