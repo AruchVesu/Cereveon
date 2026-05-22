@@ -1967,14 +1967,100 @@ async def chat_stream(
             exc,
         )
 
+    # Take ownership of the JWT rotation from the
+    # ``commit_pending_auth_rotation`` middleware.  The middleware's
+    # default eager-commit model fires the DB write BEFORE the
+    # response body starts streaming — for a non-streaming JSON
+    # route the gap to "headers on the wire" is microseconds and the
+    # ``previous_token_hash`` 10 s grace window absorbs any TCP drop
+    # in that window.  For a long-running SSE stream the same eager
+    # commit still happens microseconds before ASGI flushes the
+    # headers, but the perception is asymmetric: a stream that
+    # subsequently fails mid-transmission is much more common than
+    # a fast-route failure.  By popping the pending rotation here
+    # we tell the middleware "this handler owns the rotation
+    # lifecycle"; we set ``X-Auth-Token`` on the response header
+    # synchronously (so it ships with the first wire bytes), and we
+    # commit the DB rotation INSIDE the generator after the first
+    # chunk has been yielded.  At that point ASGI has handed the
+    # first body bytes to the socket and the headers are
+    # demonstrably out — narrowing the "client received the new
+    # token but server has not yet rotated" race to microseconds
+    # within which the previous_token_hash grace window is more
+    # than enough.
+    pending_rotation = getattr(request.state, "pending_auth_rotation", None)
+    if pending_rotation is not None:
+        # Clear from request.state so the middleware sees None and
+        # skips its commit path.
+        try:
+            del request.state.pending_auth_rotation
+        except AttributeError:
+            # Starlette ``State`` is a plain attrdict; del should
+            # always work, but stay defensive against future
+            # framework changes.
+            pass
+
     def _generate():
         words = result.reply.split(" ")
+        rotation_committed = False
         for i, word in enumerate(words):
             text = word if i == len(words) - 1 else word + " "
             yield f"data: {json.dumps({'type': 'chunk', 'text': text})}\n\n"
+            if not rotation_committed and pending_rotation is not None:
+                # First chunk has been handed to ASGI for socket
+                # transmission; the response headers (including
+                # X-Auth-Token) preceded it.  Safe to land the DB
+                # rotation now — a stream failure before this point
+                # leaves the old token's hash in place, so the
+                # client's next call with its previously-known
+                # token still validates.
+                rotation_committed = True
+                try:
+                    # Deferred import mirrors the middleware path —
+                    # avoids importing auth.router at server.py
+                    # module-import time before lifespan has run
+                    # init_schema.
+                    from llm.seca.auth.router import (  # noqa: PLC0415
+                        SessionLocal as _SessionLocal,
+                    )
+                    from llm.seca.auth.service import (  # noqa: PLC0415
+                        AuthService as _AuthService,
+                    )
+
+                    with _SessionLocal() as _db_rot:
+                        _AuthService(_db_rot).rotate_session_token(
+                            pending_rotation["session_id"],
+                            pending_rotation["new_token"],
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    # Match the middleware's behaviour on commit
+                    # failure: log and continue.  The client has
+                    # already received X-Auth-Token (header is on
+                    # the wire), so a DB hiccup here means server
+                    # token_hash stays at the OLD value while client
+                    # has the NEW — the previous_token_hash grace
+                    # window does not cover this case, so the user
+                    # will re-login on their next call.  Rare
+                    # (single UPDATE + commit) and recoverable.
+                    logger.warning(
+                        "post-stream-start auth rotation commit "
+                        "failed (%s: %s) — client received new "
+                        "token but server hash unchanged; "
+                        "expecting one re-login",
+                        type(exc).__name__,
+                        exc,
+                    )
         yield f"data: {json.dumps({'type': 'done', 'engine_signal': result.engine_signal, 'mode': result.mode})}\n\n"
 
-    return StreamingResponse(_generate(), media_type="text/event-stream")
+    response = StreamingResponse(_generate(), media_type="text/event-stream")
+    if pending_rotation is not None:
+        # Pre-populate the rotation header so it ships with the
+        # initial response headers, before the first chunk yields.
+        # The Android client consumes this header via
+        # ``consumeRefreshedToken`` in ``CoachApiClient.kt`` right
+        # after parsing the response code, before reading the body.
+        response.headers["X-Auth-Token"] = pending_rotation["new_token"]
+    return response
 
 
 # ------------------------------------------------------------------
