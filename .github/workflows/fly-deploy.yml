@@ -207,15 +207,40 @@ jobs:
         # fix version exists and one is unlikely to ship.  Revisit if
         # pyjwt ever releases a version that explicitly addresses the
         # advisory, or if our SECRET_KEY guarantees change.
-        run: python -m pip_audit -r llm/requirements.txt --strict --ignore-vuln PYSEC-2025-183 --progress-spinner off
+        #
+        # PYSEC-2026-161 is a REAL advisory against starlette 0.50.0:
+        # missing Host-header validation lets ``request.url.path`` be
+        # poisoned, which could bypass path-based security checks (fix
+        # is starlette 1.0.1).  Cannot bump in isolation —
+        # fastapi 0.128.1 pins ``starlette<0.51.0``, so closing the
+        # advisory requires a coordinated fastapi bump (tracked
+        # separately).  Mitigations in place until then:
+        #   1. Caddy reverse proxy uses a {$DOMAIN} site block (see
+        #      Caddyfile) which rejects requests with a Host header
+        #      that does not match the configured domain BEFORE they
+        #      reach uvicorn — the poisoned-Host attack vector is cut
+        #      at the edge.
+        #   2. Our auth path does NOT consume ``request.url.path``
+        #      for security decisions.  ``get_current_player``
+        #      validates the Bearer token and session_id only; routes
+        #      are matched by FastAPI's routing layer (operates on the
+        #      ACTUAL request path, not the poisoned reconstruction).
+        # Revisit when fastapi ships a release with
+        # ``starlette>=1.0.1`` (latest is 0.136.1 at the time of this
+        # commit — verify its starlette constraint before dropping
+        # this suppression).
+        run: python -m pip_audit -r llm/requirements.txt --strict --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2026-161 --progress-spinner off
 
       - name: Audit CI/toolchain dependencies
-        # Same disputed PYSEC-2025-183 suppression rationale as the
-        # runtime audit step above — pyjwt is also pulled in
-        # transitively by the CI dependency tree (e.g. test fixtures
-        # that mint tokens against the auth router), and the disputed
-        # advisory + SECRET_KEY mitigation both apply identically here.
-        run: python -m pip_audit -r llm/requirements-ci.txt --strict --ignore-vuln PYSEC-2025-183 --progress-spinner off
+        # Same suppression rationale as the runtime audit step above:
+        #   - PYSEC-2025-183 disputed pyjwt advisory + SECRET_KEY
+        #     mitigation apply identically (pyjwt is also pulled in
+        #     transitively by the CI dependency tree, e.g. test
+        #     fixtures that mint tokens against the auth router).
+        #   - PYSEC-2026-161 starlette Host-header advisory + Caddy
+        #     edge-mitigation apply identically (starlette is
+        #     transitively shared between runtime and CI deps).
+        run: python -m pip_audit -r llm/requirements-ci.txt --strict --ignore-vuln PYSEC-2025-183 --ignore-vuln PYSEC-2026-161 --progress-spinner off
 
   node-security:
     name: Node dependency audit
