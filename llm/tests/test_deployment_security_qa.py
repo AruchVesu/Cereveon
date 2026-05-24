@@ -38,8 +38,12 @@ _SECRET_PATTERNS = [
     re.compile(r'-----BEGIN (?:RSA |EC )?PRIVATE KEY-----'),
 ]
 
+# ``llm/Dockerfile`` was renamed to ``llm/Dockerfile.api`` (see
+# fly-deploy.yml:508 — the docker-images job builds the API image
+# from ``./llm/Dockerfile.api``).  The pre-rename entry was retained
+# here long enough to silently no-op two parametrized tests; the
+# 2026-05-24 fresh debt sweep caught the drift and removed it.
 _DOCKERFILE_PATHS = [
-    _LLM_ROOT / "Dockerfile",
     _LLM_ROOT / "Dockerfile.api",
     _REPO_ROOT / "Dockerfile",
 ]
@@ -86,9 +90,14 @@ class TestDep03NoSecretsInDockerfile:
 
     def test_dockerfile_uses_env_for_api_key(self):
         """LLM Dockerfile must not hardcode SECA_API_KEY — must use ARG or ENV from runtime."""
-        llm_dockerfile = _LLM_ROOT / "Dockerfile"
-        if not llm_dockerfile.exists():
-            pytest.skip("llm/Dockerfile not found")
+        # Re-pinned to ``Dockerfile.api`` in the 2026-05-24 fresh debt
+        # sweep — the previous ``llm/Dockerfile`` path silently skipped
+        # since the rename (see _DOCKERFILE_PATHS comment above).
+        llm_dockerfile = _LLM_ROOT / "Dockerfile.api"
+        assert llm_dockerfile.exists(), (
+            f"Expected {llm_dockerfile} to exist — if the build artefact moved again, "
+            "update this path and _DOCKERFILE_PATHS in the same commit."
+        )
         text = llm_dockerfile.read_text(encoding="utf-8")
         # Must not hardcode the key value
         assert "SECA_API_KEY=" not in text or "SECA_API_KEY=$" in text or \
