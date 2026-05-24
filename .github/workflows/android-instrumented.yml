@@ -65,7 +65,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -121,7 +121,7 @@ jobs:
       # debuggable from the GitHub Actions UI without re-running locally.
       - name: Upload HTML test report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: connected-test-html-${{ github.run_id }}
           path: android/app/build/reports/androidTests/connected/
@@ -131,7 +131,7 @@ jobs:
       # for downstream test-results aggregators if/when one is wired up.
       - name: Upload XML test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: connected-test-xml-${{ github.run_id }}
           path: android/app/build/outputs/androidTest-results/connected/
