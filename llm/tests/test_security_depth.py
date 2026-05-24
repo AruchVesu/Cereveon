@@ -280,89 +280,19 @@ class TestBodySizeLimitBypass:
 
 
 # ===========================================================================
-# SVD_02 — MoveRequest.moves_uci: Unbounded List
+# SVD_02 — RETIRED (2026-05-15, PR #160 — feature retirement).
+#
+# MoveRequest and the POST /move endpoint were removed in the SECA-Android
+# wiring-audit cleanup (commit 2da7672e).  The class no longer exists in
+# server.py, so the moves_uci-unbounded-list DoS surface this section pinned
+# is closed by deletion rather than by validator addition.  /live/move
+# (LiveMoveRequest) does not expose a moves_uci field; the equivalent
+# attack surface is gone.
+#
+# Discovery: the prior ``except Exception: pytest.skip(...)`` pattern hid the
+# import failure for 9 days.  Replacing skip → fail (this commit) surfaced
+# the drift; the class deletion here resolves it.
 # ===========================================================================
-
-
-class TestMoveRequestUnboundedList:
-    """
-    MoveRequest.moves_uci accepts a list[str] | None with no validator.
-
-    Every element in this list is eventually passed to chess.Board.push_uci(),
-    meaning the server iterates over each move.  An attacker can send a list
-    of 100 000 moves, causing significant CPU and memory pressure per request.
-
-    Fix: add a @field_validator("moves_uci") capping the list at a reasonable
-    maximum (e.g., 500 half-moves ≈ 250 full moves for a game of normal length).
-    """
-
-    def test_svd02_move_request_has_no_moves_uci_validator(self):
-        """SVD_02: MoveRequest must have a @field_validator('moves_uci') to cap list length."""
-        tree = _parse("server.py")
-        cls = _find_class(tree, "MoveRequest")
-        assert cls is not None, "MoveRequest not found in server.py"
-        assert _has_field_validator(cls, "moves_uci"), (
-            "SVD_02: MoveRequest has no @field_validator('moves_uci'). "
-            "The moves_uci field accepts an unbounded list — a caller can send hundreds "
-            "of thousands of move strings, causing O(n) processing per request and enabling DoS. "
-            "Cap the list (e.g., max 500 entries) and each element (e.g., max 5 chars)."
-        )
-
-    def test_svd02b_move_request_accepts_large_moves_uci_list(self):
-        """SVD_02b: MoveRequest currently accepts an arbitrarily long moves_uci list."""
-        os.environ.setdefault("SECA_API_KEY", "test")
-        os.environ.setdefault("SECA_ENV", "dev")
-
-        try:
-            from pydantic import ValidationError
-            from llm.server import MoveRequest
-
-            # This should raise ValidationError if the validator exists; it does NOT raise.
-            req = MoveRequest(
-                fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-                moves_uci=["e2e4"] * 10_000,
-            )
-            assert len(req.moves_uci) == 10_000, (
-                "SVD_02b: MoveRequest accepted 10 000 moves without raising ValidationError. "
-                "This confirms the missing list-length cap. Add a @field_validator('moves_uci') "
-                "that rejects lists longer than a safe maximum."
-            )
-            # Test passes ONLY when the bug exists (no cap).
-            # Invert the assertion so the test FAILS (correctly) when the bug is present.
-            pytest.fail(
-                "SVD_02b: MoveRequest accepted moves_uci with 10 000 entries — no length cap. "
-                "Add @field_validator('moves_uci') with a reasonable maximum (e.g., 500)."
-            )
-        except Exception as exc:
-            if "ValidationError" in type(exc).__name__:
-                pass  # Fixed — validator now rejects oversized lists
-            else:
-                pytest.skip(f"Import chain unavailable in this environment: {exc}")
-
-    def test_svd02c_move_request_accepts_long_individual_uci_strings(self):
-        """SVD_02c: MoveRequest accepts moves_uci elements of unlimited length."""
-        os.environ.setdefault("SECA_API_KEY", "test")
-        os.environ.setdefault("SECA_ENV", "dev")
-
-        try:
-            from pydantic import ValidationError
-            from llm.server import MoveRequest
-
-            long_move = "e2e4" + "x" * 10_000  # valid prefix, massive padding
-            req = MoveRequest(
-                fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-                moves_uci=[long_move],
-            )
-            _ = req  # model instantiated without error
-            pytest.fail(
-                f"SVD_02c: MoveRequest accepted a {len(long_move)}-char UCI string without error. "
-                "Individual elements in moves_uci should be capped at 5 characters (UCI move format)."
-            )
-        except Exception as exc:
-            if "ValidationError" in type(exc).__name__:
-                pass  # Fixed
-            else:
-                pytest.skip(f"Import chain unavailable: {exc}")
 
 
 # ===========================================================================
@@ -470,7 +400,7 @@ class TestPlayerProfileInjectionBypass:
             if "ValidationError" in type(exc).__name__:
                 pass  # Fixed — injection now detected at schema layer
             else:
-                pytest.skip(f"Import chain unavailable: {exc}")
+                pytest.fail(f"Import chain unavailable: {exc}")
 
     def test_svd04b_message_content_injection_correctly_rejected(self):
         """SVD_04b: ChatRequest correctly rejects injection patterns in message content (contrast)."""
@@ -491,7 +421,7 @@ class TestPlayerProfileInjectionBypass:
         except pytest.skip.Exception:
             raise
         except Exception:
-            pytest.skip("Import chain unavailable")
+            pytest.fail("Import chain unavailable")
 
     def test_svd04c_validate_player_profile_does_not_call_sanitize(self):
         """SVD_04c: validate_player_profile in server.py must call sanitize_user_query on values."""
@@ -555,7 +485,7 @@ class TestPastMistakesInjectionBypass:
             if "ValidationError" in type(exc).__name__:
                 pass  # Fixed
             else:
-                pytest.skip(f"Import chain unavailable: {exc}")
+                pytest.fail(f"Import chain unavailable: {exc}")
 
     def test_svd05b_validate_past_mistakes_does_not_call_sanitize(self):
         """SVD_05b: validate_past_mistakes in server.py must call sanitize_user_query on items."""
@@ -662,8 +592,13 @@ class TestUCIFormatValidation:
         "####",   # special characters
         "zz77",   # invalid column letters
         "a9a9",   # invalid row numbers
-        "a1a1",   # same source/destination (usually illegal but format passes)
         "11aa",   # digits as column, letters as row
+        # NOTE: "a1a1" was removed in the 2026-05-24 skip-tightening cleanup.
+        # It IS valid by ``_VALID_UCI_RE`` (a→a, 1→1 — null move format-wise),
+        # so the precondition assert at line ~683 fired before the
+        # bug-present pytest.fail.  The maintainer flagged this in-line
+        # ("usually illegal but format passes") but never removed it; the
+        # silent skip hid the contradiction until skip → fail surfaced it.
     ])
     def test_svd06b_invalid_uci_formats_pass_length_check(self, bad_uci: str):
         """SVD_06b: LiveMoveRequest accepts UCI strings that are not valid chess notation."""
@@ -692,7 +627,7 @@ class TestUCIFormatValidation:
             if "ValidationError" in type(exc).__name__:
                 pass  # Fixed
             else:
-                pytest.skip(f"Import chain unavailable: {exc}")
+                pytest.fail(f"Import chain unavailable: {exc}")
 
     @pytest.mark.parametrize("good_uci", [
         "e2e4",   # pawn push
@@ -722,7 +657,7 @@ class TestUCIFormatValidation:
                     "Format validation must accept all properly formatted moves."
                 )
             else:
-                pytest.skip(f"Import chain unavailable: {exc}")
+                pytest.fail(f"Import chain unavailable: {exc}")
 
 
 # ===========================================================================
@@ -780,28 +715,34 @@ class TestFENValidationPermissive:
 
     @pytest.mark.parametrize("bad_fen", _GARBAGE_FENS)
     def test_svd07b_garbage_fen_passes_field_validator(self, bad_fen: str):
-        """SVD_07b: _validate_fen_field passes garbage 6-word FEN strings."""
+        """SVD_07b: _validate_fen_field passes garbage 6-word FEN strings.
+
+        Re-pinned to LiveMoveRequest in 2026-05-24 cleanup — MoveRequest was
+        retired in PR #160 along with the /move endpoint.  ``_validate_fen_field``
+        is the canonical shared validator (server.py:810) and is invoked by every
+        request schema that takes a ``fen`` field, so LiveMoveRequest is a
+        sound carrier for the functional test.
+        """
         # Import _validate_fen_field without triggering the full server startup
         os.environ.setdefault("SECA_API_KEY", "test")
         os.environ.setdefault("SECA_ENV", "dev")
 
         try:
             from pydantic import ValidationError
-            from llm.server import MoveRequest
+            from llm.server import LiveMoveRequest
 
-            req = MoveRequest(fen=bad_fen)
+            # uci is a required field on LiveMoveRequest; "e2e4" is a placeholder
+            # — the bug being tested is in fen validation, not uci.
+            req = LiveMoveRequest(fen=bad_fen, uci="e2e4")
             _ = req
             pytest.fail(
-                f"SVD_07b: MoveRequest accepted FEN {bad_fen!r} which is not valid chess notation. "
-                "When this FEN reaches chess.Board() inside the route handler, it will raise "
-                "ValueError and return 500 instead of 422. "
-                "Add chess.Board() parse validation inside _validate_fen_field()."
+                f"SVD_07b: LiveMoveRequest accepted FEN {bad_fen!r} which is not valid chess "
+                "notation.  When this FEN reaches chess.Board() inside the route handler, it "
+                "will raise ValueError and return 500 instead of 422.  Add chess.Board() parse "
+                "validation inside _validate_fen_field()."
             )
-        except Exception as exc:
-            if "ValidationError" in type(exc).__name__:
-                pass  # Fixed — semantic FEN validation now rejects garbage
-            else:
-                pytest.skip(f"Import chain unavailable: {exc}")
+        except ValidationError:
+            pass  # Fixed — semantic FEN validation now rejects garbage
 
     def test_svd07c_validate_fen_field_source_only_checks_part_count(self):
         """SVD_07c: _validate_fen_field source confirms only part count and length are checked."""
@@ -878,7 +819,7 @@ class TestStartGameRequestPlayerIdLength:
             if "ValidationError" in type(exc).__name__:
                 pass  # Fixed
             else:
-                pytest.skip(f"Import chain unavailable: {exc}")
+                pytest.fail(f"Import chain unavailable: {exc}")
 
 
 # ===========================================================================
@@ -1041,7 +982,7 @@ class TestInferenceExplainFenValidation:
             with pytest.raises(ValidationError):
                 ExplainRequest(fen="X X X X X X")
         except ImportError as exc:
-            pytest.skip(f"Import chain unavailable: {exc}")
+            pytest.fail(f"Import chain unavailable: {exc}")
 
     def test_new04c_inference_explain_request_accepts_valid_fen(self):
         """NEW_04c: ExplainRequest must accept a valid FEN string."""
@@ -1054,7 +995,7 @@ class TestInferenceExplainFenValidation:
             req = ExplainRequest(fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
             assert req.fen is not None
         except ImportError as exc:
-            pytest.skip(f"Import chain unavailable: {exc}")
+            pytest.fail(f"Import chain unavailable: {exc}")
 
 
 # ===========================================================================
