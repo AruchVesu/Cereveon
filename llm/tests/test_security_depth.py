@@ -424,14 +424,17 @@ class TestPlayerProfileInjectionBypass:
             pytest.fail("Import chain unavailable")
 
     def test_svd04c_validate_player_profile_does_not_call_sanitize(self):
-        """SVD_04c: validate_player_profile in server.py must call sanitize_user_query on values."""
-        source = _read("server.py")
+        """SVD_04c: validate_player_profile in server_schemas.py must call sanitize_user_query on values."""
+        # Schemas were extracted from server.py to server_schemas.py in the
+        # 2026-05-24 size-reduction cleanup; the SVD invariants migrate
+        # with the symbols.
+        source = _read("server_schemas.py")
         profile_validator = re.search(
             r"def validate_player_profile\b.*?(?=\n    @field_validator|\n    class |\nclass |\Z)",
             source,
             re.DOTALL,
         )
-        assert profile_validator, "validate_player_profile not found in server.py"
+        assert profile_validator, "validate_player_profile not found in server_schemas.py"
         validator_body = profile_validator.group(0)
 
         calls_sanitize = bool(
@@ -488,14 +491,15 @@ class TestPastMistakesInjectionBypass:
                 pytest.fail(f"Import chain unavailable: {exc}")
 
     def test_svd05b_validate_past_mistakes_does_not_call_sanitize(self):
-        """SVD_05b: validate_past_mistakes in server.py must call sanitize_user_query on items."""
-        source = _read("server.py")
+        """SVD_05b: validate_past_mistakes in server_schemas.py must call sanitize_user_query on items."""
+        # See SVD_04c comment — symbols migrated to server_schemas.py.
+        source = _read("server_schemas.py")
         pm_validator = re.search(
             r"def validate_past_mistakes\b.*?(?=\n    @field_validator|\n    class |\nclass |\Z)",
             source,
             re.DOTALL,
         )
-        assert pm_validator, "validate_past_mistakes not found in server.py"
+        assert pm_validator, "validate_past_mistakes not found in server_schemas.py"
         validator_body = pm_validator.group(0)
 
         calls_sanitize = bool(
@@ -550,13 +554,14 @@ class TestUCIFormatValidation:
 
     def test_svd06_uci_validator_only_checks_length_in_source(self):
         """SVD_06: LiveMoveRequest.validate_uci must validate format, not just length."""
-        source = _read("server.py")
+        # See SVD_04c comment — schemas migrated to server_schemas.py.
+        source = _read("server_schemas.py")
         uci_validator = re.search(
             r"def validate_uci\b.*?(?=\n    @field_validator|\n    @classmethod|\n    class |\nclass |\Z)",
             source,
             re.DOTALL,
         )
-        assert uci_validator, "validate_uci not found in server.py"
+        assert uci_validator, "validate_uci not found in server_schemas.py"
         validator_body = uci_validator.group(0)
 
         # The validator must do more than a length check
@@ -690,13 +695,14 @@ class TestFENValidationPermissive:
 
     def test_svd07_fen_validator_does_not_validate_semantics_in_source(self):
         """SVD_07: _validate_fen_field must validate FEN semantics, not just format."""
-        source = _read("server.py")
+        # See SVD_04c comment — _validate_fen_field migrated to server_schemas.py.
+        source = _read("server_schemas.py")
         fen_validator = re.search(
             r"def _validate_fen_field\b.*?(?=\ndef |\nclass |\Z)",
             source,
             re.DOTALL,
         )
-        assert fen_validator, "_validate_fen_field not found in server.py"
+        assert fen_validator, "_validate_fen_field not found in server_schemas.py"
         # Skip the def-line to avoid matching the function name "validate" itself.
         func_lines = fen_validator.group(0).split("\n")
         validator_body = "\n".join(func_lines[1:])  # body only, no def line
@@ -746,13 +752,14 @@ class TestFENValidationPermissive:
 
     def test_svd07c_validate_fen_field_source_only_checks_part_count(self):
         """SVD_07c: _validate_fen_field source confirms only part count and length are checked."""
-        source = _read("server.py")
+        # See SVD_04c comment — _validate_fen_field migrated to server_schemas.py.
+        source = _read("server_schemas.py")
         fen_validator = re.search(
             r"def _validate_fen_field\b.*?(?=\ndef |\nclass |\Z)",
             source,
             re.DOTALL,
         )
-        assert fen_validator, "_validate_fen_field not found in server.py"
+        assert fen_validator, "_validate_fen_field not found in server_schemas.py"
         body = fen_validator.group(0)
 
         # Currently: len(parts) != 6 or len(stripped) > 100
@@ -788,9 +795,10 @@ class TestStartGameRequestPlayerIdLength:
 
     def test_svd08_start_game_request_has_no_player_id_validator(self):
         """SVD_08: StartGameRequest must have a @field_validator('player_id') with a length cap."""
-        tree = _parse("server.py")
+        # See SVD_04c comment — StartGameRequest migrated to server_schemas.py.
+        tree = _parse("server_schemas.py")
         cls = _find_class(tree, "StartGameRequest")
-        assert cls is not None, "StartGameRequest not found in server.py"
+        assert cls is not None, "StartGameRequest not found in server_schemas.py"
         assert _has_field_validator(cls, "player_id"), (
             "SVD_08: StartGameRequest has no @field_validator('player_id'). "
             "player_id is passed directly to create_game() and written to the database "

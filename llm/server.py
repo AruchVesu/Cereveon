@@ -3,13 +3,11 @@ import hmac
 import json
 import logging
 import os
-import re
 import shutil
 import chess
 import httpx
 import time
 from contextlib import asynccontextmanager
-from typing import Literal
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -68,7 +66,6 @@ from llm.rag.validators.explain_response_schema import (
     validate_live_move_response,
     ExplainSchemaError,
 )
-from llm.rag.prompts.input_sanitizer import sanitize_user_query
 from llm.seca.adaptation.coupling import compute_adaptation
 from llm.seca.curriculum.scheduler import CurriculumScheduler
 from llm.seca.storage.db import init_db
@@ -803,241 +800,26 @@ def _env_int_first(names: list[str], default: int) -> int:
 
 
 # ------------------------------------------------------------------
-# Schemas
+# Schemas — extracted to ``llm/server_schemas.py`` in the 2026-05-24
+# size-reduction cleanup.  The names are re-exported below so existing
+# ``from llm.server import X`` imports across the codebase continue to
+# resolve unchanged.  See server_schemas.py for trust-boundary notes
+# and the per-model docstrings (AnalyzeRequest's PR 9 lineage, etc.).
 # ------------------------------------------------------------------
-
-
-def _validate_fen_field(v: str) -> str:
-    stripped = v.strip()
-    if stripped.lower() == "startpos":
-        return v
-    parts = stripped.split()
-    if len(parts) != 6 or len(stripped) > 100:
-        raise ValueError("invalid FEN")
-    try:
-        chess.Board(stripped)
-    except ValueError:
-        raise ValueError("invalid FEN")
-    return v
-
-
-class AnalyzeRequest(BaseModel):
-    """Request shape for ``/analyze`` and ``/explain``.
-
-    Pre-PR-9 this carried an optional ``stockfish_json: dict`` field
-    that the route handlers piped directly into ``extract_engine_signal``.
-    That was a trust-boundary inconsistency with the architecture
-    invariant *"Stockfish JSON: Trusted"* (which implies the JSON is
-    server-authentic, not client-supplied).  A modded client could
-    claim any position evaluation and the server would build an ESV
-    from it.  Practical impact was bounded (``/explain`` is
-    SafeExplainer-only, no LLM gating; ``/analyze`` just returns the
-    ESV to the caller — both deceiving only the client itself), but
-    the architectural inconsistency was real.
-
-    PR 9 removes the field.  Pydantic's default extra-field policy
-    (``ignore``) silently drops any ``stockfish_json`` a back-compat
-    client still sends, so this is not a breaking change for the
-    sending side; only the server's access to that value is gone.
-    Both handlers now build the ESV from FEN-only heuristics via
-    ``extract_engine_signal(None, fen=req.fen)`` — the same fall-back
-    path that already handled missing/empty stockfish_json.
-
-    Routes that need real engine evaluation (``/live/move``,
-    ``/seca/explain``) acquire the engine pool server-side and feed
-    extract_engine_signal with the authentic Stockfish output — that
-    path is unchanged.
-    """
-
-    fen: str
-    user_query: str | None = ""
-
-    @field_validator("fen")
-    @classmethod
-    def validate_fen(cls, v: str) -> str:
-        return _validate_fen_field(v)
-
-    @field_validator("user_query")
-    @classmethod
-    def validate_user_query(cls, v: str | None) -> str | None:
-        if v and len(v) > 2000:
-            raise ValueError("user_query too long (max 2000 chars)")
-        return sanitize_user_query(v) if v else v
-
-
-class EngineEvalRequest(BaseModel):
-    """Body of POST /engine/eval — Android's HttpEngineEvalClient sends
-    only a FEN.  Previously hosted by the standalone host_app.py debug
-    server (never deployed to production, so the Android calls 404'd
-    silently and the eval-after-AI-move badge in MainActivity rendered
-    "⚠ Eval N/A" until this route was migrated to server.py).
-
-    Contract intentionally narrower than host_app's: drops the unused
-    GET variant + ``moves``/``movetime_ms``/``nodes`` fields that no
-    in-tree caller sends.  Adding them back is a contract widening
-    that requires an Android client update in the same release.
-    """
-
-    fen: str
-
-    @field_validator("fen")
-    @classmethod
-    def validate_fen(cls, v: str) -> str:
-        return _validate_fen_field(v)
-
-
-class LiveMoveRequest(BaseModel):
-    fen: str
-    uci: str
-    player_id: str | None = None
-
-    @field_validator("fen")
-    @classmethod
-    def validate_fen(cls, v: str) -> str:
-        return _validate_fen_field(v)
-
-    @field_validator("uci")
-    @classmethod
-    def validate_uci(cls, v: str) -> str:
-        if not re.fullmatch(r"[a-h][1-8][a-h][1-8][qrbnQRBN]?", v):
-            raise ValueError(
-                "uci move must be [a-h][1-8][a-h][1-8] with optional promotion [qrbnQRBN]"
-            )
-        return v
-
-    @field_validator("player_id")
-    @classmethod
-    def validate_player_id(cls, v: str | None) -> str | None:
-        if v is not None and len(v) > 100:
-            raise ValueError("player_id too long (max 100 chars)")
-        return v
-
-
-class StartGameRequest(BaseModel):
-    # T3: player_id is now derived from the authenticated session.  The field
-    # is accepted (optional) for backwards compatibility with older Android
-    # clients that still send it, and ignored server-side.  Remove the field
-    # once all clients have been updated to omit it.
-    player_id: str | None = None
-
-    @field_validator("player_id")
-    @classmethod
-    def validate_player_id(cls, v: str | None) -> str | None:
-        if v is not None and len(v) > 100:
-            raise ValueError("player_id too long (max 100 chars)")
-        return v
-
-
-class CurriculumRecommendRequest(BaseModel):
-    skill_vector: list[float]
-
-
-class GameRequest(BaseModel):
-    player_id: str
-    pgn: str
-
-
-class GameFinishRequest(BaseModel):
-    player_id: str
-    pgn: str
-
-
-class GameFinishClosedLoopRequest(BaseModel):
-    player_id: int
-    game_id: int
-
-
-class ChatTurnModel(BaseModel):
-    """A single turn in a coaching conversation."""
-
-    role: Literal["user", "assistant"]
-    content: str
-
-    @field_validator("content")
-    @classmethod
-    def validate_content(cls, v: str) -> str:
-        if len(v) > 2000:
-            raise ValueError("message content too long (max 2000 chars)")
-        return sanitize_user_query(v) if v else v
-
-
-class ChatRequest(BaseModel):
-    """Request body for POST /chat."""
-
-    fen: str
-    messages: list[ChatTurnModel]
-    player_profile: dict | None = None
-    past_mistakes: list[str] | None = None
-    # Coach voice setting from the Android Settings sheet — affects
-    # the LLM's tone but never its content (the engine signal stays
-    # authoritative).  Strict allow-list so an unknown value fails
-    # validation rather than silently bleeding into the prompt.
-    coach_voice: str | None = None
-
-    @field_validator("player_profile")
-    @classmethod
-    def validate_player_profile(cls, v: dict | None) -> dict | None:
-        if v is not None:
-            if len(v) > 20:
-                raise ValueError("player_profile too many keys (max 20)")
-            total = sum(len(str(k)) + len(str(val)) for k, val in v.items())
-            if total > 2000:
-                raise ValueError("player_profile too large (max 2000 chars total)")
-            for k, val in v.items():
-                if isinstance(k, str):
-                    sanitize_user_query(k)
-                if isinstance(val, str):
-                    sanitize_user_query(val)
-        return v
-
-    move_count: int | None = None
-
-    @field_validator("fen")
-    @classmethod
-    def validate_fen(cls, v: str) -> str:
-        return _validate_fen_field(v)
-
-    @field_validator("messages")
-    @classmethod
-    def validate_messages(cls, v: list) -> list:
-        if len(v) > 50:
-            raise ValueError("too many messages in history (max 50)")
-        return v
-
-    @field_validator("past_mistakes")
-    @classmethod
-    def validate_past_mistakes(cls, v: list | None) -> list | None:
-        if v is not None:
-            if len(v) > 20:
-                raise ValueError("past_mistakes list too long (max 20)")
-            for item in v:
-                if len(item) > 500:
-                    raise ValueError("past_mistakes item too long (max 500 chars)")
-                sanitize_user_query(item)
-        return v
-
-    @field_validator("move_count")
-    @classmethod
-    def validate_move_count(cls, v: int | None) -> int | None:
-        if v is not None and not (0 <= v <= 10_000):
-            raise ValueError("move_count must be 0–10000")
-        return v
-
-    @field_validator("coach_voice")
-    @classmethod
-    def validate_coach_voice(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        v = v.strip().lower()
-        if v == "":
-            return None
-        # Allow-list mirrors the Android SettingsBottomSheet radio
-        # values exactly.  Any other value (e.g. attacker-supplied
-        # prompt-injection bait disguised as a tone) is rejected
-        # before it reaches the LLM prompt.
-        if v not in {"formal", "conversational", "terse"}:
-            raise ValueError("coach_voice must be one of 'formal', 'conversational', 'terse'")
-        return v
+from llm.server_schemas import (  # noqa: E402,F401  (re-export shim)
+    _validate_fen_field,
+    AnalyzeRequest,
+    ChatRequest,
+    ChatTurnModel,
+    CurriculumRecommendRequest,
+    EngineEvalRequest,
+    GameCheckpointRequest,
+    GameFinishClosedLoopRequest,
+    GameFinishRequest,
+    GameRequest,
+    LiveMoveRequest,
+    StartGameRequest,
+)
 
 
 def build_engine_signal(req: AnalyzeRequest):
@@ -1563,40 +1345,9 @@ def start_game(req: StartGameRequest, request: Request, player=Depends(get_curre
 # storage/schema.sql + storage/db.py for the schema.
 
 
-class GameCheckpointRequest(BaseModel):
-    """In-progress board state pushed by the client after each move.
-
-    fen: full FEN of the current position.  Validated through the
-        canonical ``_validate_fen_field`` shared with /move, /live/move,
-        /analyze, /explain, /chat — 100-char cap, six FEN fields,
-        verified parseable by ``chess.Board()``.  Pre-Sprint-5.B
-        validation only rejected control chars + capped at 256, so a
-        256-char malformed FEN was accepted, stored, and later served
-        back to clients via /game/active (audit finding F-10).  The
-        unified validator closes that path while staying compatible
-        with every legitimate FEN length the Android client emits.
-    uci_history: comma-separated UCI moves (e.g. "e2e4,e7e5,g1f3").
-        Bounded at 16 KB — enough for a 2000-move game which is
-        well beyond any realistic length.
-    """
-
-    fen: str
-    uci_history: str = ""
-
-    @field_validator("fen")
-    @classmethod
-    def validate_fen(cls, v: str) -> str:
-        return _validate_fen_field(v)
-
-    @field_validator("uci_history")
-    @classmethod
-    def validate_uci_history(cls, v: str) -> str:
-        if len(v) > 16_384:
-            raise ValueError("uci_history too long (max 16384 chars)")
-        for ch in v:
-            if ord(ch) < 0x20 or ord(ch) == 0x7F:
-                raise ValueError("uci_history contains control characters")
-        return v
+# GameCheckpointRequest was extracted to ``llm/server_schemas.py`` in
+# the 2026-05-24 size-reduction cleanup — re-exported above with the
+# other request models so this section continues to use the bare name.
 
 
 @app.post("/game/{game_id}/checkpoint")
