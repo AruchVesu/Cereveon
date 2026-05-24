@@ -95,7 +95,7 @@ def test_ci_workflow_hardens_checkout_and_supply_chain_controls():  # pylint: di
         "deploy",
     ]:
         checkout = _step_named(jobs[job_name], "Checkout repository")
-        assert checkout["uses"] == "actions/checkout@v4"
+        assert checkout["uses"] == "actions/checkout@v6"
         assert checkout["with"]["persist-credentials"] is False
 
     android_build = jobs["android-build"]
@@ -157,10 +157,10 @@ def test_ci_workflow_hardens_checkout_and_supply_chain_controls():  # pylint: di
     assert [
         step["uses"]
         for step in docker_job["steps"]
-        if step.get("uses") == "actions/attest-build-provenance@v2"
+        if step.get("uses") == "actions/attest-build-provenance@v4"
     ] == [
-        "actions/attest-build-provenance@v2",
-        "actions/attest-build-provenance@v2",
+        "actions/attest-build-provenance@v4",
+        "actions/attest-build-provenance@v4",
     ]
 
     image_security = jobs["image-security"]
@@ -226,7 +226,7 @@ def test_security_workflow_uses_safe_checkout_and_codeql_v4():
 
     for job in jobs.values():
         checkout = _step_named(job, "Checkout repository")
-        assert checkout["uses"] == "actions/checkout@v4"
+        assert checkout["uses"] == "actions/checkout@v6"
         assert checkout["with"]["persist-credentials"] is False
 
     codeql_python_job = jobs["codeql-python"]
@@ -792,7 +792,7 @@ def test_production_deploy_workflow_structure():
     assert deploy["permissions"] == {"contents": "read"}
 
     checkout = _step_named(deploy, "Checkout repository")
-    assert checkout["uses"] == "actions/checkout@v4"
+    assert checkout["uses"] == "actions/checkout@v6"
     assert checkout["with"]["persist-credentials"] is False
 
     # SSH key usage
@@ -855,7 +855,7 @@ def test_fly_deploy_job_pins_topology():
 
     # Checkout hardening matches the rest of the workflow.
     checkout = _step_named(fly_deploy, "Checkout repository")
-    assert checkout["uses"] == "actions/checkout@v4"
+    assert checkout["uses"] == "actions/checkout@v6"
     assert checkout["with"]["persist-credentials"] is False
     assert checkout["if"] == "steps.fly-check.outputs.available == 'true'"
 
@@ -933,7 +933,7 @@ def test_android_instrumented_workflow_pins_topology():
     assert "/dev/kvm" in kvm_step["run"] or "kvm" in kvm_step["run"].lower()
 
     checkout = _step_named(job, "Checkout repository")
-    assert checkout["uses"] == "actions/checkout@v4"
+    assert checkout["uses"] == "actions/checkout@v6"
     assert checkout["with"]["persist-credentials"] is False
 
     # The actual test invocation must hit the :app module's connectedAndroidTest.
@@ -992,7 +992,7 @@ def test_llm_regression_cron_workflow_pins_topology():
     assert job["timeout-minutes"] >= 15, "DeepSeek calls + REPEATS over the corpus need ample time"
 
     checkout = _step_named(job, "Checkout repository")
-    assert checkout["uses"] == "actions/checkout@v4"
+    assert checkout["uses"] == "actions/checkout@v6"
     assert checkout["with"]["persist-credentials"] is False
 
     # Both Category D (regression) AND C (smoke) must run with RUN_DEEPSEEK_TESTS=1
