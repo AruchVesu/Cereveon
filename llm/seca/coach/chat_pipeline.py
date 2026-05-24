@@ -63,24 +63,15 @@ try:
     from llm.rag.retriever.retriever import retrieve as _retrieve  # type: ignore[import]
     from llm.rag.documents import ALL_RAG_DOCUMENTS as _DOCS  # type: ignore[import]
     from llm.seca.coach.confidence_language_controller import build_language_controller_block as _build_clc  # type: ignore[import]
-    from llm.rag.validators.mode_2_negative import validate_mode_2_negative as _validate_neg  # type: ignore[import]
-    # Mode-2 structure + semantic must also run inside the retry loop so
-    # the pipeline can retry / fall back instead of letting a borderline
-    # reply reach the API boundary's `validate_chat_response` and 500 the
-    # route — same #129-class bug we closed for /live/move; the symptom
-    # on the client is "Coach is offline" appearing after a successful
-    # LLM call whose output happened to fail one of the boundary gates.
-    from llm.rag.validators.mode_2_structure import (  # type: ignore[import]
-        validate_mode_2_structure as _validate_struct,
-    )
-    from llm.rag.validators.mode_2_semantic import (  # type: ignore[import]
-        validate_mode_2_semantic as _validate_sem,
-        Mode2Violation as _Mode2Violation,
-    )
-    from llm.rag.safety.output_firewall import (  # type: ignore[import]
-        check_output as _check_output,
-        OutputFirewallError as _OutputFirewallError,
-    )
+    # Mode-2 boundary gates run via the shared helper.  See
+    # ``llm/seca/coach/_mode_2_validators.py`` for the parity invariant
+    # and exception lineage.  These exception types are still imported
+    # locally because the calling retry loop catches them separately —
+    # firewall-class is "no retry, deterministic"; AssertionError /
+    # Mode2Violation are "retry once with hint, then deterministic".
+    from llm.seca.coach._mode_2_validators import validate_mode_2_or_raise  # type: ignore[import]
+    from llm.rag.validators.mode_2_semantic import Mode2Violation as _Mode2Violation  # type: ignore[import]
+    from llm.rag.safety.output_firewall import OutputFirewallError as _OutputFirewallError  # type: ignore[import]
     from llm.rag.validators.explain_response_schema import EngineSignalSchema as _EngineSignalSchema  # type: ignore[import]
     _LLM_AVAILABLE = True
 except Exception as _llm_import_exc:  # noqa: BLE001
@@ -446,19 +437,10 @@ def _build_chat_llm(
     # escapes this function to 500 ``/chat`` (or ``/chat/stream``).  The
     # client-side symptom of the missing gate was "Coach is offline"
     # appearing after a successful LLM call whose output happened to
-    # fail the boundary's structure / semantic check.
-    #
-    # Each raises a specific exception type; ``generate_chat_reply``'s
-    # retry loop already catches ``AssertionError`` (retries with
-    # ``_CHAT_RETRY_HINT``) and the catch-all ``Exception`` (falls
-    # through to deterministic).  ``Mode2Violation`` is a plain
-    # ``Exception`` subclass, so it lands on the deterministic path on
-    # exhaustion — matching the firewall-error handling already in the
-    # retry loop.
-    _check_output(response)
-    _validate_neg(response)
-    _validate_struct(response)
-    _validate_sem(response, engine_signal)
+    # fail the boundary's structure / semantic check.  Parity with
+    # ``live_move_pipeline._build_hint_llm`` is enforced by the shared
+    # helper and pinned by ``test_validator_parity.py``.
+    validate_mode_2_or_raise(response, engine_signal)
 
     return response
 

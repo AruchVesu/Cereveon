@@ -62,24 +62,13 @@ try:
     # boundary (validate_live_move_response) — that boundary only re-
     # runs the negative regex and would still leak firewall-class
     # content.  Mirrors the chat_pipeline.py pattern.
-    from llm.rag.safety.output_firewall import check_output as _check_output  # type: ignore[import]
-    from llm.rag.validators.mode_2_negative import validate_mode_2_negative as _validate_neg  # type: ignore[import]
-    # Mode-2 structure + semantic must also run inside the retry loop so
-    # the pipeline can retry / fall back instead of letting a borderline
-    # hint reach the API boundary's `validate_live_move_response` and
-    # 500 the route.  Without these, an LLM hint that uses "consider" /
-    # "plan" (structure) or "slight advantage" on an equal-band
-    # position (semantic) passes `_validate_neg` here, gets returned to
-    # `/live/move`, then the boundary validator raises
-    # `ExplainSchemaError` → 500 → token rotation cascade locks the
-    # session.  See issue #129.
-    from llm.rag.validators.mode_2_structure import (  # type: ignore[import]
-        validate_mode_2_structure as _validate_struct,
-    )
-    from llm.rag.validators.mode_2_semantic import (  # type: ignore[import]
-        validate_mode_2_semantic as _validate_sem,
-        Mode2Violation as _Mode2Violation,
-    )
+    # Mode-2 boundary gates run via the shared helper.  See
+    # ``llm/seca/coach/_mode_2_validators.py`` for the parity invariant
+    # and exception lineage (closes the issue #129 class of bug where a
+    # borderline LLM hint escaped the pipeline retry loop and 500'd at
+    # ``validate_live_move_response``).
+    from llm.seca.coach._mode_2_validators import validate_mode_2_or_raise  # type: ignore[import]
+    from llm.rag.validators.mode_2_semantic import Mode2Violation as _Mode2Violation  # type: ignore[import]
     _LLM_AVAILABLE = True
 except Exception as _llm_import_exc:  # noqa: BLE001
     logger.warning("LLM imports unavailable — deterministic path only: %s", _llm_import_exc)
@@ -345,22 +334,13 @@ def _build_hint_llm(
     # at `validate_live_move_response` must run here too, so a borderline
     # LLM hint is caught inside the retry loop and either retried or
     # falls through to the deterministic `_build_hint` — never escapes
-    # this function and 500s the route.
-    #   - _check_output    → prompt-leak / bypass / identity / PII / harmful
-    #   - _validate_neg    → forbidden chess vocabulary (engine, calculate,
-    #                        algebraic moves, ...)
-    #   - _validate_struct → advisory sections (recommended move, plan,
-    #                        "white can", consider, ...)
-    #   - _validate_sem    → equal-band words (slight advantage, better,
-    #                        initiative), mate-decisiveness, invented
-    #                        tactics when tactical_flags == []
-    # Each raises a specific exception type; the retry loop in
-    # `generate_live_reply` catches all of them under its broad
-    # `except Exception` and retries / falls back.
-    _check_output(response)
-    _validate_neg(response)
-    _validate_struct(response)
-    _validate_sem(response, engine_signal)
+    # this function and 500s the route.  Gates and their exception
+    # types live in ``_mode_2_validators.validate_mode_2_or_raise``;
+    # the retry loop in ``generate_live_reply`` catches them all under
+    # its broad ``except Exception`` and retries / falls back.  Parity
+    # with ``chat_pipeline._build_chat_llm`` is pinned by
+    # ``test_validator_parity.py``.
+    validate_mode_2_or_raise(response, engine_signal)
     return response
 
 
