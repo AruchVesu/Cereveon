@@ -22,7 +22,6 @@ PYLINT_HOME = PROJECT_ROOT / "tmp_logs" / ".pylint"
 FORMAT_TARGETS = [
     "scripts/run_all_tests.py",
     "llm/cache_keys.py",
-    "llm/fen_hash.py",
     "llm/log_config.py",
     "llm/metrics.py",
     "llm/observability.py",
@@ -105,7 +104,6 @@ FORMAT_TARGETS = [
 PYLINT_TARGETS = [
     "scripts/run_all_tests.py",
     "llm/cache_keys.py",
-    "llm/fen_hash.py",
     "llm/log_config.py",
     "llm/metrics.py",
     "llm/observability.py",
@@ -189,7 +187,6 @@ PYLINT_TARGETS = [
 
 MYPY_TARGETS = [
     "scripts/run_all_tests.py",
-    "llm/fen_hash.py",
     "llm/log_config.py",
     "llm/metrics.py",
     "llm/observability.py",
