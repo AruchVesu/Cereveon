@@ -111,3 +111,21 @@ tools/run_autonomous.sh
 tmp_gradle/
 
 .fake
+
+# ========= SCRATCH / DEBUG ARTEFACTS (REPO ROOT) =========
+# Loose log dumps, probe scripts, and screenshots accumulated during
+# debugging sessions.  Anchored to repo root with a leading slash so
+# fixture/test files deeper in the tree (e.g. llm/rag/tests/golden/...,
+# android/app/src/test/...) are unaffected.
+/tmp_*
+/api-log*
+/app-log*
+/app-trace*
+/hetzner-*.txt
+/cereveon-*.png
+
+# Android Firebase / Google Services config.  Machine-specific and
+# contains project-scoped API keys; deliberately untracked.  Anchored
+# here so a future ``git add -A`` from any contributor's machine cannot
+# stage it.
+android/**/google-services.json
