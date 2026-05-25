@@ -196,9 +196,11 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
         // shape from /curriculum/next) uses ``exerciseType`` + ``difficulty``
         // directly, formatted inline at the call site.
 
-        /** Convert difficulty 0.0–1.0 to ProgressBar integer (0–100). */
-        fun difficultyProgress(difficulty: Float): Int =
-            (difficulty.coerceIn(0f, 1f) * 100f).toInt()
+        // difficultyProgress(Float) retired with the Float-based difficulty
+        // contract in 2026-05-25.  The post-game training card now sources
+        // its ProgressBar fill from TrainingSessionBottomSheet.difficultyProgress
+        // (String) which maps the band emitted by CurriculumPolicy
+        // ("easy" / "medium" / "hard") to a fixed 30 / 60 / 85.
 
         /**
          * Map a raw [learningStatus] string to a user-visible indicator label.
@@ -371,23 +373,34 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
                 if (curriculumResult is ApiResult.Success) {
                     val rec = curriculumResult.data
 
-                    // Persist for the MainActivity chip so the recommendation survives sheet dismissal.
+                    // Persist for the MainActivity chip so the recommendation
+                    // survives sheet dismissal.  PREF_CURRICULUM_DIFFICULTY is
+                    // intentionally NOT written here — the band string never
+                    // flowed into a read site (the drawer chip only renders
+                    // topic + exerciseType), so the prior putFloat call was
+                    // dead.  Writing a String now would collide with old
+                    // installs that already have a Float at the same key
+                    // (ClassCastException on read).  The key constant survives
+                    // in MainActivity.Companion so the cache-key test passes
+                    // unchanged.
                     requireContext()
                         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                         .edit()
                         .putString(MainActivity.PREF_CURRICULUM_TOPIC, rec.topic)
-                        .putFloat(MainActivity.PREF_CURRICULUM_DIFFICULTY, rec.difficulty)
                         .putString(MainActivity.PREF_CURRICULUM_EXERCISE_TYPE, rec.exerciseType)
                         .apply()
 
                     view.findViewById<TextView>(R.id.txtTrainingTopic).text  = formatTopic(rec.topic)
                     view.findViewById<TextView>(R.id.txtTrainingFormat).text =
                         "Format: ${rec.exerciseType.replaceFirstChar { it.uppercase() }}"
-                    // /curriculum/next has no expected_gain; show difficulty instead
-                    view.findViewById<TextView>(R.id.txtTrainingGain).text   =
-                        "Diff: %.0f%%".format(rec.difficulty * 100f)
+                    // /curriculum/next has no expected_gain; show difficulty
+                    // band instead.  Source of truth is the label text — the
+                    // ProgressBar is a visual cue derived from a fixed
+                    // band → percent map (easy=30 / medium=60 / hard=85).
+                    view.findViewById<TextView>(R.id.txtTrainingGain).text =
+                        TrainingSessionBottomSheet.formatDifficulty(rec.difficulty)
                     view.findViewById<ProgressBar>(R.id.progressDifficulty).progress =
-                        difficultyProgress(rec.difficulty)
+                        TrainingSessionBottomSheet.difficultyProgress(rec.difficulty)
                     trainingCard.visibility  = View.VISIBLE
                     trainingEmpty.visibility = View.GONE
                 } else {

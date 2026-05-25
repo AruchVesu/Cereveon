@@ -160,19 +160,17 @@ class GameSummaryBottomSheetTest {
     // call site.
 
     // ------------------------------------------------------------------
-    // 16–17  difficultyProgress
+    // 16–17  difficultyProgress — RETIRED 2026-05-25
     // ------------------------------------------------------------------
-
-    @Test
-    fun `difficultyProgress 0_7 returns 70`() {
-        assertEquals(70, GameSummaryBottomSheet.difficultyProgress(0.7f))
-    }
-
-    @Test
-    fun `difficultyProgress clamps values outside 0 to 1`() {
-        assertEquals(0, GameSummaryBottomSheet.difficultyProgress(-0.1f))
-        assertEquals(100, GameSummaryBottomSheet.difficultyProgress(1.1f))
-    }
+    //
+    // The Float-based ``GameSummaryBottomSheet.difficultyProgress`` companion
+    // helper was retired alongside the wire-shape fix that switched
+    // ``CurriculumRecommendation.difficulty`` to ``String`` (one of
+    // "easy" / "medium" / "hard").  The post-game training card now sources
+    // its ProgressBar fill from ``TrainingSessionBottomSheet.difficultyProgress``
+    // (String → 30 / 60 / 85); that helper is exercised by
+    // ``TrainingSessionBottomSheetTest.TRAIN_DIFF_PROGRESS_BAND`` and
+    // ``TRAIN_DIFF_PROGRESS_UNKNOWN``.
 
     // ------------------------------------------------------------------
     // 18  Null weakness/reason in CoachActionDto doesn't affect badge

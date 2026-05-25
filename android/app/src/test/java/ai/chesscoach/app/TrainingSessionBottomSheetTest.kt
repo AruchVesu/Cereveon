@@ -10,22 +10,23 @@ import org.junit.Test
  * All functions are pure (no Android context required) and must satisfy the
  * following invariants:
  *
- *  TRAIN_TOPIC_FORMAT       formatTopic capitalises first letter and replaces underscores.
- *  TRAIN_TYPE_FORMAT        formatExerciseType capitalises first letter.
- *  TRAIN_DIFF_FORMAT        formatDifficulty converts 0.0–1.0 to percent string.
- *  TRAIN_DIFF_PROGRESS      difficultyProgress maps 0.0–1.0 to 0–100.
- *  TRAIN_DIFF_CLAMP         difficultyProgress clamps outside 0–1 range.
- *  TRAIN_SEED_CONTAINS_TOPIC   buildSeedPrompt includes human-readable topic.
- *  TRAIN_SEED_CONTAINS_TYPE    buildSeedPrompt includes exercise type.
- *  TRAIN_SEED_CONTAINS_DIFF    buildSeedPrompt includes difficulty percentage.
- *  TRAIN_SEED_DETERMINISTIC    same input always produces same seed prompt.
+ *  TRAIN_TOPIC_FORMAT             formatTopic capitalises first letter and replaces underscores.
+ *  TRAIN_TYPE_FORMAT              formatExerciseType capitalises first letter.
+ *  TRAIN_DIFF_FORMAT_BAND         formatDifficulty capitalises the band string.
+ *  TRAIN_DIFF_PROGRESS_BAND       difficultyProgress maps each known band to its fixed %.
+ *  TRAIN_DIFF_PROGRESS_UNKNOWN    unknown bands fall through to the 50 % midpoint.
+ *  TRAIN_DIFF_PROGRESS_CASE       difficultyProgress is case-insensitive on the band.
+ *  TRAIN_SEED_CONTAINS_TOPIC      buildSeedPrompt includes human-readable topic.
+ *  TRAIN_SEED_CONTAINS_TYPE       buildSeedPrompt includes exercise type.
+ *  TRAIN_SEED_CONTAINS_DIFF       buildSeedPrompt includes the difficulty band word.
+ *  TRAIN_SEED_DETERMINISTIC       same input always produces same seed prompt.
  */
 class TrainingSessionBottomSheetTest {
 
     private fun rec(
         topic: String = "endgame_technique",
         exerciseType: String = "drill",
-        difficulty: Float = 0.7f,
+        difficulty: String = "medium",
     ) = CurriculumRecommendation(topic = topic, exerciseType = exerciseType, difficulty = difficulty)
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -53,10 +54,10 @@ class TrainingSessionBottomSheetTest {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `TRAIN_DIFF_FORMAT - converts fraction to percent string`() {
-        assertEquals("Difficulty: 70%", TrainingSessionBottomSheet.formatDifficulty(0.7f))
-        assertEquals("Difficulty: 0%",  TrainingSessionBottomSheet.formatDifficulty(0.0f))
-        assertEquals("Difficulty: 100%", TrainingSessionBottomSheet.formatDifficulty(1.0f))
+    fun `TRAIN_DIFF_FORMAT_BAND - capitalises the band string`() {
+        assertEquals("Difficulty: Easy",   TrainingSessionBottomSheet.formatDifficulty("easy"))
+        assertEquals("Difficulty: Medium", TrainingSessionBottomSheet.formatDifficulty("medium"))
+        assertEquals("Difficulty: Hard",   TrainingSessionBottomSheet.formatDifficulty("hard"))
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -64,14 +65,25 @@ class TrainingSessionBottomSheetTest {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `TRAIN_DIFF_PROGRESS - 0_7 maps to 70`() {
-        assertEquals(70, TrainingSessionBottomSheet.difficultyProgress(0.7f))
+    fun `TRAIN_DIFF_PROGRESS_BAND - maps each known band to its fixed percent`() {
+        assertEquals(30, TrainingSessionBottomSheet.difficultyProgress("easy"))
+        assertEquals(60, TrainingSessionBottomSheet.difficultyProgress("medium"))
+        assertEquals(85, TrainingSessionBottomSheet.difficultyProgress("hard"))
     }
 
     @Test
-    fun `TRAIN_DIFF_CLAMP - values outside 0 to 1 are clamped`() {
-        assertEquals(0,   TrainingSessionBottomSheet.difficultyProgress(-0.1f))
-        assertEquals(100, TrainingSessionBottomSheet.difficultyProgress(1.5f))
+    fun `TRAIN_DIFF_PROGRESS_UNKNOWN - unknown band falls through to the 50 percent midpoint`() {
+        // Future bands shipped by the server without a coordinated Android
+        // release should render at the midpoint rather than 0 (which would
+        // imply "no difficulty") or throw.
+        assertEquals(50, TrainingSessionBottomSheet.difficultyProgress("expert"))
+        assertEquals(50, TrainingSessionBottomSheet.difficultyProgress(""))
+    }
+
+    @Test
+    fun `TRAIN_DIFF_PROGRESS_CASE - band match is case-insensitive`() {
+        assertEquals(30, TrainingSessionBottomSheet.difficultyProgress("EASY"))
+        assertEquals(60, TrainingSessionBottomSheet.difficultyProgress("Medium"))
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -91,9 +103,9 @@ class TrainingSessionBottomSheetTest {
     }
 
     @Test
-    fun `TRAIN_SEED_CONTAINS_DIFF - seed prompt includes difficulty percentage`() {
-        val prompt = TrainingSessionBottomSheet.buildSeedPrompt(rec(difficulty = 0.6f))
-        assertTrue("Seed must mention difficulty percentage, got: $prompt", "60%" in prompt)
+    fun `TRAIN_SEED_CONTAINS_DIFF - seed prompt includes the difficulty band word`() {
+        val prompt = TrainingSessionBottomSheet.buildSeedPrompt(rec(difficulty = "hard"))
+        assertTrue("Seed must mention 'hard difficulty', got: $prompt", "hard difficulty" in prompt)
     }
 
     @Test
