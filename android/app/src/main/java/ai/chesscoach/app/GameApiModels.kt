@@ -83,12 +83,24 @@ data class SecaStatusDto(
  * GET /next-training/{player_id} endpoint + its companion
  * ``TrainingRecommendation`` DTO were retired in PR 26 (2026-05-15).
  *
+ * ``difficulty`` is one of ``"easy" | "medium" | "hard"`` — the band
+ * string emitted by ``CurriculumPolicy.choose_difficulty()`` on the
+ * server.  Earlier revisions declared it as ``Float = 0.5f`` to align
+ * with a draft contract that anticipated a 0..1 float, but the live
+ * Python implementation has always shipped the band string; with
+ * kotlinx-serialization 1.8.1 the type mismatch threw
+ * ``JsonDecodingException`` at every call site
+ * (``coerceInputValues = true`` covers null-for-non-null and unknown
+ * enums but does NOT coerce string-where-number-expected).  The result
+ * was that the Training tab silently surfaced "Training unavailable"
+ * on every tap.
+ *
  * Backend contract: docs/API_CONTRACTS.md §18.
  */
 @Serializable
 data class CurriculumRecommendation(
     val topic: String = "",
-    val difficulty: Float = 0.5f,
+    val difficulty: String = "medium",
     @SerialName("exercise_type") val exerciseType: String = "",
     @Serializable(with = JsonAsStringMapSerializer::class)
     val payload: Map<String, String> = emptyMap(),

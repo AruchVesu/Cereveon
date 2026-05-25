@@ -16,23 +16,28 @@ import org.junit.Test
 /**
  * Integration tests for [HttpGameApiClient.getNextCurriculum] against a local server.
  *
- * Contract reference: POST /curriculum/next (docs/API_CONTRACTS.md §2 note).
+ * Contract reference: POST /curriculum/next (docs/API_CONTRACTS.md §18).
  * Auth: Authorization: Bearer <token> required.
  *
  * Invariants pinned
  * -----------------
- *  1.  INT_CURR_METHOD           request method is POST.
- *  2.  INT_CURR_PATH             request path is /curriculum/next.
- *  3.  INT_CURR_CONTENT_TYPE     Content-Type is application/json.
- *  4.  INT_CURR_BEARER           Authorization Bearer header sent from tokenProvider.
- *  5.  INT_CURR_PLAYER_ID_BODY   player_id field serialised in request body.
- *  6.  INT_CURR_TOPIC_PARSED     topic field deserialised correctly.
- *  7.  INT_CURR_DIFFICULTY_PARSED difficulty field deserialised as float.
- *  8.  INT_CURR_EXERCISE_TYPE    exercise_type field deserialised (not format).
- *  9.  INT_CURR_PAYLOAD_PARSED   payload object entries deserialised.
- * 10.  INT_CURR_HTTP_401         401 → ApiResult.HttpError(401) (auth required).
- * 11.  INT_CURR_TIMEOUT          read timeout → ApiResult.Timeout.
- * 12.  INT_CURR_EMPTY_PAYLOAD    empty payload object → empty map (no crash).
+ *  1.  INT_CURR_METHOD             request method is POST.
+ *  2.  INT_CURR_PATH               request path is /curriculum/next.
+ *  3.  INT_CURR_CONTENT_TYPE       Content-Type is application/json.
+ *  4.  INT_CURR_BEARER             Authorization Bearer header sent from tokenProvider.
+ *  5.  INT_CURR_PLAYER_ID_BODY     player_id field serialised in request body.
+ *  6.  INT_CURR_TOPIC_PARSED       topic field deserialised correctly.
+ *  7.  INT_CURR_DIFFICULTY_PARSED  difficulty field deserialised as string band.
+ *  8.  INT_CURR_EXERCISE_TYPE      exercise_type field deserialised (not format).
+ *  9.  INT_CURR_PAYLOAD_PARSED     payload object entries deserialised.
+ * 10.  INT_CURR_HTTP_401           401 → ApiResult.HttpError(401) (auth required).
+ * 11.  INT_CURR_TIMEOUT            read timeout → ApiResult.Timeout.
+ * 12.  INT_CURR_EMPTY_PAYLOAD      empty payload object → empty map (no crash).
+ * 13.  INT_CURR_PROD_SHAPE         the EXACT shape llm/seca/curriculum/router.py
+ *                                  emits (with extra recommendations + dominant_category
+ *                                  keys absent from the DTO) decodes without throwing.
+ *                                  Bidirectional pin against the wire-key drift the
+ *                                  pre-2026-05-25 contract carried.
  */
 class GameApiClientCurriculumTest {
 
@@ -62,10 +67,18 @@ class GameApiClientCurriculumTest {
         )
 
     companion object {
+        // ``difficulty`` is the band string emitted by
+        // ``CurriculumPolicy.choose_difficulty()`` on the server — one of
+        // ``"easy" | "medium" | "hard"``.  Earlier revisions of these
+        // fixtures used a numeric literal (``0.65``) because the Android
+        // DTO declared the field as ``Float`` — that mismatch threw
+        // ``JsonDecodingException`` at every live call site since the
+        // 2026-04 kotlinx-serialization migration.  The shape below is
+        // now the real wire shape ``next_training()`` ships.
         private const val CURRICULUM_OK_BODY = """
 {
   "topic": "endgame_technique",
-  "difficulty": 0.65,
+  "difficulty": "hard",
   "exercise_type": "drill",
   "payload": {
     "position": "8/8/4k3/8/3K4/8/8/8 w - - 0 1",
@@ -76,9 +89,34 @@ class GameApiClientCurriculumTest {
         private const val CURRICULUM_EMPTY_PAYLOAD = """
 {
   "topic": "tactics",
-  "difficulty": 0.4,
+  "difficulty": "easy",
   "exercise_type": "puzzle",
   "payload": {}
+}"""
+
+        /**
+         * Verbatim reproduction of ``next_training()``'s response body —
+         * captured by running the Python contract test against an
+         * in-memory SQLite session.  Includes the ``recommendations``
+         * and ``dominant_category`` keys that ``ignoreUnknownKeys = true``
+         * must silently absorb without throwing.  Bidirectional pin
+         * against the wire-key drift the pre-2026-05-25 contract had —
+         * both sides now share one source of truth for the field types
+         * and the extra fields.
+         */
+        private const val CURRICULUM_PROD_SHAPE = """
+{
+  "topic": "opening_principles",
+  "difficulty": "medium",
+  "exercise_type": "mixed_training",
+  "payload": {
+    "session_minutes": 20,
+    "focus": "opening_principles",
+    "difficulty": "medium",
+    "exercise": "mixed_training"
+  },
+  "recommendations": [],
+  "dominant_category": null
 }"""
     }
 
@@ -149,12 +187,12 @@ class GameApiClientCurriculumTest {
     }
 
     @Test
-    fun `INT_CURR_DIFFICULTY_PARSED - difficulty field deserialised as float`() = runBlocking {
+    fun `INT_CURR_DIFFICULTY_PARSED - difficulty field deserialised as string band`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody(CURRICULUM_OK_BODY))
         val result = client().getNextCurriculum()
         assertTrue(result is ApiResult.Success<*>)
         val rec = (result as ApiResult.Success<*>).data as CurriculumRecommendation
-        assertEquals(0.65f, rec.difficulty, 0.001f)
+        assertEquals("hard", rec.difficulty)
     }
 
     @Test
@@ -217,5 +255,31 @@ class GameApiClientCurriculumTest {
             assertTrue(result is ApiResult.Success<*>)
             val rec = (result as ApiResult.Success<*>).data as CurriculumRecommendation
             assertTrue("payload must be empty map", rec.payload.isEmpty())
+        }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 13  Bidirectional shape pin — verbatim prod response decodes cleanly
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `INT_CURR_PROD_SHAPE - verbatim next_training response decodes without throwing`() =
+        runBlocking {
+            // Wire-shape pin against the wire-key drift the pre-2026-05-25 contract
+            // had — extra ``recommendations`` and ``dominant_category`` keys must be
+            // absorbed by ``ignoreUnknownKeys = true``, and the ``difficulty: "medium"``
+            // band string must deserialise as a string (not throw a JsonDecodingException
+            // as it did before the 2026-05-25 wire-shape fix).
+            server.enqueue(MockResponse().setResponseCode(200).setBody(CURRICULUM_PROD_SHAPE))
+            val result = client().getNextCurriculum()
+            assertTrue(
+                "Verbatim Python /curriculum/next shape must parse: $result",
+                result is ApiResult.Success<*>,
+            )
+            val rec = (result as ApiResult.Success<*>).data as CurriculumRecommendation
+            assertEquals("opening_principles", rec.topic)
+            assertEquals("medium", rec.difficulty)
+            assertEquals("mixed_training", rec.exerciseType)
+            assertEquals("medium", rec.payload["difficulty"])
+            assertEquals("20", rec.payload["session_minutes"])
         }
 }

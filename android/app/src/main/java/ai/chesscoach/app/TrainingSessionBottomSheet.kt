@@ -28,7 +28,7 @@ class TrainingSessionBottomSheet : BottomSheetDialogFragment() {
                 arguments = Bundle().apply {
                     putString(ARG_TOPIC, rec.topic)
                     putString(ARG_EXERCISE_TYPE, rec.exerciseType)
-                    putFloat(ARG_DIFFICULTY, rec.difficulty)
+                    putString(ARG_DIFFICULTY, rec.difficulty)
                 }
             }
 
@@ -42,13 +42,30 @@ class TrainingSessionBottomSheet : BottomSheetDialogFragment() {
         fun formatExerciseType(exerciseType: String): String =
             "Type: ${exerciseType.replaceFirstChar { it.uppercase() }}"
 
-        /** Format difficulty 0.0–1.0 as "Difficulty: 70%". */
-        fun formatDifficulty(difficulty: Float): String =
-            "Difficulty: %.0f%%".format(difficulty.coerceIn(0f, 1f) * 100f)
+        /**
+         * Format a difficulty band string as "Difficulty: Medium".
+         *
+         * ``CurriculumPolicy.choose_difficulty`` on the server returns one of
+         * ``"easy" | "medium" | "hard"``; anything else falls through to the
+         * raw string (capitalised) so a future band ("expert", "novice") still
+         * renders sensibly without a code change here.
+         */
+        fun formatDifficulty(difficulty: String): String =
+            "Difficulty: ${difficulty.replaceFirstChar { it.uppercase() }}"
 
-        /** Convert difficulty 0.0–1.0 to ProgressBar integer (0–100). */
-        fun difficultyProgress(difficulty: Float): Int =
-            (difficulty.coerceIn(0f, 1f) * 100f).toInt()
+        /**
+         * Map a difficulty band string to a ProgressBar integer (0–100).
+         *
+         * The progress bar is a visual cue, not a quantitative scale — easy
+         * sits at 30, medium at 60, hard at 85, and any unknown band lands at
+         * the 50 midpoint so the bar still renders.
+         */
+        fun difficultyProgress(difficulty: String): Int = when (difficulty.lowercase()) {
+            "easy"   -> 30
+            "medium" -> 60
+            "hard"   -> 85
+            else     -> 50
+        }
 
         /**
          * Build a seed prompt sent as the opening user turn in [ChatBottomSheet].
@@ -59,8 +76,8 @@ class TrainingSessionBottomSheet : BottomSheetDialogFragment() {
         fun buildSeedPrompt(rec: CurriculumRecommendation): String {
             val topic = rec.topic.replace('_', ' ')
             val type  = rec.exerciseType.replaceFirstChar { it.uppercase() }
-            val diff  = "%.0f".format(rec.difficulty.coerceIn(0f, 1f) * 100f)
-            return "I want to train on $topic ($type, difficulty $diff%). " +
+            val diff  = rec.difficulty.lowercase()
+            return "I want to train on $topic ($type, $diff difficulty). " +
                 "Please guide me through this training session."
         }
     }
@@ -77,7 +94,7 @@ class TrainingSessionBottomSheet : BottomSheetDialogFragment() {
         val args         = requireArguments()
         val topic        = args.getString(ARG_TOPIC, "")
         val exerciseType = args.getString(ARG_EXERCISE_TYPE, "")
-        val difficulty   = args.getFloat(ARG_DIFFICULTY, 0.5f)
+        val difficulty   = args.getString(ARG_DIFFICULTY, "medium")
 
         view.findViewById<TextView>(R.id.txtTrainingTopic).text        = formatTopic(topic)
         view.findViewById<TextView>(R.id.txtTrainingExerciseType).text = formatExerciseType(exerciseType)

@@ -689,13 +689,26 @@ Returns the next curriculum task driven by (a) game-history-derived dominant mis
 ```json
 {
   "topic":             <string>,         // e.g. "tactics", "endgame"
-  "difficulty":        <float 0..1>,
+  "difficulty":        <"easy" | "medium" | "hard">,
   "exercise_type":     <string>,         // "puzzle" | "drill" | "game" | "explanation"
   "payload":           <object>,         // type-specific fields
   "recommendations":   [ {"category": <string>, "priority": <int>, "rationale": <string>}, ... ],
   "dominant_category": <string | null>   // from HistoricalAnalysisPipeline
 }
 ```
+
+`difficulty` is the band string emitted by
+`CurriculumPolicy.choose_difficulty()` — three discrete tiers, not a
+continuous 0..1 fraction.  Earlier revisions of this section advertised
+`<float 0..1>` to align with a draft contract; the implementation has
+always shipped the band string and the doc was the outlier.  The pin
+was caught and corrected 2026-05-25 — the Android client
+(`CurriculumRecommendation.difficulty`) is `String` from that release
+on, and the deserialiser would otherwise throw
+`JsonDecodingException` at every call site.  Bidirectional regression
+guards: `llm/tests/test_curriculum_next_contract.py::CURR_DIFFICULTY_VALID_LEVEL`
+(server side) + `INT_CURR_DIFFICULTY_PARSED` and `INT_CURR_PROD_SHAPE`
+in `GameApiClientCurriculumTest` (client side).
 
 ### History — `GET /next-training/{player_id}` retired in PR 26
 
