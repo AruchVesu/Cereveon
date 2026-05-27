@@ -155,3 +155,33 @@ CVE-2026-3184 until:2027-07-01
 # Accepted risk pending a Debian glibc patch; remove this entry when
 # ``apt-get upgrade -y`` ships a fixed libc6.
 CVE-2026-5435 until:2027-07-01
+
+# glibc 2.41-12: information disclosure / DoS in ns_printrrf /
+# ns_printrr / fp_nquery — RDATA-length is not validated against
+# RDATA content when formatting a DNS response, so a crafted RDATA
+# field can cause a crash or read uninitialised memory.  MEDIUM.
+# Affects libc-bin and libc6.  Same affected-function cluster as
+# CVE-2026-5435 above (different upstream advisory, same call sites);
+# the reachability analysis is identical and reproduced here so each
+# CVE entry stands on its own without cross-reference churn:
+# Reachability analysis (2026-05-27):
+#   - The vulnerable functions are *deprecated* DNS resource-record
+#     pretty-printers (``ns_printrrf``, ``ns_printrr``, ``fp_nquery``)
+#     marked deprecated since glibc 2.34 — kept in libresolv only for
+#     backwards compatibility with DNS administration tools and DNS
+#     server software (dig, nslookup, host, BIND).  Per the Debian
+#     security tracker, the functions "are for application debugging
+#     only and hence not in the path of code executed by the DNS
+#     resolver".
+#   - The container runs Python (CPython resolver uses
+#     ``getaddrinfo``/``gethostbyname`` — never the ``ns_print*``
+#     family) and Stockfish (no networking).  Neither imports
+#     ``libresolv.so.2``'s deprecated printers.
+#   - The exploit precondition requires the application to call these
+#     functions on attacker-controlled DNS responses — only DNS-server
+#     and DNS-debugger code paths do this, and the container ships
+#     neither (slim image; no ``dig``, ``nslookup``, ``bind``, etc.).
+# Accepted risk pending a Debian glibc patch; remove this entry when
+# ``apt-get upgrade -y`` ships a fixed libc6 (Debian security tracker
+# shows no fix as of 2026-05-27; libc6/libc-bin still 2.41-12+deb13u3).
+CVE-2026-6238 until:2027-07-01
