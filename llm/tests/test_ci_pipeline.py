@@ -390,6 +390,20 @@ def test_runtime_dependency_files_are_pinned():
     assert _version_tuple(dependencies["express"]) >= (4, 22, 1)
     assert "node-fetch" not in dependencies
 
+    # npm "overrides" force transitive-dep versions when a parent's
+    # constraint is too narrow to absorb a security patch (e.g. express
+    # 4.22.1 pins qs to ~6.14.0, but the qs CVE-2026-8723 fix landed in
+    # 6.15.2).  Same exact-pin discipline applies — `^`/`~` ranges
+    # would let a future dependency resolution silently downgrade the
+    # override and re-open the advisory.
+    overrides = package_json.get("overrides", {})
+    assert all(not version.startswith(("^", "~")) for version in overrides.values())
+    # Lower bound chosen at the time the qs override was added; future
+    # bumps that move qs higher are fine, but the override must not
+    # drop below the CVE-2026-8723 fix version.
+    if "qs" in overrides:
+        assert _version_tuple(overrides["qs"]) >= (6, 15, 2)
+
 
 def test_run_ci_suite_builds_expected_pytest_command(monkeypatch, tmp_path):
     """When pytest fails (rc != 0) main() returns that rc immediately and
