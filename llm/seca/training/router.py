@@ -26,6 +26,7 @@ backend in the same change.
 from __future__ import annotations
 
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, field_validator
@@ -52,6 +53,40 @@ router = APIRouter(prefix="/training", tags=["training"])
 # implicit limit so we never write a 10 KB blob from a malformed
 # client.
 _MAX_SOURCE_REF_LEN = 200
+
+
+# Code points that terminate or visually break a log line.  Stripped by
+# _safe_log() so an attacker controlling a request body field cannot
+# inject forged log lines (CWE-117).  Includes the obscure Unicode line
+# separators that some loggers respect even though repr() normally
+# escapes ASCII control characters.
+_LOG_INJECTION_CHARS = ("\r", "\n", "\x85", " ", " ")
+
+
+# Compiled character class equivalent to ``[<every char in _LOG_INJECTION_CHARS>]``.
+# Built from the tuple so the source of truth stays one place — adding a
+# new code point to the tuple automatically widens the regex.
+_LOG_INJECTION_RE = re.compile("[" + "".join(_LOG_INJECTION_CHARS) + "]")
+
+
+def _safe_log(value: object, max_len: int = 80) -> str:
+    """Sanitize an untrusted value for safe inclusion in a log line.
+
+    Mitigates CWE-117 log injection where a request-body field
+    (``SolveRequest.source_type`` / ``SolveRequest.source_ref``) could
+    otherwise embed CR/LF and forge a fake log entry.  ``repr()``
+    escapes standard ASCII control characters, but Unicode line
+    separators (NEL U+0085, U+2028, U+2029) can slip past it depending
+    on the encoder; we strip every line-terminating code point with a
+    regex pass, then truncate so a giant payload cannot bloat the log.
+
+    Implementation note: ``re.sub`` is deliberate.  CodeQL's
+    ``py/log-injection`` taint tracker recognises ``re.sub(pattern,
+    "", str)`` as a sanitiser but does NOT recognise the equivalent
+    loop-of-``str.replace`` shape (CodeQL alerts #347–#348, fixed
+    2026-05-27).
+    """
+    return _LOG_INJECTION_RE.sub("", repr(value))[:max_len]
 
 
 # ---------------------------------------------------------------------------
@@ -189,12 +224,18 @@ def solve(
             # Should be unreachable — the IntegrityError implies a
             # row exists.  Surface as a 500 if it does happen; we
             # prefer the loud signal over silently double-crediting.
+            # source_type and source_ref are request-body fields and
+            # therefore attacker-controllable; route them through
+            # _safe_log() to neutralise CR/LF / Unicode-line-separator
+            # log forging (CWE-117).  player.id is a server-issued DB
+            # primary key — not attacker-controlled — so it is safe to
+            # interpolate directly.
             logger.error(
                 "IntegrityError on /training/solve but no row found for "
                 "player_id=%s source_type=%s source_ref=%s",
                 player.id,
-                req.source_type,
-                req.source_ref,
+                _safe_log(req.source_type),
+                _safe_log(req.source_ref),
             )
             raise HTTPException(status_code=500, detail="Conflict on training solve")
         return SolveResponse(
