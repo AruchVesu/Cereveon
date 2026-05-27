@@ -1378,31 +1378,38 @@ def checkpoint_game_state(
         if ord(ch) < 0x20 or ord(ch) == 0x7F:
             raise HTTPException(status_code=400, detail="game_id contains control characters")
 
-    # Verify the game belongs to this player BEFORE checkpointing —
-    # repo.checkpoint_game only filters by finished_at, not player.
-    # A stricter check here means a stolen game_id can't be hijacked
-    # to overwrite another player's checkpoint.
-    active = get_active_game(str(player.id))
-    if active is None or active["game_id"] != game_id:
-        # Look up by id directly to distinguish "wrong owner" (403)
-        # from "doesn't exist / already finished" (404).  The repo
-        # helper centralises the SQLAlchemy read so the endpoint
-        # doesn't have to reach into the storage layer's session.
-        from llm.seca.storage.repo import get_game_owner_status
+    # Attribute any LLM telemetry emitted under this request to the
+    # game_id via the log_config contextvar (see llm/log_config.py).
+    # Reset in finally so the binding never leaks past this handler.
+    game_id_token = log_config.set_game_id(game_id)
+    try:
+        # Verify the game belongs to this player BEFORE checkpointing —
+        # repo.checkpoint_game only filters by finished_at, not player.
+        # A stricter check here means a stolen game_id can't be hijacked
+        # to overwrite another player's checkpoint.
+        active = get_active_game(str(player.id))
+        if active is None or active["game_id"] != game_id:
+            # Look up by id directly to distinguish "wrong owner" (403)
+            # from "doesn't exist / already finished" (404).  The repo
+            # helper centralises the SQLAlchemy read so the endpoint
+            # doesn't have to reach into the storage layer's session.
+            from llm.seca.storage.repo import get_game_owner_status
 
-        status = get_game_owner_status(game_id)
-        if status is None:
-            raise HTTPException(status_code=404, detail="game not found")
-        owner_id, finished_at = status
-        if owner_id != str(player.id):
-            raise HTTPException(status_code=403, detail="not your game")
-        if finished_at is not None:
+            status = get_game_owner_status(game_id)
+            if status is None:
+                raise HTTPException(status_code=404, detail="game not found")
+            owner_id, finished_at = status
+            if owner_id != str(player.id):
+                raise HTTPException(status_code=403, detail="not your game")
+            if finished_at is not None:
+                raise HTTPException(status_code=409, detail="game already finished")
+
+        if not checkpoint_game(game_id, req.fen, req.uci_history):
+            # Race: row was finished between the ownership check and now.
             raise HTTPException(status_code=409, detail="game already finished")
-
-    if not checkpoint_game(game_id, req.fen, req.uci_history):
-        # Race: row was finished between the ownership check and now.
-        raise HTTPException(status_code=409, detail="game already finished")
-    return {"status": "checkpointed"}
+        return {"status": "checkpointed"}
+    finally:
+        log_config.game_id_var.reset(game_id_token)
 
 
 @app.get("/game/active")

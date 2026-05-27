@@ -1,0 +1,322 @@
+{
+  "schemaVersion": 39,
+  "title": "Cereveon — LLM + Hardware",
+  "uid": "cereveon-llm-hw",
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "tags": [
+    "cereveon",
+    "llm",
+    "hardware"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource_prom",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      },
+      {
+        "name": "datasource_loki",
+        "label": "Loki",
+        "type": "datasource",
+        "query": "loki",
+        "current": {},
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "LLM",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "collapsed": false
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "LLM latency p50 / p95 / p99 by outcome",
+      "description": "Wall-clock duration of one DeepSeek round-trip (full SSE consumption). Spikes on outcome=timeout indicate provider issues; spikes on outcome=ok indicate slow responses still inside the 120 s budget.",
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 1},
+      "targets": [
+        {
+          "refId": "p50",
+          "expr": "histogram_quantile(0.50, sum by (le, outcome) (rate(chesscoach_llm_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50 {{outcome}}"
+        },
+        {
+          "refId": "p95",
+          "expr": "histogram_quantile(0.95, sum by (le, outcome) (rate(chesscoach_llm_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95 {{outcome}}"
+        },
+        {
+          "refId": "p99",
+          "expr": "histogram_quantile(0.99, sum by (le, outcome) (rate(chesscoach_llm_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99 {{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "s"},
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Tokens / sec by kind",
+      "description": "DeepSeek prompt vs completion tokens per second. Completion-token growth without matching prompt growth = long replies; the inverse = long prompts (compaction or RAG bloat).",
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 1},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (kind) (rate(chesscoach_llm_tokens_total[5m]))",
+          "legendFormat": "{{kind}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "short"},
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Cost ($/hour)",
+      "description": "Sliding 5-minute USD cost rate, projected to an hourly figure. Sums prompt + completion across all models.",
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 9},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chesscoach_llm_cost_usd_total[5m])) * 3600",
+          "legendFormat": "$/hr"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 4},
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Cost ($/day, projected)",
+      "description": "Sliding 1-hour USD cost rate projected to a day. Smoother than the per-hour view; use to budget monthly LLM spend.",
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 9},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chesscoach_llm_cost_usd_total[1h])) * 86400",
+          "legendFormat": "$/day"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "currencyUSD", "decimals": 2},
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Cost per match (top 20, last 24 h)",
+      "description": "LogQL aggregation over the structured llm_call log line. Requires the game_id contextvar to be set (currently /game/{id}/checkpoint and /game/finish set it). Free-form /chat calls without a game scope are excluded.",
+      "datasource": {"type": "loki", "uid": "${datasource_loki}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 9},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(20, sum by (game_id) (sum_over_time({job=\"cereveon-backend\"} | json | event=\"llm_call\" | game_id != \"\" | unwrap cost_usd [24h])))",
+          "legendFormat": "{{game_id}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "row",
+      "title": "Errors",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 17},
+      "collapsed": false
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "HTTP 5xx rate by path",
+      "description": "Per-route 500-class error rate. /chat and /live/move 5xx counts usually signal LLM-pipeline drift; auth-route 5xx signals storage issues.",
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 18},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (path_template) (rate(chesscoach_http_requests_total{status=~\"5..\"}[5m]))",
+          "legendFormat": "{{path_template}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "reqps"},
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "LLM error rate by category",
+      "description": "DeepSeek call failures split by classification: timeout = httpx.TimeoutException, http_5xx/http_4xx = upstream HTTP error, transport = lower-level httpx failure, parse = malformed SSE, empty = no content delta received, config = COACH_DEEPSEEK_API_KEY missing.",
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (category) (rate(chesscoach_llm_errors_total[5m]))",
+          "legendFormat": "{{category}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "reqps"},
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Hardware",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 26},
+      "collapsed": false
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "CPU %",
+      "description": "Process-host CPU utilisation (0-100). Sampled at every Prometheus scrape via psutil.cpu_percent(interval=None).",
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 27},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chesscoach_cpu_percent",
+          "legendFormat": "CPU %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "percent", "min": 0, "max": 100},
+        "overrides": []
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Memory %",
+      "description": "Process-host memory utilisation (0-100), per psutil.virtual_memory.",
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 27},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chesscoach_memory_percent",
+          "legendFormat": "Memory %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "percent", "min": 0, "max": 100},
+        "overrides": []
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Disk %",
+      "description": "Disk utilisation of the configured mountpoint (CHESSCOACH_DISK_METRIC_PATH, defaults to / on Linux).",
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 27},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chesscoach_disk_percent",
+          "legendFormat": "Disk %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "percent", "min": 0, "max": 100},
+        "overrides": []
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Load avg (1m)",
+      "description": "Unix 1-minute load average. Reads 0 on platforms without getloadavg (Windows dev).",
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 27},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chesscoach_load_avg_1m",
+          "legendFormat": "load1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "short"},
+        "overrides": []
+      }
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "Memory used (bytes)",
+      "description": "Absolute memory footprint of the host (bytes). Pair with the % gauge to compute total RAM.",
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 35},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chesscoach_memory_used_bytes",
+          "legendFormat": "used"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "bytes"},
+        "overrides": []
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Engine pool utilisation",
+      "description": "Stockfish engine pool capacity vs in-use. Saturation here = /live/move and /engine/eval will start queueing.",
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 35},
+      "targets": [
+        {
+          "refId": "size",
+          "expr": "chesscoach_engine_pool_size",
+          "legendFormat": "size"
+        },
+        {
+          "refId": "in_use",
+          "expr": "chesscoach_engine_pool_in_use",
+          "legendFormat": "in_use"
+        },
+        {
+          "refId": "available",
+          "expr": "chesscoach_engine_pool_available",
+          "legendFormat": "available"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "short"},
+        "overrides": []
+      }
+    }
+  ]
+}

@@ -77,6 +77,20 @@ def set_request_id(value: str | None) -> contextvars.Token:
     return request_id_var.set(value)
 
 
+# Same pattern as request_id_var, but populated by handlers that own a
+# game_id so the structured "llm_call" log line emitted from call_llm
+# (llm/seca/coach/explain_pipeline.py) can attribute tokens + cost to
+# the originating match without threading the id through every pipeline
+# signature.  Unset when no game scope applies (e.g. a free-form /chat
+# call without a game), in which case the log field is omitted.
+game_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("game_id", default=None)
+
+
+def set_game_id(value: str | None) -> contextvars.Token:
+    """Bind a game_id to the current async context.  Mirror of set_request_id."""
+    return game_id_var.set(value)
+
+
 # Max length of a client-supplied X-Request-ID before we ignore it
 # in favour of a fresh UUID.  Keeps a hostile client from inflating
 # every log line by submitting a megabyte-long header value.
@@ -172,6 +186,10 @@ class JsonLogFormatter(logging.Formatter):
         request_id = request_id_var.get()
         if request_id:
             payload["request_id"] = request_id
+
+        game_id = game_id_var.get()
+        if game_id:
+            payload["game_id"] = game_id
 
         # Copy any caller-attached extras (anything not in the reserved
         # LogRecord field set).  ``record.__dict__`` is the canonical

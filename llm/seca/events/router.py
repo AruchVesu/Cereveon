@@ -427,6 +427,29 @@ def finish_game(
     if req.player_id is not None and req.player_id != str(player.id):
         raise HTTPException(status_code=403, detail="Cannot submit game for another player")
 
+    # Attribute any LLM telemetry emitted under this request to the
+    # game_id via the log_config contextvar (see llm/log_config.py).
+    # ``req.game_id`` is optional on /game/finish — when absent (legacy
+    # clients that finished without /game/start), the contextvar stays
+    # unset and the llm_call log line records ``game_id: null``.
+    from llm import log_config as _log_config
+
+    game_id_token = _log_config.set_game_id(req.game_id) if req.game_id else None
+    try:
+        return _finish_game_body(req, request, background_tasks, player, db)
+    finally:
+        if game_id_token is not None:
+            _log_config.game_id_var.reset(game_id_token)
+
+
+def _finish_game_body(
+    req: GameFinishRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    player,
+    db: DBSession,
+):
+
     # Server-side accuracy + weakness recompute.  Closes the client-trust
     # gap on /game/finish; falls back to the request fields when the
     # engine pool is unavailable.  Every downstream consumer (event

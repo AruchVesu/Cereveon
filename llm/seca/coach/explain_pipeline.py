@@ -1,9 +1,12 @@
 import json
+import logging
 import os
 import time
 
 import httpx
 
+from llm import observability
+from llm.log_config import game_id_var
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
 from llm.rag.retriever.retriever import retrieve
 from llm.rag.documents import ALL_RAG_DOCUMENTS
@@ -14,6 +17,8 @@ from llm.rag.validators.explain_response_schema import EngineSignalSchema, Expla
 from llm.seca.coach.confidence_language_controller import build_language_controller_block
 from llm.rag.prompts.input_sanitizer import sanitize_user_query
 from llm.rag.safety.output_firewall import check_output, OutputFirewallError
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------
 # DeepSeek configuration
@@ -129,6 +134,11 @@ def call_llm(prompt: str) -> str:
         "model": MODEL_NAME,
         "messages": [{"role": "user", "content": prompt}],
         "stream": True,
+        # OpenAI-compatible SSE contract: when ``include_usage`` is true,
+        # the final non-``[DONE]`` chunk carries ``{"usage": {...}}``
+        # alongside an empty ``choices`` array.  Extracted below to feed
+        # the LLM token / cost counters.
+        "stream_options": {"include_usage": True},
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -137,43 +147,107 @@ def call_llm(prompt: str) -> str:
 
     chunks: list[str] = []
     total_bytes = 0
-    with httpx.stream(
-        "POST",
-        DEEPSEEK_URL,
-        json=request_body,
-        headers=headers,
-        timeout=120,
-    ) as response:
-        response.raise_for_status()
-        for raw_line in response.iter_lines():
-            line = raw_line.strip()
-            if not line or not line.startswith("data:"):
-                continue
-            data = line[len("data:"):].strip()
-            if data == "[DONE]":
-                break
-            try:
-                event = json.loads(data)
-                delta = event["choices"][0].get("delta", {})
-            except (json.JSONDecodeError, KeyError, IndexError, TypeError):
-                # Skip individual malformed chunks rather than crashing
-                # the whole call — the OpenAI-compatible SSE format
-                # occasionally interleaves keep-alive comments and
-                # zero-content delta frames that should not abort the
-                # stream.  A truly malformed response surfaces below
-                # via the empty-chunks check.
-                continue
-            content = delta.get("content")
-            if content:
-                chunks.append(content)
-                total_bytes += len(content)
-                if total_bytes > _MAX_STREAM_RESPONSE_BYTES:
-                    # Defense-in-depth: stop consuming before the
-                    # response can OOM the container.  Downstream
-                    # validators will see truncated text and either
-                    # accept on contract or fall through to the
-                    # deterministic builder.
+    usage: dict[str, int] = {}
+    start = time.perf_counter()
+    outcome = "ok"
+    error_category: str | None = None
+    try:
+        with httpx.stream(
+            "POST",
+            DEEPSEEK_URL,
+            json=request_body,
+            headers=headers,
+            timeout=120,
+        ) as response:
+            response.raise_for_status()
+            for raw_line in response.iter_lines():
+                line = raw_line.strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[len("data:"):].strip()
+                if data == "[DONE]":
                     break
+                try:
+                    event = json.loads(data)
+                except (json.JSONDecodeError, TypeError):
+                    # Skip individual malformed chunks rather than
+                    # crashing the whole call — the OpenAI-compatible
+                    # SSE format occasionally interleaves keep-alive
+                    # comments and zero-content delta frames that should
+                    # not abort the stream.  A truly malformed response
+                    # surfaces below via the empty-chunks check.
+                    continue
+                # ``usage`` is emitted on the final chunk when
+                # ``stream_options.include_usage=true``; the same chunk
+                # carries ``choices: []`` so the content extraction
+                # below is a no-op for it.
+                if isinstance(event.get("usage"), dict):
+                    usage = event["usage"]
+                try:
+                    delta = event["choices"][0].get("delta", {})
+                except (KeyError, IndexError, TypeError):
+                    continue
+                content = delta.get("content")
+                if content:
+                    chunks.append(content)
+                    total_bytes += len(content)
+                    if total_bytes > _MAX_STREAM_RESPONSE_BYTES:
+                        # Defense-in-depth: stop consuming before the
+                        # response can OOM the container.  Downstream
+                        # validators will see truncated text and either
+                        # accept on contract or fall through to the
+                        # deterministic builder.
+                        break
+    except httpx.TimeoutException:
+        outcome = "timeout"
+        error_category = "timeout"
+        raise
+    except httpx.HTTPStatusError as exc:
+        outcome = "http_error"
+        status_code = exc.response.status_code if exc.response is not None else 0
+        error_category = "http_5xx" if status_code >= 500 else "http_4xx"
+        raise
+    except httpx.HTTPError:
+        outcome = "http_error"
+        error_category = "transport"
+        raise
+    finally:
+        duration = time.perf_counter() - start
+        assembled_so_far = "".join(chunks).strip()
+        if outcome == "ok" and not assembled_so_far:
+            outcome = "empty"
+            error_category = "empty"
+        prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        observability.observe_llm_call(
+            model=MODEL_NAME,
+            outcome=outcome,
+            duration_seconds=duration,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            error_category=error_category,
+        )
+        # Structured log line — Loki picks up the JSON-formatted record
+        # via Alloy (monitoring/alloy.alloy).  The dashboard's cost-per-
+        # match panel filters on ``event="llm_call"`` and aggregates
+        # ``cost_usd`` by ``game_id``.  ``game_id`` is sourced from the
+        # contextvar so handlers that don't carry one simply omit it.
+        cost_usd = observability.cost_for_call(
+            MODEL_NAME, prompt_tokens, completion_tokens
+        )
+        logger.info(
+            "llm_call",
+            extra={
+                "event": "llm_call",
+                "game_id": game_id_var.get(),
+                "model": MODEL_NAME,
+                "outcome": outcome,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "cost_usd": round(cost_usd, 6),
+                "latency_ms": round(duration * 1000, 3),
+            },
+        )
 
     assembled = "".join(chunks).strip()
     if not assembled:

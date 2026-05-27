@@ -87,6 +87,18 @@ TEST_TARGETS = [
     # increments chesscoach_http_requests_total / auth_login_total
     # on real requests.  Closes Sprint 5.D.1 observability scope.
     "llm/tests/test_metrics_endpoint.py",
+    # LLM + hardware observability (LLM_MET_01..10, HW_MET_01..05,
+    # GID_01..05, DASH_01..07) — pins the new metric surface added
+    # alongside the LLM + hardware monitoring dashboard:
+    #   - chesscoach_llm_request_duration_seconds / tokens / cost / errors
+    #   - chesscoach_cpu_percent / memory_percent / memory_used_bytes /
+    #     disk_percent / load_avg_1m (psutil-backed gauges)
+    #   - game_id contextvar that attributes LLM telemetry to a match
+    #   - Grafana dashboard JSON schema (monitoring/dashboards/llm_hardware.json)
+    "llm/tests/test_llm_metrics.py",
+    "llm/tests/test_hardware_metrics.py",
+    "llm/tests/test_game_id_contextvar.py",
+    "llm/tests/test_grafana_dashboard_json.py",
     # Structured JSON logging + request_id contextvar propagation
     # (LOG_01..LOG_12) — pins the JSON schema, the SECA_ENV /
     # COACH_LOG_JSON gating, the X-Request-ID echo + validation
