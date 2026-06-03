@@ -7,8 +7,15 @@ class CurriculumPolicy:
         if not skill_vector:
             return "opening_principles"
 
-        # weakest skill = lowest value
-        return min(skill_vector, key=lambda k: skill_vector[k])
+        # ``skill_vector`` stores weakness magnitudes written by
+        # ``SkillUpdater`` — an EWMA of the per-phase mistake rate where a
+        # HIGHER value means a WEAKER area.  The area to train next is the
+        # weakest one: the key with the MAX value.  This mirrors
+        # ``HistoricalAnalysisPipeline.dominant_category`` (the highest-score
+        # category) and ``SkillUpdater``'s dominant-weakness action
+        # (``max(weaknesses, ...)``).  Was ``min(...)``, which inverted the
+        # semantics and selected the player's STRONGEST area.
+        return max(skill_vector, key=lambda k: skill_vector[k])
 
     # ---------------------------------
 
