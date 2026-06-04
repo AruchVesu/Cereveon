@@ -36,6 +36,8 @@ Pinned invariants
 13. CURR_FALLBACK_WEAKEST_UNIT  CurriculumPolicy.choose_topic returns the highest-weakness key.
 14. CURR_FALLBACK_DEFAULT       an empty skill vector falls back to 'opening_principles'.
 15. CURR_FALLBACK_WEAKEST_E2E   /curriculum/next fallback (no game history) returns the weakest area.
+16. CURR_EXERCISE_MAP_COMPLETE  every reachable topic maps to a specific exercise type (no generic bucket).
+17. CURR_EXERCISE_MIDDLEGAME    middlegame fallback yields exercise_type "middlegame_plan" end-to-end.
 
 **Fallback topic semantics — regression guard for the choose_topic inversion**
 
@@ -282,4 +284,77 @@ class TestCurriculumFallbackSelectsWeakestArea:
         assert result["topic"] == self._WEAKEST, (
             f"fallback topic must be the weakest area {self._WEAKEST!r} (0.55), "
             f"got {result['topic']!r}"
+        )
+
+
+class TestCurriculumExerciseTypeMapping:
+    """choose_exercise_type must map every reachable topic to a SPECIFIC
+    exercise type — never the generic 'mixed_training' bucket for a known
+    topic.  Closes the vocabulary gap where the skill-vector fallback topics
+    'middlegame' and 'opening_principles' fell through to 'mixed_training',
+    and removes the dead 'time_management' -> 'blitz_simulation' entry.
+
+    'topic' reaches choose_exercise_type from two vocabularies: the primary
+    game-history topics (_CATEGORY_TO_TOPIC values) and the skill-vector
+    fallback (phase keys + the empty-vector default 'opening_principles').
+    """
+
+    # Every topic the system can emit, with its required exercise type.
+    _REACHABLE = {
+        "tactics": "puzzle",
+        "opening": "opening_line",
+        "endgame": "endgame_drill",
+        "middlegame": "middlegame_plan",
+        "opening_principles": "opening_line",
+    }
+
+    @pytest.mark.parametrize("topic,expected", sorted(_REACHABLE.items()))
+    def test_reachable_topic_maps_to_specific_exercise(self, topic, expected):
+        """CURR_EXERCISE_MAP_COMPLETE: each reachable topic maps as documented."""
+        assert CurriculumPolicy().choose_exercise_type(topic) == expected
+
+    def test_no_reachable_topic_yields_generic_bucket(self):
+        """CURR_EXERCISE_MAP_COMPLETE: no reachable topic returns 'mixed_training'."""
+        for topic in self._REACHABLE:
+            assert CurriculumPolicy().choose_exercise_type(topic) != "mixed_training", (
+                f"reachable topic {topic!r} fell through to the generic "
+                f"'mixed_training' bucket — the vocabulary gap regressed"
+            )
+
+    def test_unknown_topic_defaults_to_mixed_training(self):
+        """Unrecognised topics still get the defensive default."""
+        assert CurriculumPolicy().choose_exercise_type("no_such_topic") == "mixed_training"
+
+    def test_dead_blitz_simulation_value_not_emitted(self):
+        """The retired 'time_management' -> 'blitz_simulation' entry is gone."""
+        emitted = {CurriculumPolicy().choose_exercise_type(t) for t in self._REACHABLE}
+        emitted.add(CurriculumPolicy().choose_exercise_type("time_management"))
+        assert "blitz_simulation" not in emitted, (
+            "'blitz_simulation' must no longer be emitted; 'time_management' now "
+            "falls through to the 'mixed_training' default"
+        )
+
+    def test_next_training_fallback_middlegame_exercise_type(self, db_session):
+        """CURR_EXERCISE_MIDDLEGAME: a middlegame-weakest player gets
+        exercise_type 'middlegame_plan' (not 'mixed_training') end-to-end.
+        """
+        p = Player(
+            email="exercise-mg@test.com",
+            password_hash="hashed",
+            rating=1350.0,
+            confidence=0.6,
+            skill_vector_json='{"opening": 0.10, "middlegame": 0.55, "endgame": 0.20}',
+            player_embedding="[]",
+        )
+        db_session.add(p)
+        db_session.commit()
+        db_session.refresh(p)
+
+        result = _call_next(p, db_session)
+
+        assert result["topic"] == "middlegame", (
+            f"precondition: fallback selects weakest area 'middlegame', got {result['topic']!r}"
+        )
+        assert result["exercise_type"] == "middlegame_plan", (
+            f"middlegame fallback must yield 'middlegame_plan', got {result['exercise_type']!r}"
         )
