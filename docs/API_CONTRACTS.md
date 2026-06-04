@@ -690,7 +690,7 @@ Returns the next curriculum task driven by (a) game-history-derived dominant mis
 {
   "topic":             <string>,         // e.g. "tactics", "endgame"
   "difficulty":        <"easy" | "medium" | "hard">,
-  "exercise_type":     <string>,         // "puzzle" | "drill" | "game" | "explanation"
+  "exercise_type":     <string>,         // see note — "puzzle"|"opening_line"|"middlegame_plan"|"endgame_drill"|"mixed_training"
   "payload":           <object>,         // type-specific fields
   "recommendations":   [ {"category": <string>, "priority": <int>, "rationale": <string>}, ... ],
   "dominant_category": <string | null>   // from HistoricalAnalysisPipeline
@@ -709,6 +709,22 @@ on, and the deserialiser would otherwise throw
 guards: `llm/tests/test_curriculum_next_contract.py::CURR_DIFFICULTY_VALID_LEVEL`
 (server side) + `INT_CURR_DIFFICULTY_PARSED` and `INT_CURR_PROD_SHAPE`
 in `GameApiClientCurriculumTest` (client side).
+
+`exercise_type` is the value emitted by
+`CurriculumPolicy.choose_exercise_type()`, keyed off `topic`: `puzzle`
+(tactics), `opening_line` (`opening` / `opening_principles`), `middlegame_plan`
+(`middlegame`), `endgame_drill` (`endgame`), and `mixed_training` — the
+defensive default for an unrecognised topic.  Earlier revisions of this
+section advertised `"puzzle" | "drill" | "game" | "explanation"`; that was the
+vocabulary of the retired `task_selector` module (the orphaned `/next-training`
+cluster), never what `/curriculum/next` shipped.  Corrected 2026-06-04
+alongside closing the mapping gap where the skill-vector fallback topics
+`middlegame` and `opening_principles` degraded to `mixed_training` (and a dead
+`time_management` → `blitz_simulation` entry was removed).  The Android client
+treats `exercise_type` as an opaque display string
+(`MainActivity.formatCurriculumChip` uppercases it), so the expanded value set
+needs no coordinated client release.  Regression guard:
+`llm/tests/test_curriculum_next_contract.py::TestCurriculumExerciseTypeMapping`.
 
 ### History — `GET /next-training/{player_id}` retired in PR 26
 
