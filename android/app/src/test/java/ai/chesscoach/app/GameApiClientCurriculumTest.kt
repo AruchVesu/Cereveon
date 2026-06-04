@@ -97,7 +97,11 @@ class GameApiClientCurriculumTest {
         /**
          * Verbatim reproduction of ``next_training()``'s response body —
          * captured by running the Python contract test against an
-         * in-memory SQLite session.  Includes the ``recommendations``
+         * in-memory SQLite session.  The new-player default ``opening_principles``
+         * topic maps to the ``opening_line`` exercise type via
+         * ``CurriculumPolicy.choose_exercise_type`` (refreshed 2026-06-04 when the
+         * server stopped degrading the skill-vector fallback topics to
+         * ``mixed_training``; see docs/API_CONTRACTS.md §18).  Includes the ``recommendations``
          * and ``dominant_category`` keys that ``ignoreUnknownKeys = true``
          * must silently absorb without throwing.  Bidirectional pin
          * against the wire-key drift the pre-2026-05-25 contract had —
@@ -108,12 +112,12 @@ class GameApiClientCurriculumTest {
 {
   "topic": "opening_principles",
   "difficulty": "medium",
-  "exercise_type": "mixed_training",
+  "exercise_type": "opening_line",
   "payload": {
     "session_minutes": 20,
     "focus": "opening_principles",
     "difficulty": "medium",
-    "exercise": "mixed_training"
+    "exercise": "opening_line"
   },
   "recommendations": [],
   "dominant_category": null
@@ -278,7 +282,7 @@ class GameApiClientCurriculumTest {
             val rec = (result as ApiResult.Success<*>).data as CurriculumRecommendation
             assertEquals("opening_principles", rec.topic)
             assertEquals("medium", rec.difficulty)
-            assertEquals("mixed_training", rec.exerciseType)
+            assertEquals("opening_line", rec.exerciseType)
             assertEquals("medium", rec.payload["difficulty"])
             assertEquals("20", rec.payload["session_minutes"])
         }
