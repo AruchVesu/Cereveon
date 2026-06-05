@@ -97,9 +97,23 @@ ENGINE_LEXICAL_PATTERNS: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 # Row 2 — Algebraic move notation
 # ---------------------------------------------------------------------------
+# The piece letter is OPTIONAL (``[KQRBN]?``) so PAWN moves — a bare
+# file+rank like "e4" / "d5" with no piece prefix — are caught, not just
+# piece moves ("Nf3").  Pre-2026-06-05 the mandatory ``[KQRBN]`` let pawn
+# squares and letter-O castling slip past this boundary entirely (the
+# only notation gate on the live /chat + /live/move path), so an LLM
+# reply like "your plan is to play e4" leaked notation to the user.  This
+# now matches the project's canonical notation regex in
+# ``llm.rag.validators.sanitize.NOTATION_REGEX`` (``[BNRQK]?[a-h][1-8]``).
+# Castling has two forms: digit-zero ``0-0`` and letter-O ``O-O`` — both
+# are listed (the digit form is kept verbatim so the architectural-
+# invariant guard ``"0-0" in p`` in test_architectural_invariants.py
+# still finds a castling pattern).  ``re.IGNORECASE`` on the negative
+# validator makes both case-insensitive.
 MOVE_ALGEBRAIC_PATTERNS: tuple[str, ...] = (
-    r"\b[KQRBN][a-h][1-8]\b",
+    r"\b[KQRBN]?[a-h][1-8]\b",
     r"\b0-0(?:-0)?\b",
+    r"\bO-O(?:-O)?\b",
 )
 
 
@@ -109,7 +123,23 @@ MOVE_ALGEBRAIC_PATTERNS: tuple[str, ...] = (
 MOVE_ADVISORY_PATTERNS: tuple[str, ...] = (
     r"\brecommended move\b",
     r"\bexample move\b",
-    r"\bplan\b",
+    # ``\bplan\b`` was narrowed to the advisory-HEADER form ``\bplan\b\s*:``
+    # (2026-06-04).  The bare word over-rejected the strategic noun that
+    # is the bread-and-butter of coaching prose ("your plan is to improve
+    # your worst piece", "White's plan involves central control") — and
+    # the Mode-2 system prompt itself instructs the LLM to "discuss
+    # themes, plans, principles", so every plan-mentioning reply tripped
+    # this gate and fell through to the templated deterministic fallback
+    # (the "templated chat" UX report).  The colon form still catches the
+    # actually-forbidden shape — a prescriptive "Plan: trade pieces and
+    # convert" section that lists a course of action — which is what
+    # DUAL_USE_TOKENS["plan"] always described as the forbidden form.
+    # Same false-positive-retirement pattern as ``\bshould\b`` (PR #170).
+    # Violations-corpus MOV-04 ("Plan: trade pieces and convert.") still
+    # fires.  STRUCTURAL_KEYWORDS keeps the bare "plan" for repair-loop
+    # classification (it substring-matches this regex string) — see note
+    # there.
+    r"\bplan\b\s*:",
     r"\bwhite can\b",
     r"\bblack can\b",
     r"\bif it\b",
@@ -275,6 +305,15 @@ ADVISORY_KEYWORDS: tuple[str, ...] = (
 # Bare form of MOVE_ADVISORY_PATTERNS (Row 3) without the ``\b...\b``
 # wrappers.  Order matches MOVE_ADVISORY_PATTERNS so a side-by-side
 # review is unambiguous.
+#
+# NOTE on "plan": this stays the bare token even though the matching
+# pattern was narrowed to the header form ``\bplan\b\s*:`` (2026-06-04).
+# These keywords are NOT matched against LLM output text — they are
+# substring-matched against the *error's regex string* in
+# ``run_mode_2._is_structural_pattern`` / the repair loop to CLASSIFY
+# which validator complained ("does the failing pattern look structural?").
+# "plan" is a substring of ``\bplan\b\s*:``, so classification still
+# routes correctly; using "plan:" here would break that substring match.
 STRUCTURAL_KEYWORDS: tuple[str, ...] = (
     "recommended move",
     "example move",
@@ -333,17 +372,27 @@ DUAL_USE_TOKENS: dict[str, dict[str, object]] = {
         "date": None,
     },
     "plan": {
-        "enforced_at": "structural",
+        "enforced_at": "structural-header",
         "rationale": (
-            "Strategic noun ('White's plan involves piece activity') vs "
-            "advisory section header ('Plan: trade pieces and convert').  "
-            "Enforced at the structural surface only; a bare \\bplan\\b "
-            "in SPECULATIVE_PATTERNS would over-reject the strategic-noun "
-            "form.  The structural surface's MOVE_ADVISORY_PATTERNS row 3 "
-            "catches the header form, which is the actually-forbidden shape."
+            "Strategic noun ('White's plan involves piece activity', 'your "
+            "plan is to improve your worst piece') vs advisory section "
+            "header ('Plan: trade pieces and convert').  Only the HEADER "
+            "form is forbidden — it presents a prescriptive course of "
+            "action, the move-suggestion shape Mode-2 must not produce.  "
+            "The strategic noun is core coaching vocabulary and the "
+            "system prompt explicitly invites it ('discuss themes, plans, "
+            "principles'), so it must pass at every surface.  "
+            "MOVE_ADVISORY_PATTERNS therefore carries the colon-anchored "
+            "``\\bplan\\b\\s*:`` (narrowed 2026-06-04 from the bare "
+            "``\\bplan\\b`` that over-rejected the noun and forced the "
+            "templated deterministic fallback — same retirement shape as "
+            "``\\bshould\\b`` in PR #170).  STRUCTURAL_KEYWORDS keeps the "
+            "bare 'plan' token because the repair loop classifies by "
+            "substring-in-regex-string, and 'plan' is a substring of "
+            "``\\bplan\\b\\s*:``."
         ),
         "pr": None,
-        "date": None,
+        "date": "2026-06-04",
     },
     "forced": {
         "enforced_at": "semantic-required",

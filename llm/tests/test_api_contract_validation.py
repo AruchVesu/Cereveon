@@ -922,9 +922,13 @@ class TestChatResponseValidation:
     # -----------------------------------------------------------------------
 
     def test_chat_forbidden_section_plan_raises(self):
-        """``plan`` is on validate_mode_2_structure's FORBIDDEN_SECTIONS
-        but absent from validate_mode_2_negative.FORBIDDEN_PATTERNS — this
-        reply passes the negative gate and must be caught by structure."""
+        """The prescriptive ``Plan:`` header is on validate_mode_2_structure's
+        FORBIDDEN_SECTIONS (``\\bplan\\b\\s*:``, narrowed 2026-06-04 from the
+        bare ``\\bplan\\b``) but absent from
+        validate_mode_2_negative.FORBIDDEN_PATTERNS — this reply passes the
+        negative gate and must be caught by structure.  The bare strategic
+        noun ("form a concrete plan") is intentionally NOT rejected now;
+        only the header form is — see test_structure_plan_unlock.py."""
         from llm.rag.validators.explain_response_schema import (
             ExplainSchemaError,
             validate_chat_response,
@@ -932,7 +936,7 @@ class TestChatResponseValidation:
 
         with pytest.raises(ExplainSchemaError, match="structure"):
             validate_chat_response(
-                self._payload(reply="Develop your pieces and form a concrete plan.")
+                self._payload(reply="Plan: develop your pieces and trade the queens.")
             )
 
     def test_chat_forbidden_section_recommended_move_raises(self):
@@ -1117,6 +1121,9 @@ class TestLiveMoveResponseValidation:
     # -----------------------------------------------------------------------
 
     def test_live_forbidden_section_plan_raises(self):
+        # Prescriptive ``Plan:`` header — structure gate (``\bplan\b\s*:``,
+        # narrowed 2026-06-04).  Bare-noun "plan" now passes; see
+        # test_structure_plan_unlock.py.
         from llm.rag.validators.explain_response_schema import (
             ExplainSchemaError,
             validate_live_move_response,
@@ -1124,7 +1131,7 @@ class TestLiveMoveResponseValidation:
 
         with pytest.raises(ExplainSchemaError, match="structure"):
             validate_live_move_response(
-                self._payload(hint="Form a concrete plan and trade pieces.")
+                self._payload(hint="Plan: trade pieces and push the wing pawns.")
             )
 
     def test_live_speculative_engine_token_raises(self):

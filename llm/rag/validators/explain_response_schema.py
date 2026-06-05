@@ -233,7 +233,8 @@ def validate_chat_response(response: dict) -> ChatResponse:
       including invented chess moves, mate claims, and analysis language
       forbidden in Mode-2).
     - reply passes validate_mode_2_structure (no forbidden advisory
-      sections — "recommended move", "plan", "white can", "consider", ...).
+      sections — "recommended move", "Plan:" header, "white can",
+      "consider", ...).
     - reply passes validate_mode_2_semantic against the validated
       engine_signal (equal-position neutrality, mate decisiveness,
       no engine speculation, no invented tactics when tactical_flags == []).
@@ -293,7 +294,7 @@ def validate_live_move_response(response: dict) -> LiveMoveResponse:
     - validate_mode_2_negative — invented chess moves, mate claims,
       forbidden analysis language.
     - validate_mode_2_structure — forbidden advisory sections
-      ("recommended move", "plan", "consider", "white can", ...).
+      ("recommended move", "Plan:" header, "consider", "white can", ...).
     - validate_mode_2_semantic — equal-position neutrality, mate
       decisiveness ("inevitable" / "forced"), no engine speculation,
       no invented tactics when tactical_flags == [].

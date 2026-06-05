@@ -42,8 +42,19 @@ class TestChatPipelineSafety:
     def test_reply_always_references_engine(self):
         turns = [ChatTurn(role="user", content="How is White doing?")]
         result = generate_chat_reply(fen=_START_FEN, messages=turns)
-        # Must reference engine evaluation (the pipeline contract)
-        assert "Engine evaluation" in result.reply or "engine" in result.reply.lower()
+        # The reply must convey engine truth — but NOT by quoting the
+        # engine.  "engine" is forbidden by ``validate_mode_2_semantic``
+        # and "evaluation" was retired from the deterministic builder
+        # (PR #133) because users read it as the coach quoting engine
+        # data.  Assert on the band/mate vocabulary directly — the actual
+        # engine truth — exactly as the canonical pin
+        # ``test_seca_integration.py::test_sint11_chat_reply_references_engine_evaluation``
+        # does.  (This straggler kept the old "engine" frame-word
+        # assertion that PR #133 should have updated; corrected here.)
+        lower = result.reply.lower()
+        assert any(
+            word in lower for word in ("equal", "advantage", "mate")
+        ), f"Chat reply must reference the band/mate context: {result.reply!r}"
 
     def test_empty_messages_produces_reply(self):
         result = generate_chat_reply(fen=_START_FEN, messages=[])

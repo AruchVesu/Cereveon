@@ -281,16 +281,18 @@ def test_mk_vcr_03_content_branch_emits_specific_phrase():
 
 def test_mk_vcr_04_structure_branch_emits_specific_phrase():
     """MK_VCR_04 — structure failure raises "Chat reply failed Mode-2
-    structure validation".  Triggered by ``plan`` (mode_2_structure
-    forbids "plan").  Verified to NOT trigger content (no chess moves,
-    no checkmate, no "should"/"consider"/"likely") and NOT trigger
-    semantic (no equal-band words, no engine speculation, no
+    structure validation".  Triggered by the prescriptive ``Plan:``
+    header (mode_2_structure forbids ``\\bplan\\b\\s*:`` since the
+    2026-06-04 narrowing — the bare "plan" noun is now accepted; see
+    test_structure_plan_unlock.py).  Verified to NOT trigger content (no
+    chess moves, no checkmate, no "should"/"consider"/"likely") and NOT
+    trigger semantic (no equal-band words, no engine speculation, no
     invented-tactic words)."""
     with pytest.raises(
         ExplainSchemaError, match=r"^Chat reply failed Mode-2 structure validation"
     ):
         validate_chat_response(
-            _chat_payload(reply="We need a plan for the middlegame.")
+            _chat_payload(reply="Plan: improve the pieces and contest the centre.")
         )
 
 
@@ -348,12 +350,14 @@ def test_mk_vlm_02_content_branch_emits_specific_phrase():
 
 def test_mk_vlm_03_structure_branch_emits_specific_phrase():
     """MK_VLM_03 — structure failure raises "Live-move hint failed
-    Mode-2 structure validation"."""
+    Mode-2 structure validation".  Triggered by the prescriptive
+    ``Plan:`` header (``\\bplan\\b\\s*:``, narrowed 2026-06-04 — bare
+    "plan" noun now accepted; see test_structure_plan_unlock.py)."""
     with pytest.raises(
         ExplainSchemaError, match=r"^Live-move hint failed Mode-2 structure validation"
     ):
         validate_live_move_response(
-            _live_move_payload(hint="We need a plan for the middlegame.")
+            _live_move_payload(hint="Plan: improve the pieces and contest the centre.")
         )
 
 
