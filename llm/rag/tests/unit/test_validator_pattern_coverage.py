@@ -78,8 +78,11 @@ NEG_SAMPLES: list[tuple[str, str]] = [
     (r"\bwith perfect play\b",     "ended with perfect play"),
     (r"\bactually winning\b",      "she is actually winning"),
     (r"\bconsider\b",              "we consider tea"),
-    (r"\b[KQRBN][a-h][1-8]\b",     "the move Qh5 follows"),
+    # Piece letter optional (broadened 2026-06-05) — sample uses a bare
+    # PAWN square "e4" with no piece prefix to lock the optional-``?``.
+    (r"\b[KQRBN]?[a-h][1-8]\b",    "the pawn move e4 follows"),
     (r"\b0-0(?:-0)?\b",            "wrote 0-0 today"),
+    (r"\bO-O(?:-O)?\b",            "wrote O-O today"),
     (r"\bcalculate\b",             "we calculate taxes"),
     (r"\bcalculation\b",           "after calculation finished"),
     (r"\bvariation\b",             "the main variation today"),
@@ -151,7 +154,11 @@ def test_mtc_neg_empty_input_rejected() -> None:
 STR_SAMPLES: list[tuple[str, str]] = [
     (r"\brecommended move\b",  "the recommended move was solid"),
     (r"\bexample move\b",      "an example move follows"),
-    (r"\bplan\b",              "needed a plan today"),
+    # ``\bplan\b`` narrowed to the advisory-header form ``\bplan\b\s*:``
+    # (2026-06-04) — bare "needed a plan today" now PASSES (strategic
+    # noun), only the prescriptive "Plan:" section header is rejected.
+    # See _rules.DUAL_USE_TOKENS["plan"] and test_structure_plan_unlock.py.
+    (r"\bplan\b\s*:",          "the plan: trade pieces and convert"),
     (r"\bwhite can\b",         "white can defend here"),
     (r"\bblack can\b",         "black can respond now"),
     (r"\bif it\b",             "if it works out"),

@@ -323,7 +323,7 @@ def test_TXI_OVL_lexical_pattern_overlap_matches_dual_use_registry() -> None:
     failure mode PR #170 had to chase across three test files.
 
     Limitation: the bare-word extraction below cannot reduce patterns
-    that contain regex constructs (e.g. ``\\b[KQRBN][a-h][1-8]\\b``,
+    that contain regex constructs (e.g. ``\\b[KQRBN]?[a-h][1-8]\\b``,
     ``\\bforce(?:d)? mate\\b``) to a single token for DUAL_USE_TOKENS
     lookup.  Such patterns must be enumerated in
     ``_OVERLAP_REGEX_CONSTRUCT_ALLOW`` above if and when they enter

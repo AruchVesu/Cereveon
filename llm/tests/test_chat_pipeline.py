@@ -832,23 +832,31 @@ class TestPipelineBoundaryParity:
     def test_structure_violation_falls_back(self):
         """CHAT_STRUCT_PLAN — `_validate_struct` is wired into the pipeline.
 
-        An LLM reply that says "Your plan should be ..." trips
-        ``validate_mode_2_structure`` (FORBIDDEN_SECTIONS includes
-        "plan"), the retry loop catches the AssertionError, retry-hint
-        is applied, the second attempt also fails (we keep returning
-        the bad reply), and the call falls through to the deterministic
-        path — which we assert does NOT contain "plan".
+        An LLM reply that presents a prescriptive "Plan:" section trips
+        ``validate_mode_2_structure`` (FORBIDDEN_SECTIONS carries the
+        advisory-header pattern ``\\bplan\\b\\s*:`` since the 2026-06-04
+        narrowing), the retry loop catches the AssertionError, retry-hint
+        is applied, the second attempt also fails (we keep returning the
+        bad reply), and the call falls through to the deterministic path —
+        which we assert does NOT contain "plan".
+
+        Note: the bare strategic noun ("your plan is to ...") is
+        intentionally NOT rejected after the narrowing — only the "Plan:"
+        header form is.  See _rules.DUAL_USE_TOKENS["plan"] and
+        test_structure_plan_unlock.py.
         """
         turns = _make_turns(("user", "What should I do here?"))
         # Note: `_call_llm` is what `_build_chat_llm` invokes; patching
         # it (instead of `_build_chat_llm` itself) keeps the in-pipeline
         # validators in scope so structure rejection is what we observe.
+        # The reply passes the negative gate cleanly, so the *structure*
+        # gate is unambiguously what rejects it.
         with (
             patch(f"{_MODULE}._LLM_AVAILABLE", True),
             patch(f"{_MODULE}._CHAT_RETRY_DELAY_SECONDS", 0),
             patch(
                 f"{_MODULE}._call_llm",
-                return_value="Your plan should be to develop pieces and consider central pawn breaks.",
+                return_value="Plan: develop your pieces and fight for the centre.",
             ),
         ):
             result = generate_chat_reply(_STARTING_FEN, turns)

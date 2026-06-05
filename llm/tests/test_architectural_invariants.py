@@ -31,7 +31,12 @@ _EXPLAIN_PIPELINE = _LLM_ROOT / "seca" / "coach" / "explain_pipeline.py"
 # INV-01 — LLM output never contains algebraic move notation
 # ---------------------------------------------------------------------------
 
-_MOVE_PATTERN = re.compile(r"\b[KQRBN][a-h][1-8]\b|\b0-0(?:-0)?\b")
+# Piece letter optional so PAWN squares ("e4") are caught, plus letter-O
+# castling ("O-O") — broadened 2026-06-05 to match the validator's
+# MOVE_ALGEBRAIC_PATTERNS and sanitize.NOTATION_REGEX.
+_MOVE_PATTERN = re.compile(
+    r"\b[KQRBN]?[a-h][1-8]\b|\b0-0(?:-0)?\b|\bO-O(?:-O)?\b", re.IGNORECASE
+)
 
 _MOVE_NOTATION_SAMPLES = [
     "The best response is Nf3 attacking the centre.",
@@ -40,6 +45,11 @@ _MOVE_NOTATION_SAMPLES = [
     "Black plays 0-0-0 to castle queenside.",
     "White should castle 0-0 immediately.",
     "The queen move Qd5 is very strong here.",
+    # Pawn-square notation (no piece prefix) and letter-O castling — the
+    # gap closed 2026-06-05.  The first is the exact "plan-framed pawn
+    # move" phrasing that slipped through after the \bplan\b narrowing.
+    "Your plan is to push the central pawn to e4.",
+    "Castle O-O to tuck the king into safety.",
 ]
 
 _CLEAN_SAMPLES = [

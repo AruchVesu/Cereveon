@@ -642,14 +642,21 @@ class TestLLMSafetyValidators:
 
     def test_mode_2_structure_violation_falls_back(self):
         """LIVE_STRUCT_PLAN — issue #129 regression: an LLM hint that
-        uses the FORBIDDEN_SECTIONS token "plan" (or "consider", "white
-        can", ...) used to pass ``_validate_neg`` and escape the
-        pipeline, then 500 at ``validate_live_move_response`` and (via
-        the pre-#130 rotation cascade) lock the user out of the
+        uses a FORBIDDEN_SECTIONS form (a prescriptive "Plan:" header,
+        "consider", "white can", ...) used to pass ``_validate_neg`` and
+        escape the pipeline, then 500 at ``validate_live_move_response``
+        and (via the pre-#130 rotation cascade) lock the user out of the
         session.  Post-#129 the pipeline runs ``validate_mode_2_structure``
-        inside ``_build_hint_llm``; this test pins that an LLM emitting
-        "plan" / "consider" falls back to the deterministic hint."""
-        adversarial = "Your plan should be to develop quickly and consider central pawn breaks."
+        inside ``_build_hint_llm``; this test pins that an LLM emitting a
+        "Plan:" header falls back to the deterministic hint.
+
+        Uses the header form (rather than a bare "plan" noun) because the
+        ``\\bplan\\b`` pattern was narrowed to ``\\bplan\\b\\s*:`` on
+        2026-06-04 — the strategic noun is now accepted, only the
+        prescriptive header is rejected.  See test_structure_plan_unlock.py.
+        The hint passes the negative gate cleanly, so the structure gate
+        is unambiguously what rejects it."""
+        adversarial = "Plan: develop quickly and seize central space."
         with (
             patch(f"{self._LLM_MODULE}._LLM_AVAILABLE", True),
             patch(f"{self._LLM_MODULE}._LIVE_RETRY_DELAY_SECONDS", 0),

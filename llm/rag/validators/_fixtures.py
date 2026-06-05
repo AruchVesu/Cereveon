@@ -93,11 +93,18 @@ DUAL_USE_PASSING_SAMPLES: dict[str, list[str]] = {
         "Sound positional play involves careful consideration of pawn breaks.",
     ],
     "plan": [
-        # ``plan`` is enforced ONLY at the structural surface — bare
-        # ``\bplan\b`` would over-reject the strategic-noun form.
-        # These coaching sentences must pass the lexical filter.
+        # ``plan`` is enforced ONLY at the structural surface, and since
+        # the 2026-06-04 narrowing only in the ``Plan:`` header form
+        # (``\bplan\b\s*:``) — the bare ``\bplan\b`` over-rejected the
+        # strategic noun.  These strategic-noun sentences now pass BOTH
+        # the lexical filter AND the structural filter (see
+        # test_structure_plan_unlock.py for the structural-surface pin).
         "The structure favours a long-term plan based on piece activity.",
-        "White's plan involves preparing the d4-d5 break.",
+        # NB: keep these free of square notation ("d4", "e5", ...) — the
+        # negative gate's MOVE_ALGEBRAIC_PATTERNS catches bare pawn squares
+        # (broadened 2026-06-05), and these samples must isolate the *word*
+        # "plan", not smuggle in a separate notation violation.
+        "White's plan involves preparing a central pawn break.",
         "A clear positional plan beats a vague tactical try.",
     ],
     "forced": [
