@@ -243,12 +243,24 @@ MISSING_DATA_PHRASES: tuple[str, ...] = (
 # Row 8 — Equal-band advantage vocabulary (semantic surface)
 # ---------------------------------------------------------------------------
 # When ESV.evaluation.band == "equal", output must NOT use advantage words.
+#
+# ``initiative`` and ``pressure`` were retired 2026-06-06: they are
+# general strategic vocabulary, not direct advantage claims, and a
+# substring match over-rejected legitimate coaching ("pressure on the
+# backward pawn", "seize the initiative on the wing", and especially
+# king-safety answers like "the opponent builds pressure against your
+# king").  On an equal-band quiet position this silently vetoed almost
+# every Mode-2 LLM reply and dropped the user to the templated
+# deterministic fallback (the "nothing changed" report).  The retained
+# words — ``slight advantage`` / ``better`` / ``winning`` — are the
+# direct who-stands-better claims that genuinely contradict an "equal"
+# engine band.  Same false-positive-retirement shape as ``\bshould\b``
+# (PR #170) and ``\bplan\b`` (2026-06-04).  Pinned by
+# test_semantic_strategic_vocab_unlock.py.
 EQUAL_ADVANTAGE_WORDS: tuple[str, ...] = (
     "slight advantage",
     "better",
     "winning",
-    "initiative",
-    "pressure",
 )
 
 
@@ -256,12 +268,22 @@ EQUAL_ADVANTAGE_WORDS: tuple[str, ...] = (
 # Row 9 — Invented tactical nouns (semantic surface)
 # ---------------------------------------------------------------------------
 # When ESV.tactical_flags == [], output must NOT name a tactical motif.
+#
+# ``attack`` and ``threat`` were retired 2026-06-06: unlike fork / pin /
+# sacrifice they are NOT concrete tactical motifs — they are general
+# strategic words ("attack the weak pawn", "threats against the king",
+# "build an attack", "the square is under threat").  Naming a fork/pin/
+# sacrifice when the engine reports no tactical flags invents a concrete
+# tactic; saying "attack"/"threat" does not.  The substring match
+# over-rejected normal coaching — most visibly king-safety answers, which
+# REQUIRE this vocabulary — vetoing the LLM reply on a quiet position and
+# forcing the templated deterministic fallback.  The retained motifs keep
+# the anti-hallucination guarantee that matters.  Pinned by
+# test_semantic_strategic_vocab_unlock.py.
 TACTICAL_NOUN_WORDS: tuple[str, ...] = (
     "fork",
     "pin",
     "sacrifice",
-    "attack",
-    "threat",
 )
 
 

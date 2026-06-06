@@ -196,11 +196,12 @@ def test_mtc_str_section_list_is_complete() -> None:
 @pytest.mark.parametrize(
     "text, word",
     [
+        # "initiative" + "pressure" retired 2026-06-06 (general strategic
+        # vocab, not direct advantage claims) — see
+        # test_semantic_strategic_vocab_unlock.py.
         ("the position is a slight advantage", "slight advantage"),
         ("white is better",                    "better"),
         ("white is winning",                   "winning"),
-        ("white has the initiative",           "initiative"),
-        ("white has pressure",                 "pressure"),
     ],
     ids=lambda v: v if isinstance(v, str) and len(v) < 30 else "row",
 )
@@ -257,7 +258,9 @@ def test_mtc_sem_speculative_words_rejected(word: str) -> None:
     assert str(exc.value) == f"Speculative language detected: '{word}'"
 
 
-INVENTED_SAMPLES = ["fork", "pin", "sacrifice", "attack", "threat"]
+# "attack" + "threat" retired 2026-06-06 (general strategic words, not
+# concrete tactical motifs) — see test_semantic_strategic_vocab_unlock.py.
+INVENTED_SAMPLES = ["fork", "pin", "sacrifice"]
 
 
 @pytest.mark.parametrize("word", INVENTED_SAMPLES, ids=INVENTED_SAMPLES)
