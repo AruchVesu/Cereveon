@@ -965,9 +965,12 @@ class TestChatResponseValidation:
 
     def test_chat_equal_band_describes_advantage_raises(self):
         """When engine_signal says band='equal', the reply must NOT use
-        FORBIDDEN_EQUAL tokens (slight advantage / better / winning /
-        initiative / pressure).  ``initiative`` is the canary picked
-        here because it does not collide with any negative regex."""
+        FORBIDDEN_EQUAL tokens (slight advantage / better / winning;
+        initiative + pressure retired 2026-06-06 as general strategic
+        vocab — see test_semantic_strategic_vocab_unlock.py).  ``slight
+        advantage`` is the canary here — a direct advantage claim that
+        contradicts an equal band and does not collide with any negative
+        regex."""
         from llm.rag.validators.explain_response_schema import (
             ExplainSchemaError,
             validate_chat_response,
@@ -978,7 +981,7 @@ class TestChatResponseValidation:
         with pytest.raises(ExplainSchemaError, match="semantic"):
             validate_chat_response(
                 self._payload(
-                    reply="White holds a clear initiative across the board.",
+                    reply="White holds a slight advantage across the board.",
                     engine_signal=equal_signal,
                 )
             )
@@ -1156,7 +1159,7 @@ class TestLiveMoveResponseValidation:
         with pytest.raises(ExplainSchemaError, match="semantic"):
             validate_live_move_response(
                 self._payload(
-                    hint="Black has the initiative now.",
+                    hint="Black has a slight advantage now.",
                     engine_signal=equal_signal,
                 )
             )

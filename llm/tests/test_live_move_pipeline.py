@@ -696,11 +696,13 @@ class TestLLMSafetyValidators:
 
     def test_mode_2_semantic_invented_tactic_falls_back(self):
         """LIVE_SEM_TACTIC — issue #129 regression: an LLM hint that
-        mentions a tactical motif ("attack", "fork", "pin", "threat")
+        invents a concrete tactical motif ("fork", "pin", "sacrifice")
         when ``engine_signal.tactical_flags == []`` used to 500 at the
         boundary.  Now caught by ``validate_mode_2_semantic`` inside
-        the pipeline."""
-        adversarial = "Nice knight move that creates a threat on the king."
+        the pipeline.  (NB: "attack"/"threat" were retired from the motif
+        list 2026-06-06 — they are general strategic words, not motifs;
+        see test_semantic_strategic_vocab_unlock.py.)"""
+        adversarial = "A knight leap here sets up a fork against the king."
         with (
             patch(f"{self._LLM_MODULE}._LLM_AVAILABLE", True),
             patch(f"{self._LLM_MODULE}._LIVE_RETRY_DELAY_SECONDS", 0),
@@ -708,7 +710,7 @@ class TestLLMSafetyValidators:
         ):
             result = generate_live_reply(_MID_FEN, _UCI_NORMAL)
         lower = result.hint.lower()
-        for forbidden in ("attack", "fork", "pin", "threat"):
+        for forbidden in ("fork", "pin", "sacrifice"):
             assert forbidden not in lower, (
                 f"deterministic fallback leaked tactical motif '{forbidden}': {result.hint!r}"
             )
