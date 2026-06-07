@@ -281,33 +281,37 @@ def test_mk_vcr_03_content_branch_emits_specific_phrase():
 
 def test_mk_vcr_04_structure_branch_emits_specific_phrase():
     """MK_VCR_04 — structure failure raises "Chat reply failed Mode-2
-    structure validation".  Triggered by the prescriptive ``Plan:``
-    header (mode_2_structure forbids ``\\bplan\\b\\s*:`` since the
-    2026-06-04 narrowing — the bare "plan" noun is now accepted; see
-    test_structure_plan_unlock.py).  Verified to NOT trigger content (no
-    chess moves, no checkmate, no "should"/"consider"/"likely") and NOT
-    trigger semantic (no equal-band words, no engine speculation, no
-    invented-tactic words)."""
+    structure validation".  Triggered by the prescriptive ``Recommended
+    move:`` section (mode_2_structure forbids ``\\brecommended move\\b``).
+    Was a "Plan:" header until 2026-06-07, when "plan" was fully retired
+    from MOVE_ADVISORY_PATTERNS — the header word is harmless on its own;
+    see test_structure_plan_unlock.py.  Verified to NOT trigger content
+    (no chess moves, no checkmate, no "I think") and NOT trigger semantic
+    (no equal-band words, no engine speculation, no invented-tactic
+    words)."""
     with pytest.raises(
         ExplainSchemaError, match=r"^Chat reply failed Mode-2 structure validation"
     ):
         validate_chat_response(
-            _chat_payload(reply="Plan: improve the pieces and contest the centre.")
+            _chat_payload(reply="Recommended move: improve the pieces and contest the centre.")
         )
 
 
 def test_mk_vcr_05_semantic_branch_emits_specific_phrase():
     """MK_VCR_05 — semantic failure raises "Chat reply failed Mode-2
-    semantic validation".  Triggered by ``better`` in an ``equal``-
+    semantic validation".  Triggered by ``winning`` in an ``equal``-
     band context (mode_2_semantic forbids equal-band advantage
-    language).  Reply has no chess moves / mate / engine words / plan
-    words, so it passes content + structure."""
+    language).  Was ``better`` until 2026-06-07, when "better" was
+    retired from EQUAL_ADVANTAGE_WORDS (too common a comparative); see
+    test_semantic_strategic_vocab_unlock.py.  Reply has no chess moves /
+    mate / engine words / advisory sections, so it passes content +
+    structure."""
     with pytest.raises(
         ExplainSchemaError, match=r"^Chat reply failed Mode-2 semantic validation"
     ):
         validate_chat_response(
             _chat_payload(
-                reply="Both sides are equal, but Black is slightly better.",
+                reply="Both sides look balanced, but Black is winning.",
                 engine_signal=_engine_signal(band="equal"),
             )
         )
@@ -351,25 +355,30 @@ def test_mk_vlm_02_content_branch_emits_specific_phrase():
 def test_mk_vlm_03_structure_branch_emits_specific_phrase():
     """MK_VLM_03 — structure failure raises "Live-move hint failed
     Mode-2 structure validation".  Triggered by the prescriptive
-    ``Plan:`` header (``\\bplan\\b\\s*:``, narrowed 2026-06-04 — bare
-    "plan" noun now accepted; see test_structure_plan_unlock.py)."""
+    ``Recommended move:`` section (``\\brecommended move\\b``).  Was a
+    "Plan:" header until 2026-06-07, when "plan" was fully retired from
+    MOVE_ADVISORY_PATTERNS (header word + bare noun both accepted now);
+    see test_structure_plan_unlock.py."""
     with pytest.raises(
         ExplainSchemaError, match=r"^Live-move hint failed Mode-2 structure validation"
     ):
         validate_live_move_response(
-            _live_move_payload(hint="Plan: improve the pieces and contest the centre.")
+            _live_move_payload(hint="Recommended move: improve the pieces and contest the centre.")
         )
 
 
 def test_mk_vlm_04_semantic_branch_emits_specific_phrase():
     """MK_VLM_04 — semantic failure raises "Live-move hint failed
-    Mode-2 semantic validation"."""
+    Mode-2 semantic validation".  Triggered by ``winning`` on an
+    ``equal`` band.  Was ``better`` until 2026-06-07, when "better" was
+    retired from EQUAL_ADVANTAGE_WORDS; see
+    test_semantic_strategic_vocab_unlock.py."""
     with pytest.raises(
         ExplainSchemaError, match=r"^Live-move hint failed Mode-2 semantic validation"
     ):
         validate_live_move_response(
             _live_move_payload(
-                hint="Both sides are equal, but Black is slightly better.",
+                hint="Both sides look balanced, but Black is winning.",
                 engine_signal=_engine_signal(band="equal"),
             )
         )

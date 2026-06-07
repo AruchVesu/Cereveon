@@ -66,10 +66,10 @@ from llm.rag.validators.sanitize import NOTATION_REGEX, mask_chess_notation
 NEG_SAMPLES: list[tuple[str, str]] = [
     # ``\bshould\b`` retired from SPECULATIVE_PATTERNS in PR #170
     # (2026-05-16) — was over-blocking imperative coaching language.
-    # Speculative compounds still caught via the other patterns below
-    # (``\blikely\b``, ``\bprobably\b``, ``\bconsider\b``, etc.).
-    (r"\blikely\b",                "snow is likely"),
-    (r"\bprobably\b",              "milk is probably ok"),
+    # ``\blikely\b`` / ``\bprobably\b`` / ``\bconsider\b`` retired
+    # 2026-06-07 (hedged coaching language / normal directive — see
+    # _rules.SPECULATIVE_PATTERNS).  The clear-overreach + engine-voice
+    # forms below remain the load-bearing speculative rows.
     (r"\bI think\b",               "I think apples are tasty"),
     (r"\bthe engine wants\b",      "the engine wants water"),
     (r"\bplans to\b",              "alice plans to visit"),
@@ -77,7 +77,6 @@ NEG_SAMPLES: list[tuple[str, str]] = [
     (r"\black of planning\b",      "showed clear lack of planning"),
     (r"\bwith perfect play\b",     "ended with perfect play"),
     (r"\bactually winning\b",      "she is actually winning"),
-    (r"\bconsider\b",              "we consider tea"),
     # Piece letter optional (broadened 2026-06-05) — sample uses a bare
     # PAWN square "e4" with no piece prefix to lock the optional-``?``.
     (r"\b[KQRBN]?[a-h][1-8]\b",    "the pawn move e4 follows"),
@@ -86,7 +85,9 @@ NEG_SAMPLES: list[tuple[str, str]] = [
     (r"\bcalculate\b",             "we calculate taxes"),
     (r"\bcalculation\b",           "after calculation finished"),
     (r"\bvariation\b",             "the main variation today"),
-    (r"\bline\b",                  "second line text"),
+    # ``\bline\b`` retired 2026-06-07 (over-broad — caught "open lines",
+    # "hold the line"; engine-analysis sense covered by ``\bvariation\b``
+    # / ``\bcalculate\b``).
     (r"\bcheckmate\b",             "checkmate occurred"),
     (r"\bmate in \d+\b",           "mate in 3 moves"),
     (r"\bforce(?:d)? mate\b",      "force mate now"),
@@ -154,15 +155,14 @@ def test_mtc_neg_empty_input_rejected() -> None:
 STR_SAMPLES: list[tuple[str, str]] = [
     (r"\brecommended move\b",  "the recommended move was solid"),
     (r"\bexample move\b",      "an example move follows"),
-    # ``\bplan\b`` narrowed to the advisory-header form ``\bplan\b\s*:``
-    # (2026-06-04) — bare "needed a plan today" now PASSES (strategic
-    # noun), only the prescriptive "Plan:" section header is rejected.
-    # See _rules.DUAL_USE_TOKENS["plan"] and test_structure_plan_unlock.py.
-    (r"\bplan\b\s*:",          "the plan: trade pieces and convert"),
+    # ``\bplan\b\s*:`` (header form), ``\bif it\b``, ``\bconsider\b`` all
+    # retired from MOVE_ADVISORY_PATTERNS 2026-06-07 — see
+    # _rules.MOVE_ADVISORY_PATTERNS and test_structure_plan_unlock.py.
+    # "plan" is now fully accept-only; the "Plan:" heading is harmless
+    # because move-content under it is still caught by notation /
+    # "white can" / "black can".
     (r"\bwhite can\b",         "white can defend here"),
     (r"\bblack can\b",         "black can respond now"),
-    (r"\bif it\b",             "if it works out"),
-    (r"\bconsider\b",          "consider this idea"),
 ]
 
 
@@ -196,11 +196,10 @@ def test_mtc_str_section_list_is_complete() -> None:
 @pytest.mark.parametrize(
     "text, word",
     [
-        # "initiative" + "pressure" retired 2026-06-06 (general strategic
-        # vocab, not direct advantage claims) — see
-        # test_semantic_strategic_vocab_unlock.py.
+        # "initiative" + "pressure" retired 2026-06-06; "better" retired
+        # 2026-06-07 (too common a comparative to distinguish from the
+        # advantage claim) — see test_semantic_strategic_vocab_unlock.py.
         ("the position is a slight advantage", "slight advantage"),
-        ("white is better",                    "better"),
         ("white is winning",                   "winning"),
     ],
     ids=lambda v: v if isinstance(v, str) and len(v) < 30 else "row",
@@ -245,7 +244,11 @@ def test_mtc_sem_mate_with_required_word_passes(required_word: str) -> None:
     validate_mode_2_semantic(text, engine_signal)
 
 
-SPEC_SAMPLES = ["likely", "probably", "might", "engine", "wants to"]
+# "likely" / "probably" / "might" / "wants to" retired from
+# SPECULATIVE_SEMANTIC 2026-06-07 (hedged coaching language, not
+# engine-fact speculation) — only the literal engine-leak word
+# "engine" remains.  See _rules.SPECULATIVE_SEMANTIC.
+SPEC_SAMPLES = ["engine"]
 
 
 @pytest.mark.parametrize("word", SPEC_SAMPLES, ids=SPEC_SAMPLES)

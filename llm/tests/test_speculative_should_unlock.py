@@ -21,16 +21,21 @@ speculative; the regex can't distinguish the two, so blocking the bare
 word permanently rejected legitimate coaching alongside actual
 speculation.
 
-PR #170 retires ``\\bshould\\b`` from SPECULATIVE_PATTERNS.  The
-defence-in-depth structure still catches the speculative compounds and
-engine-voice forms:
+PR #170 retired ``\\bshould\\b`` from SPECULATIVE_PATTERNS.  A later
+relaxation (2026-06-07) retired the hedging markers ``\\blikely\\b`` /
+``\\bprobably\\b`` / ``\\bconsider\\b`` too (ordinary hedged coaching /
+normal directives — see _rules.SPECULATIVE_PATTERNS), so the
+``should``-compounds those markers used to catch now PASS as well.  The
+clear-overreach / engine-voice forms remain the load-bearing speculative
+guards:
 
-  - ``should likely`` / ``should probably`` → caught by ``\\blikely\\b``
-                                              / ``\\bprobably\\b``
-                                              (still in SPECULATIVE_PATTERNS).
-  - ``should consider``                     → caught by ``\\bconsider\\b``
-                                              (still in both SPECULATIVE_PATTERNS
-                                              and MOVE_ADVISORY_PATTERNS).
+  - ``should likely`` / ``should probably`` → NOW PASS (``\\blikely\\b``
+                                              / ``\\bprobably\\b`` retired
+                                              2026-06-07).
+  - ``should consider``                     → NOW PASSES (``\\bconsider\\b``
+                                              retired 2026-06-07 from both
+                                              SPECULATIVE_PATTERNS and
+                                              MOVE_ADVISORY_PATTERNS).
   - ``the engine should …``                 → caught by ``"engine"`` in
                                               SPECULATIVE_SEMANTIC.
   - ``I think you should …``                → caught by ``\\bI think\\b``.
@@ -42,13 +47,15 @@ Pinned invariants
  2. SHOULD_BARE_PASSES                  — a coaching sentence using
                                           bare ``should`` passes
                                           ``validate_mode_2_negative``.
- 3. SHOULD_LIKELY_STILL_REJECTED        — ``"should likely"`` still
-                                          fails via the unchanged
-                                          ``\\blikely\\b`` pattern.
- 4. SHOULD_PROBABLY_STILL_REJECTED      — ``"should probably"`` still
-                                          fails via ``\\bprobably\\b``.
- 5. SHOULD_CONSIDER_STILL_REJECTED      — ``"should consider"`` still
-                                          fails via ``\\bconsider\\b``.
+ 3. SHOULD_LIKELY_NOW_PASSES            — ``"should likely"`` now passes
+                                          (``\\blikely\\b`` retired
+                                          2026-06-07).
+ 4. SHOULD_PROBABLY_NOW_PASSES          — ``"should probably"`` now
+                                          passes (``\\bprobably\\b``
+                                          retired 2026-06-07).
+ 5. SHOULD_CONSIDER_NOW_PASSES          — ``"should consider"`` now
+                                          passes (``\\bconsider\\b``
+                                          retired 2026-06-07).
  6. I_THINK_YOU_SHOULD_STILL_REJECTED   — ``"I think you should …"``
                                           still fails via ``\\bI think\\b``.
 """
@@ -128,27 +135,35 @@ class TestBareShouldCoachingAccepted:
 # ---------------------------------------------------------------------------
 
 
-class TestSpeculativeCompoundsStillRejected:
-    """Removing ``\\bshould\\b`` must not regress the defence against
-    actual speculation.  Each compound is caught by a different
-    remaining pattern, listed inline."""
+class TestSpeculativeCompoundsRelaxation:
+    """The 2026-06-07 relaxation retired the hedging markers
+    (``\\blikely\\b`` / ``\\bprobably\\b`` / ``\\bconsider\\b``) that
+    used to catch the ``should``-compounds, so those compounds now PASS
+    ``validate_mode_2_negative``.  The clear-overreach / engine-voice
+    forms remain rejected (see ``test_I_THINK_YOU_SHOULD_STILL_REJECTED``
+    below) — that's the line the relaxation deliberately did NOT cross."""
 
-    def test_SHOULD_LIKELY_STILL_REJECTED(self):
-        """``should likely`` → caught by ``\\blikely\\b``."""
-        with pytest.raises(AssertionError, match=r"\\blikely\\b"):
-            validate_mode_2_negative("White should likely convert this edge.")
+    def test_SHOULD_LIKELY_NOW_PASSES(self):
+        """``should likely`` now PASSES — ``\\blikely\\b`` retired
+        2026-06-07 (ordinary hedged coaching, e.g. "this would likely
+        weaken your king")."""
+        validate_mode_2_negative("White should likely convert this edge.")
 
-    def test_SHOULD_PROBABLY_STILL_REJECTED(self):
-        """``should probably`` → caught by ``\\bprobably\\b``."""
-        with pytest.raises(AssertionError, match=r"\\bprobably\\b"):
-            validate_mode_2_negative("Black should probably trade queens.")
+    def test_SHOULD_PROBABLY_NOW_PASSES(self):
+        """``should probably`` now PASSES — ``\\bprobably\\b`` retired
+        2026-06-07."""
+        validate_mode_2_negative("Black should probably trade queens.")
 
-    def test_SHOULD_CONSIDER_STILL_REJECTED(self):
-        """``should consider`` → caught by ``\\bconsider\\b``."""
-        with pytest.raises(AssertionError, match=r"\\bconsider\\b"):
-            validate_mode_2_negative("You should consider the open file.")
+    def test_SHOULD_CONSIDER_NOW_PASSES(self):
+        """``should consider`` now PASSES — ``\\bconsider\\b`` retired
+        2026-06-07 from both SPECULATIVE_PATTERNS and
+        MOVE_ADVISORY_PATTERNS ("consider castling" is a normal
+        directive)."""
+        validate_mode_2_negative("You should consider the open file.")
 
     def test_I_THINK_YOU_SHOULD_STILL_REJECTED(self):
-        """``I think you should`` → caught by ``\\bI think\\b`` (LLM-voice)."""
+        """``I think you should`` → still caught by ``\\bI think\\b``
+        (LLM-voice).  The relaxation retired the hedging markers but kept
+        the explicit first-person speculation guard."""
         with pytest.raises(AssertionError, match=r"\\bI think\\b"):
-            validate_mode_2_negative("I think you should attack the king.")
+            validate_mode_2_negative("I think you should castle the king.")

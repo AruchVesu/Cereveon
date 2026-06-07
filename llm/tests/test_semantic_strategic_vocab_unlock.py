@@ -70,7 +70,9 @@ class TestRetiredFromSemanticLists:
     def test_motifs_and_advantage_claims_retained(self):
         for motif in ("fork", "pin", "sacrifice"):
             assert motif in TACTICAL_NOUN_WORDS, f"lost the '{motif}' motif guard"
-        for claim in ("slight advantage", "better", "winning"):
+        # "better" retired from EQUAL_ADVANTAGE_WORDS 2026-06-07 (too
+        # common a comparative to distinguish from the advantage claim).
+        for claim in ("slight advantage", "winning"):
             assert claim in EQUAL_ADVANTAGE_WORDS, f"lost the '{claim}' advantage guard"
 
 
@@ -120,12 +122,52 @@ class TestKeptGuardsStillReject:
                 f"there is a {motif} that decides it", {"tactical_flags": []}
             )
 
-    @pytest.mark.parametrize("claim", ["slight advantage", "better", "winning"])
+    @pytest.mark.parametrize("claim", ["slight advantage", "winning"])
     def test_advantage_claim_on_equal_still_rejected(self, claim):
         with pytest.raises(Mode2Violation, match="Equal position described as advantage"):
             validate_mode_2_semantic(
                 f"white is clearly {claim} here", {"evaluation": {"band": "equal"}}
             )
+
+
+# ---------------------------------------------------------------------------
+# Pin 3b — word-boundary matching (2026-06-07): semantic checks switched
+# from raw substring to ``\b...\b`` regex, so a tactic like "pin" must not
+# fire inside "develoPINg" / "stepPINg".  Also pins that the freshly
+# retired surfaces ("better" on equal-band, "wants to" speculative) no
+# longer raise on their own surfaces.
+# ---------------------------------------------------------------------------
+
+
+class TestWordBoundaryAndRetiredSurfaces:
+    def test_pin_does_not_match_inside_other_words(self):
+        """The substring "pin" lives inside "developing"/"stepping"/
+        "keeping"; word-boundary matching must NOT treat that as the
+        invented-tactic motif.  Empty tactical_flags would have raised
+        "Invented tactic without flag: 'pin'" under the old substring
+        match, dropping ordinary coaching prose to the templated
+        fallback."""
+        validate_mode_2_semantic(
+            "we are developing and stepping carefully", {"tactical_flags": []}
+        )
+
+    def test_better_passes_on_equal_band(self):
+        """"better" was retired from EQUAL_ADVANTAGE_WORDS 2026-06-07;
+        its surface ("a better square", "better to castle first") must
+        no longer raise even on an equal band."""
+        validate_mode_2_semantic(
+            "a better square for the knight keeps things balanced",
+            {"evaluation": {"band": "equal"}},
+        )
+
+    def test_wants_to_passes_speculative_surface(self):
+        """"wants to" was retired from SPECULATIVE_SEMANTIC 2026-06-07
+        (caught ordinary coaching "your opponent wants to open the
+        centre" far more than the engine-voice sense); its surface must
+        no longer raise."""
+        validate_mode_2_semantic(
+            "your opponent wants to open the centre", {"evaluation": {}}
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -109,19 +109,23 @@ def test_semantic_violation_on_equal_band_triggers_retry():
     """Equal-band ESV must wire validate_mode_2_semantic into the retry loop.
 
     Closes the parity gap with _build_chat_llm / _build_hint_llm: a borderline
-    output that passes negative + structure + output but says "Black is better"
+    output that passes negative + structure + output but says "Black is winning"
     when the engine signal reports band=="equal" used to slip through
     run_mode_2's retry loop because the semantic validator wasn't part of
     _validate_all.  This pins the fix so a future refactor can't silently
     drop semantic again without breaking a deterministic test.
+
+    Uses "winning" (was "better" until 2026-06-07, when "better" was retired
+    from EQUAL_ADVANTAGE_WORDS as too common a comparative — see
+    test_semantic_strategic_vocab_unlock.py).
     """
     equal_band_esv = {
         "evaluation": {"type": "cp", "value": 0, "band": "equal"},
         "tactical_flags": ["any"],
     }
     # Initial output: passes negative/structure/output but fails semantic
-    # ("better" is in EQUAL_ADVANTAGE_WORDS, gated on band=="equal").
-    initial = "The position is roughly balanced and Black is better in this phase."
+    # ("winning" is in EQUAL_ADVANTAGE_WORDS, gated on band=="equal").
+    initial = "The position is roughly balanced and Black is winning in this phase."
     rewritten = "The position is roughly balanced with no decisive imbalance for either side."
 
     llm = FakeLLM(initial=initial, rewritten=rewritten)
@@ -135,7 +139,7 @@ def test_semantic_violation_on_equal_band_triggers_retry():
 
     # Rewritten output is what the test consumed — the initial was rejected
     # by the semantic gate inside the retry loop.
-    assert "better" not in out.lower()
+    assert "winning" not in out.lower()
     # A rewrite must have been requested as a result of the semantic failure.
     assert any("REWRITE INSTRUCTIONS" in c for c in llm.calls)
     from llm.rag.llm.config import MAX_MODE_2_RETRIES
