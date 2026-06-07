@@ -286,6 +286,7 @@ class HttpCoachApiClient(
      *
      *   - ``{"type":"chunk","text":"..."}``               → [StreamChunk.Chunk]
      *   - ``{"type":"done","engine_signal":...,"mode":...}`` → [StreamChunk.Done]
+     *   - ``{"type":"abort","reply":...,"engine_signal":...,"mode":...}`` → [StreamChunk.Abort]
      *   - ``{"type":"error","message":"..."}``            → [StreamChunk.StreamError]
      *
      * Decoded as a generic [kotlinx.serialization.json.JsonObject] so the
@@ -306,6 +307,17 @@ class HttpCoachApiClient(
                         ApiJson.decodeFromJsonElement(EngineSignalDto.serializer(), it)
                     }
                     StreamChunk.Done(
+                        engineSignal = engineSignal,
+                        mode = root["mode"]?.jsonPrimitive?.contentOrNull ?: "CHAT_V1",
+                    )
+                }
+                "abort" -> {
+                    val signalEl = root["engine_signal"]?.takeUnless { it is JsonNull }
+                    val engineSignal = signalEl?.let {
+                        ApiJson.decodeFromJsonElement(EngineSignalDto.serializer(), it)
+                    }
+                    StreamChunk.Abort(
+                        reply = root["reply"]?.jsonPrimitive?.contentOrNull ?: "",
                         engineSignal = engineSignal,
                         mode = root["mode"]?.jsonPrimitive?.contentOrNull ?: "CHAT_V1",
                     )

@@ -95,6 +95,36 @@ class ChatStreamApiClientIntegrationTest {
         )
     }
 
+    private val abortFallback = "Coach fallback: focus on development and king safety."
+
+    // SSE body that streams a couple of clean chunks then aborts with the
+    // deterministic fallback (validate-before-emit could not complete safely).
+    private val abortSseBody: String = buildString {
+        append("data: {\"type\":\"chunk\",\"text\":\"The \"}\n\n")
+        append("data: {\"type\":\"chunk\",\"text\":\"position \"}\n\n")
+        append(
+            "data: {\"type\":\"abort\"," +
+                "\"reply\":\"$abortFallback\"," +
+                "\"engine_signal\":{" +
+                "\"evaluation\":{\"band\":\"equal\",\"side\":\"white\"}," +
+                "\"eval_delta\":\"stable\"," +
+                "\"last_move_quality\":\"unknown\"," +
+                "\"tactical_flags\":[]," +
+                "\"position_flags\":[]," +
+                "\"phase\":\"opening\"}," +
+                "\"mode\":\"CHAT_V1\"}\n\n",
+        )
+    }
+
+    private fun enqueueAbortSse() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "text/event-stream")
+                .setBody(abortSseBody),
+        )
+    }
+
     // ---------------------------------------------------------------------------
     // 1–3  HTTP wire properties
     // ---------------------------------------------------------------------------
@@ -160,6 +190,33 @@ class ChatStreamApiClientIntegrationTest {
         assertNotNull("Done.engineSignal must not be null", done.engineSignal)
         assertEquals("equal", done.engineSignal!!.evaluation?.band)
         assertEquals("opening", done.engineSignal.phase)
+    }
+
+    // ---------------------------------------------------------------------------
+    // 8  Abort terminal (validate-before-emit fallback)
+    // ---------------------------------------------------------------------------
+
+    @Test
+    fun `STREAM_ABORT_EMISSION - abort event appears as StreamChunk Abort with fallback`() = runBlocking {
+        enqueueAbortSse()
+        val items = client().chatStream(startingFen, emptyList()).toList()
+        val aborts = items.filterIsInstance<StreamChunk.Abort>()
+        assertEquals("Expected exactly one StreamChunk.Abort, got: $items", 1, aborts.size)
+        val abort = aborts.first()
+        assertEquals(abortFallback, abort.reply)
+        assertEquals("CHAT_V1", abort.mode)
+        assertNotNull("Abort.engineSignal must not be null", abort.engineSignal)
+        assertEquals("opening", abort.engineSignal!!.phase)
+    }
+
+    @Test
+    fun `STREAM_ABORT_AFTER_CHUNKS - partial chunks may precede the abort`() = runBlocking {
+        enqueueAbortSse()
+        val items = client().chatStream(startingFen, emptyList()).toList()
+        // The client overwrites these partials with abort.reply; here we just
+        // confirm the wire carries both shapes in order.
+        assertTrue(items.filterIsInstance<StreamChunk.Chunk>().isNotEmpty())
+        assertTrue(items.last() is StreamChunk.Abort)
     }
 
     // ---------------------------------------------------------------------------

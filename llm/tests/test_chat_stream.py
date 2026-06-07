@@ -112,6 +112,34 @@ def _stub_stream(request: Request, _: str = Depends(_verify_key)) -> StreamingRe
     return StreamingResponse(_generate(), media_type="text/event-stream")
 
 
+_STUB_FALLBACK = "Coach fallback: focus on development and king safety."
+
+
+@_app.post("/chat/stream/abort-demo")
+def _stub_stream_abort(request: Request, _: str = Depends(_verify_key)) -> StreamingResponse:
+    """Mirrors the real /chat/stream ABORT terminal: a couple of clean
+    chunks, then a terminal ``abort`` event carrying the deterministic
+    fallback reply for the client to render in place of the partial."""
+
+    def _generate():
+        for word in ("The ", "position "):
+            yield f"data: {json.dumps({'type': 'chunk', 'text': word})}\n\n"
+        yield (
+            "data: "
+            + json.dumps(
+                {
+                    "type": "abort",
+                    "reply": _STUB_FALLBACK,
+                    "engine_signal": _STUB_SIGNAL,
+                    "mode": _STUB_MODE,
+                }
+            )
+            + "\n\n"
+        )
+
+    return StreamingResponse(_generate(), media_type="text/event-stream")
+
+
 _client = TestClient(_app, raise_server_exceptions=True)
 
 _REQUIRED_ESV_KEYS = {
@@ -233,3 +261,39 @@ class TestSseAuth:
         assert r.status_code == 401, (
             f"Expected 401 for missing API key, got {r.status_code}"
         )
+
+
+# ---------------------------------------------------------------------------
+# 9 — Abort terminal wire format (validate-before-emit fallback path)
+# ---------------------------------------------------------------------------
+
+
+class TestSseAbortWireFormat:
+    """When the streaming pipeline cannot safely complete, the route emits a
+    terminal ``abort`` event carrying the deterministic fallback so the
+    Android client renders it in place of whatever partial it has."""
+
+    def _events(self):
+        r = _client.post("/chat/stream/abort-demo", headers=_auth_headers())
+        assert r.status_code == 200
+        return _parse_sse_events(r.text)
+
+    def test_terminal_event_is_abort(self):
+        """SSE_ABORT_LAST: the last event is type 'abort' (not 'done')."""
+        events = self._events()
+        assert events[-1].get("type") == "abort", f"last event: {events[-1]}"
+
+    def test_abort_carries_fallback_reply_and_context(self):
+        """SSE_ABORT_PAYLOAD: abort event carries reply + engine_signal + mode
+        so the client can replace the partial bubble with a complete reply."""
+        abort = next(e for e in self._events() if e.get("type") == "abort")
+        assert abort.get("reply") == _STUB_FALLBACK
+        assert abort.get("mode") == "CHAT_V1"
+        missing = _REQUIRED_ESV_KEYS - abort.get("engine_signal", {}).keys()
+        assert not missing, f"abort engine_signal missing keys: {missing}"
+
+    def test_chunks_precede_abort(self):
+        """A partial may stream before the abort; the client overwrites it
+        with the abort.reply."""
+        events = self._events()
+        assert any(e.get("type") == "chunk" for e in events)

@@ -1331,33 +1331,54 @@ class TestDeterministicFallbacksPassBoundaryValidator:
 
 
 class TestChatStreamBoundaryValidation:
-    """The /chat/stream endpoint validates BEFORE any bytes are streamed.
+    """The /chat/stream endpoint streams through the validate-before-emit
+    pipeline — it must never forward raw LLM tokens.
 
-    Confirms structurally — reading the source — that validate_chat_response
-    is invoked before StreamingResponse is constructed, so a contract failure
-    propagates as a clean HTTP 500 instead of a half-delivered SSE stream.
+    Real token streaming (2026-06) replaced 'validate the full reply, then
+    chunk it' with ``stream_chat_reply``: the FORBID gates run on every
+    partial buffer before a chunk is emitted (a lookahead stops any
+    multi-word forbidden phrase leaking), and the REQUIRE gates run at
+    stream end.  See docs/ARCHITECTURE.md → Output Validation → streaming,
+    and the behavioural pins in test_chat_stream_pipeline.py.  These
+    structural pins confirm the ROUTE drives that validated pipeline and
+    serves the deterministic fallback on abort — never raw provider tokens.
     """
 
-    def test_chat_stream_validates_before_streaming(self):
+    def _chat_stream_body(self) -> str:
         import ast
         from pathlib import Path
 
         src = (Path(__file__).parent.parent / "server.py").read_text()
         tree = ast.parse(src)
-
         for node in ast.walk(tree):
-            if not isinstance(node, ast.AsyncFunctionDef) or node.name != "chat_stream":
-                continue
-
-            body_str = "\n".join(ast.unparse(stmt) for stmt in node.body)
-            validate_pos = body_str.find("validate_chat_response")
-            stream_pos = body_str.find("StreamingResponse")
-
-            assert validate_pos != -1, "validate_chat_response not called in /chat/stream"
-            assert stream_pos != -1, "StreamingResponse not used in /chat/stream"
-            assert (
-                validate_pos < stream_pos
-            ), "validate_chat_response must precede StreamingResponse in /chat/stream"
-            return
-
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "chat_stream":
+                return "\n".join(ast.unparse(stmt) for stmt in node.body)
         raise AssertionError("async def chat_stream not found in server.py")
+
+    def test_chat_stream_drives_validated_pipeline(self):
+        """The route must drive stream_chat_reply (validate-before-emit)."""
+        body = self._chat_stream_body()
+        assert "stream_chat_reply" in body, (
+            "/chat/stream must drive the validate-before-emit pipeline "
+            "(stream_chat_reply) so every chunk passes the FORBID gates "
+            "before it is emitted."
+        )
+
+    def test_chat_stream_does_not_call_llm_directly(self):
+        """All LLM streaming must go through the validated pipeline — the
+        route must not forward raw provider tokens itself."""
+        body = self._chat_stream_body()
+        assert "call_llm_stream" not in body and "_call_llm(" not in body, (
+            "/chat/stream must not call the LLM directly; raw tokens must "
+            "flow through stream_chat_reply where each chunk is validated "
+            "before emission."
+        )
+
+    def test_chat_stream_aborts_to_deterministic_fallback(self):
+        """On a validation abort the route serves the deterministic
+        fallback, never a partial/unvalidated LLM reply."""
+        body = self._chat_stream_body()
+        assert "_StreamAbort" in body, "/chat/stream must handle the StreamAbort terminal"
+        assert "_fallback_reply" in body, (
+            "/chat/stream must serve the deterministic fallback on abort"
+        )

@@ -164,10 +164,18 @@ sealed class ApiResult<out T> {
  *
  *  - [Chunk]       A partial text fragment to be appended to the assistant message.
  *  - [Done]        Final event carrying the engine signal and pipeline mode.
+ *  - [Abort]       Terminal event when the server could not safely complete the
+ *                  stream (validate-before-emit aborted): [reply] is the
+ *                  deterministic fallback to render IN PLACE of any partial.
  *  - [StreamError] Server or transport error; [message] describes the failure.
  */
 sealed class StreamChunk {
     data class Chunk(val text: String) : StreamChunk()
     data class Done(val engineSignal: EngineSignalDto?, val mode: String) : StreamChunk()
+    data class Abort(
+        val reply: String,
+        val engineSignal: EngineSignalDto?,
+        val mode: String,
+    ) : StreamChunk()
     data class StreamError(val message: String) : StreamChunk()
 }

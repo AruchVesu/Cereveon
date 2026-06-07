@@ -243,19 +243,32 @@ class TestServerAst:
         ), "save_exchange( must be called AFTER validate_chat_response( in /chat"
 
     def test_server_stream_persist_after_valid(self):
-        """SERVER_STREAM_PERSIST_AFTER_VALID — same for /chat/stream."""
+        """SERVER_STREAM_PERSIST_AFTER_VALID — /chat/stream persists only the
+        final, safe reply.
+
+        Real token streaming (2026-06) moved validation INTO the pipeline
+        (``stream_chat_reply`` validates-before-emit), so the route no longer
+        pre-calls ``validate_chat_response``.  Persistence is now bound to the
+        TERMINAL events via ``_persist``: ``StreamDone`` carries the
+        end-validated reply, ``StreamAbort`` carries the deterministic
+        fallback (valid by construction) — never a raw mid-stream chunk.  The
+        behavioural guarantee is covered by test_chat_stream_pipeline.py and
+        test_chat_stream.py; this pins the route's structural contract."""
         tree = _parse_server()
         chat_stream = _find_func(tree, "chat_stream")
         body_src = ast.unparse(chat_stream)
-        idx_valid = body_src.find("validate_chat_response(")
-        idx_save = body_src.find("save_exchange(")
-        assert idx_valid > 0 and idx_save > 0, (
-            f"expected both call sites in /chat/stream; "
-            f"idx_valid={idx_valid} idx_save={idx_save}"
+        assert "stream_chat_reply" in body_src, (
+            "/chat/stream must drive the validate-before-emit pipeline "
+            "(stream_chat_reply), where validation happens"
         )
-        assert (
-            idx_save > idx_valid
-        ), "save_exchange( must be called AFTER validate_chat_response( in /chat/stream"
+        assert "save_exchange(" in body_src and "_persist(" in body_src, (
+            "/chat/stream must persist the resolved reply via _persist"
+        )
+        assert "_StreamDone" in body_src and "_StreamAbort" in body_src, (
+            "persistence must be tied to the terminal events (StreamDone / "
+            "StreamAbort), so only an end-validated reply or the deterministic "
+            "fallback is stored"
+        )
 
     def test_server_history_route_authed(self):
         """SERVER_HISTORY_ROUTE_AUTHED — /chat/history is Bearer-gated."""

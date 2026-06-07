@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Iterator
 
 import httpx
 
@@ -256,6 +257,126 @@ def call_llm(prompt: str) -> str:
             "expected at least one non-empty delta.content frame."
         )
     return assembled
+
+
+def call_llm_stream(prompt: str) -> Iterator[str]:
+    """Streaming variant of :func:`call_llm` — yields DeepSeek ``delta.content``
+    chunks as they arrive instead of assembling them into one string.
+
+    Identical wire contract, config, byte cap, and observability as
+    ``call_llm``; the only difference is the return shape (generator of
+    partial text vs. the full string).  Consumed by the validate-before-emit
+    streaming pipeline (``chat_stream_pipeline.stream_chat_reply``), which is
+    responsible for running the FORBID gates on the growing buffer before any
+    chunk is forwarded to the client.
+
+    Failure modes:
+      - ``LLMConfigError`` raised eagerly (before any yield) when the key is
+        unset.
+      - ``httpx`` transport / status / timeout errors may surface *mid-
+        iteration*; the caller must catch them and fall back deterministically
+        (a partial stream has already validated-and-emitted only clean text,
+        so aborting to the fallback is safe).
+    """
+    api_key = os.getenv("COACH_DEEPSEEK_API_KEY", "").strip()
+    if not api_key:
+        raise LLMConfigError(
+            "COACH_DEEPSEEK_API_KEY is unset; cannot call DeepSeek. "
+            "Set it in .env.prod (or shell env in dev) and restart the api container."
+        )
+
+    request_body = {
+        "model": MODEL_NAME,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    total_bytes = 0
+    completion_chars = 0
+    usage: dict[str, int] = {}
+    start = time.perf_counter()
+    outcome = "ok"
+    error_category: str | None = None
+    try:
+        with httpx.stream(
+            "POST", DEEPSEEK_URL, json=request_body, headers=headers, timeout=120
+        ) as response:
+            response.raise_for_status()
+            for raw_line in response.iter_lines():
+                line = raw_line.strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[len("data:"):].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    event = json.loads(data)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if isinstance(event.get("usage"), dict):
+                    usage = event["usage"]
+                try:
+                    delta = event["choices"][0].get("delta", {})
+                except (KeyError, IndexError, TypeError):
+                    continue
+                content = delta.get("content")
+                if content:
+                    total_bytes += len(content)
+                    if total_bytes > _MAX_STREAM_RESPONSE_BYTES:
+                        # Defense-in-depth OOM cap — stop consuming.  The
+                        # caller's end-of-stream REQUIRE check still runs on
+                        # whatever was validated-and-emitted so far.
+                        break
+                    completion_chars += len(content)
+                    yield content
+    except httpx.TimeoutException:
+        outcome = "timeout"
+        error_category = "timeout"
+        raise
+    except httpx.HTTPStatusError as exc:
+        outcome = "http_error"
+        status_code = exc.response.status_code if exc.response is not None else 0
+        error_category = "http_5xx" if status_code >= 500 else "http_4xx"
+        raise
+    except httpx.HTTPError:
+        outcome = "http_error"
+        error_category = "transport"
+        raise
+    finally:
+        duration = time.perf_counter() - start
+        if outcome == "ok" and completion_chars == 0:
+            outcome = "empty"
+            error_category = "empty"
+        prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        observability.observe_llm_call(
+            model=MODEL_NAME,
+            outcome=outcome,
+            duration_seconds=duration,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            error_category=error_category,
+        )
+        cost_usd = observability.cost_for_call(MODEL_NAME, prompt_tokens, completion_tokens)
+        logger.info(
+            "llm_call",
+            extra={
+                "event": "llm_call",
+                "game_id": game_id_var.get(),
+                "model": MODEL_NAME,
+                "outcome": outcome,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "cost_usd": round(cost_usd, 6),
+                "latency_ms": round(duration * 1000, 3),
+                "streamed": True,
+            },
+        )
 
 
 # ---------------------------------------------------------
