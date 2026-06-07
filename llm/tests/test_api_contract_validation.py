@@ -858,7 +858,12 @@ class TestChatResponseValidation:
             validate_chat_response(self._payload(reply="It is checkmate in two."))
 
     def test_speculative_language_raises(self):
-        """Mode-2 forbids speculative language ("should", "consider", etc.)."""
+        """Mode-2 forbids speculative / engine-voice language.
+
+        Uses "I think" — a kept SPECULATIVE_PATTERNS entry.  ("should",
+        "consider", "likely", "probably" were all retired by 2026-06-07
+        as ordinary coaching language; the explicit first-person
+        speculation marker remains forbidden.)"""
         from llm.rag.validators.explain_response_schema import (
             ExplainSchemaError,
             validate_chat_response,
@@ -866,7 +871,7 @@ class TestChatResponseValidation:
 
         with pytest.raises(ExplainSchemaError, match="Mode-2"):
             validate_chat_response(
-                self._payload(reply="White should consider activating the rook.")
+                self._payload(reply="I think the rook belongs on the open file.")
             )
 
     def test_wrong_mode_raises(self):
@@ -922,13 +927,15 @@ class TestChatResponseValidation:
     # -----------------------------------------------------------------------
 
     def test_chat_forbidden_section_plan_raises(self):
-        """The prescriptive ``Plan:`` header is on validate_mode_2_structure's
-        FORBIDDEN_SECTIONS (``\\bplan\\b\\s*:``, narrowed 2026-06-04 from the
-        bare ``\\bplan\\b``) but absent from
+        """The prescriptive ``Recommended move:`` section is on
+        validate_mode_2_structure's FORBIDDEN_SECTIONS
+        (``\\brecommended move\\b``) but absent from
         validate_mode_2_negative.FORBIDDEN_PATTERNS — this reply passes the
-        negative gate and must be caught by structure.  The bare strategic
-        noun ("form a concrete plan") is intentionally NOT rejected now;
-        only the header form is — see test_structure_plan_unlock.py."""
+        negative gate and must be caught by structure.  (Was a "Plan:"
+        header until 2026-06-07, when "plan" was fully retired from
+        MOVE_ADVISORY_PATTERNS — the header word is harmless on its own;
+        the bare strategic noun "form a concrete plan" is accepted too —
+        see test_structure_plan_unlock.py.)"""
         from llm.rag.validators.explain_response_schema import (
             ExplainSchemaError,
             validate_chat_response,
@@ -936,7 +943,7 @@ class TestChatResponseValidation:
 
         with pytest.raises(ExplainSchemaError, match="structure"):
             validate_chat_response(
-                self._payload(reply="Plan: develop your pieces and trade the queens.")
+                self._payload(reply="Recommended move: develop your pieces and trade the queens.")
             )
 
     def test_chat_forbidden_section_recommended_move_raises(self):
@@ -1124,9 +1131,11 @@ class TestLiveMoveResponseValidation:
     # -----------------------------------------------------------------------
 
     def test_live_forbidden_section_plan_raises(self):
-        # Prescriptive ``Plan:`` header — structure gate (``\bplan\b\s*:``,
-        # narrowed 2026-06-04).  Bare-noun "plan" now passes; see
-        # test_structure_plan_unlock.py.
+        # Prescriptive ``Recommended move:`` section — structure gate
+        # (``\brecommended move\b``).  Was a "Plan:" header until
+        # 2026-06-07, when "plan" was fully retired from
+        # MOVE_ADVISORY_PATTERNS (bare-noun "plan" and the header word
+        # both pass now); see test_structure_plan_unlock.py.
         from llm.rag.validators.explain_response_schema import (
             ExplainSchemaError,
             validate_live_move_response,
@@ -1134,7 +1143,7 @@ class TestLiveMoveResponseValidation:
 
         with pytest.raises(ExplainSchemaError, match="structure"):
             validate_live_move_response(
-                self._payload(hint="Plan: trade pieces and push the wing pawns.")
+                self._payload(hint="Recommended move: trade pieces and push the wing pawns.")
             )
 
     def test_live_speculative_engine_token_raises(self):

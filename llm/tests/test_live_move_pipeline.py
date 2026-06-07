@@ -641,22 +641,23 @@ class TestLLMSafetyValidators:
         assert result.hint.strip()
 
     def test_mode_2_structure_violation_falls_back(self):
-        """LIVE_STRUCT_PLAN — issue #129 regression: an LLM hint that
-        uses a FORBIDDEN_SECTIONS form (a prescriptive "Plan:" header,
-        "consider", "white can", ...) used to pass ``_validate_neg`` and
-        escape the pipeline, then 500 at ``validate_live_move_response``
-        and (via the pre-#130 rotation cascade) lock the user out of the
-        session.  Post-#129 the pipeline runs ``validate_mode_2_structure``
-        inside ``_build_hint_llm``; this test pins that an LLM emitting a
-        "Plan:" header falls back to the deterministic hint.
+        """LIVE_STRUCT_RECOMMENDED — issue #129 regression: an LLM hint
+        that uses a FORBIDDEN_SECTIONS form (a prescriptive "Recommended
+        move:" / "example move" / "white can" section) used to pass
+        ``_validate_neg`` and escape the pipeline, then 500 at
+        ``validate_live_move_response`` and (via the pre-#130 rotation
+        cascade) lock the user out of the session.  Post-#129 the
+        pipeline runs ``validate_mode_2_structure`` inside
+        ``_build_hint_llm``; this test pins that an LLM emitting a
+        "Recommended move:" section falls back to the deterministic hint.
 
-        Uses the header form (rather than a bare "plan" noun) because the
-        ``\\bplan\\b`` pattern was narrowed to ``\\bplan\\b\\s*:`` on
-        2026-06-04 — the strategic noun is now accepted, only the
-        prescriptive header is rejected.  See test_structure_plan_unlock.py.
-        The hint passes the negative gate cleanly, so the structure gate
-        is unambiguously what rejects it."""
-        adversarial = "Plan: develop quickly and seize central space."
+        Used a "Plan:" header until 2026-06-07, when "plan" was fully
+        retired from MOVE_ADVISORY_PATTERNS (the header word is harmless
+        on its own — see test_structure_plan_unlock.py).  "Recommended
+        move:" is a still-blocked advisory section; the hint passes the
+        negative gate cleanly, so the structure gate is unambiguously
+        what rejects it."""
+        adversarial = "Recommended move: develop quickly and seize space."
         with (
             patch(f"{self._LLM_MODULE}._LLM_AVAILABLE", True),
             patch(f"{self._LLM_MODULE}._LIVE_RETRY_DELAY_SECONDS", 0),
@@ -664,8 +665,7 @@ class TestLLMSafetyValidators:
         ):
             result = generate_live_reply(_MID_FEN, _UCI_NORMAL)
         lower = result.hint.lower()
-        assert "plan" not in lower
-        assert "consider" not in lower
+        assert "recommended move" not in lower
         assert result.hint.strip()
 
     def test_mode_2_semantic_equal_band_advantage_falls_back(self):

@@ -86,11 +86,15 @@ ENGINE_LEXICAL_PHRASES: tuple[str, ...] = (
     "variation",
 )
 
+# ``\bline\b`` retired 2026-06-07: over-broad — it caught ordinary coaching
+# prose ("open lines toward the king", "hold the line", "the long diagonal
+# line") far more often than the engine-analysis sense ("the main line is
+# ..."), which is already covered by ``\bvariation\b`` + ``\bcalculate\b``.
+# Real-model diagnostic showed it vetoing legitimate king-safety answers.
 ENGINE_LEXICAL_PATTERNS: tuple[str, ...] = (
     r"\bcalculate\b",
     r"\bcalculation\b",
     r"\bvariation\b",
-    r"\bline\b",
 )
 
 
@@ -120,30 +124,24 @@ MOVE_ALGEBRAIC_PATTERNS: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 # Row 3 — Advisory / move-recommendation prose
 # ---------------------------------------------------------------------------
+# Retired 2026-06-07 (real-model diagnostic — only 2/8 natural coaching
+# answers survived the validator stack):
+#   - ``\bplan\b\s*:``  — DeepSeek routinely writes a "Plan:" heading; the
+#     heading itself is harmless (any move-content under it is still caught
+#     by notation / "white can" / "black can"), so the header word was pure
+#     over-rejection.  (It had already been narrowed from bare ``\bplan\b``
+#     on 2026-06-04; now fully retired.)
+#   - ``\bif it\b``     — matched the everyday phrase "bad if it leaves your
+#     king ..." far more than any advisory construct.
+#   - ``\bconsider\b``  — normal coaching directive ("consider castling");
+#     also retired from SPECULATIVE_PATTERNS below.
+# What remains is genuine move-recommendation prose; concrete moves are
+# still blocked by MOVE_ALGEBRAIC_PATTERNS.
 MOVE_ADVISORY_PATTERNS: tuple[str, ...] = (
     r"\brecommended move\b",
     r"\bexample move\b",
-    # ``\bplan\b`` was narrowed to the advisory-HEADER form ``\bplan\b\s*:``
-    # (2026-06-04).  The bare word over-rejected the strategic noun that
-    # is the bread-and-butter of coaching prose ("your plan is to improve
-    # your worst piece", "White's plan involves central control") — and
-    # the Mode-2 system prompt itself instructs the LLM to "discuss
-    # themes, plans, principles", so every plan-mentioning reply tripped
-    # this gate and fell through to the templated deterministic fallback
-    # (the "templated chat" UX report).  The colon form still catches the
-    # actually-forbidden shape — a prescriptive "Plan: trade pieces and
-    # convert" section that lists a course of action — which is what
-    # DUAL_USE_TOKENS["plan"] always described as the forbidden form.
-    # Same false-positive-retirement pattern as ``\bshould\b`` (PR #170).
-    # Violations-corpus MOV-04 ("Plan: trade pieces and convert.") still
-    # fires.  STRUCTURAL_KEYWORDS keeps the bare "plan" for repair-loop
-    # classification (it substring-matches this regex string) — see note
-    # there.
-    r"\bplan\b\s*:",
     r"\bwhite can\b",
     r"\bblack can\b",
-    r"\bif it\b",
-    r"\bconsider\b",
 )
 
 
@@ -174,8 +172,16 @@ SPECULATIVE_PATTERNS: tuple[str, ...] = (
     #   - ``the engine should …``                    → \bengine\b in SPECULATIVE_SEMANTIC
     #   - ``I think you should …``                   → \bI think\b
     #   - ``the engine wants …`` / ``plans to …``    → unchanged below
-    r"\blikely\b",
-    r"\bprobably\b",
+    #
+    # ``\blikely\b``, ``\bprobably\b``, ``\bconsider\b`` retired 2026-06-07
+    # (real-model diagnostic): "likely"/"probably" are ordinary hedged
+    # coaching ("this would likely weaken your king"), and "consider" is a
+    # normal directive ("consider castling") — conditional teaching grounded
+    # in the ESV, not engine-fact invention.  The clear-overreach / engine-
+    # voice forms remain ("I think", "the engine wants", "plans to", "with
+    # perfect play", "actually winning"), and the hard guards (no notation,
+    # no engine words, no mate misframing, no advantage-on-equal, no invented
+    # motifs) are untouched.
     r"\bI think\b",
     r"\bthe engine wants\b",
     r"\bplans to\b",
@@ -183,15 +189,15 @@ SPECULATIVE_PATTERNS: tuple[str, ...] = (
     r"\black of planning\b",
     r"\bwith perfect play\b",
     r"\bactually winning\b",
-    r"\bconsider\b",
 )
 
+# ``likely`` / ``probably`` / ``might`` retired here (2026-06-07) — hedged
+# coaching language, not engine-fact speculation.  ``wants to`` retired too:
+# it caught ordinary coaching ("your opponent wants to open the centre") far
+# more than the engine-voice sense.  Only the literal engine-leak word
+# ``engine`` remains (whole-word; also caught by validate_output).
 SPECULATIVE_SEMANTIC: tuple[str, ...] = (
-    "likely",
-    "probably",
-    "might",
     "engine",
-    "wants to",
 )
 
 
@@ -251,15 +257,17 @@ MISSING_DATA_PHRASES: tuple[str, ...] = (
 # king-safety answers like "the opponent builds pressure against your
 # king").  On an equal-band quiet position this silently vetoed almost
 # every Mode-2 LLM reply and dropped the user to the templated
-# deterministic fallback (the "nothing changed" report).  The retained
-# words — ``slight advantage`` / ``better`` / ``winning`` — are the
-# direct who-stands-better claims that genuinely contradict an "equal"
-# engine band.  Same false-positive-retirement shape as ``\bshould\b``
-# (PR #170) and ``\bplan\b`` (2026-06-04).  Pinned by
+# deterministic fallback (the "nothing changed" report).
+#
+# ``better`` retired 2026-06-07: too common a comparative ("a better
+# square", "better to castle first", "better piece coordination") to
+# distinguish from the advantage claim "White is better" even with word
+# boundaries.  The retained ``slight advantage`` / ``winning`` are the
+# direct who-stands-better claims that contradict an "equal" band.
+# Matched WHOLE-WORD by mode_2_semantic (not substring).  Pinned by
 # test_semantic_strategic_vocab_unlock.py.
 EQUAL_ADVANTAGE_WORDS: tuple[str, ...] = (
     "slight advantage",
-    "better",
     "winning",
 )
 
@@ -326,24 +334,18 @@ ADVISORY_KEYWORDS: tuple[str, ...] = (
 
 # Bare form of MOVE_ADVISORY_PATTERNS (Row 3) without the ``\b...\b``
 # wrappers.  Order matches MOVE_ADVISORY_PATTERNS so a side-by-side
-# review is unambiguous.
+# review is unambiguous.  These are NOT matched against LLM output — they
+# are substring-matched against the *error's regex string* in
+# ``run_mode_2`` to CLASSIFY which validator complained.
 #
-# NOTE on "plan": this stays the bare token even though the matching
-# pattern was narrowed to the header form ``\bplan\b\s*:`` (2026-06-04).
-# These keywords are NOT matched against LLM output text — they are
-# substring-matched against the *error's regex string* in
-# ``run_mode_2._is_structural_pattern`` / the repair loop to CLASSIFY
-# which validator complained ("does the failing pattern look structural?").
-# "plan" is a substring of ``\bplan\b\s*:``, so classification still
-# routes correctly; using "plan:" here would break that substring match.
+# "plan", "if it", "consider" were dropped 2026-06-07 in lockstep with
+# their retirement from MOVE_ADVISORY_PATTERNS (keep this list == the bare
+# form of that list, or the taxonomy/repair-classification drifts).
 STRUCTURAL_KEYWORDS: tuple[str, ...] = (
     "recommended move",
     "example move",
-    "plan",
     "white can",
     "black can",
-    "if it",
-    "consider",
 )
 
 
@@ -380,41 +382,32 @@ DUAL_USE_TOKENS: dict[str, dict[str, object]] = {
         "date": "2026-05-16",
     },
     "consider": {
-        "enforced_at": "lexical+structural",
+        "enforced_at": "none",
         "rationale": (
-            "Dual-use: coaching directive ('consider the open file') vs "
-            "advisory section header ('Consider trading queens:').  Enforced "
-            "at BOTH surfaces deliberately — the structural match catches the "
-            "section-header form (MOVE_ADVISORY_PATTERNS row 3); the lexical "
-            "match catches inline advisory phrasing (SPECULATIVE_PATTERNS "
-            "row 4).  An LLM that drops both surfaces' triggers has phrased "
-            "its coaching without prescriptive register."
+            "Retired 2026-06-07 from BOTH surfaces (was lexical+structural). "
+            "A normal coaching directive ('consider the open file', 'consider "
+            "castling') — the substring match over-rejected it constantly in "
+            "real DeepSeek output (king-safety / plan questions).  No surface "
+            "enforces it now; the system prompt still discourages a "
+            "prescriptive register.  Same retirement shape as ``\\bshould\\b`` "
+            "(PR #170)."
         ),
         "pr": None,
-        "date": None,
+        "date": "2026-06-07",
     },
     "plan": {
-        "enforced_at": "structural-header",
+        "enforced_at": "none",
         "rationale": (
-            "Strategic noun ('White's plan involves piece activity', 'your "
-            "plan is to improve your worst piece') vs advisory section "
-            "header ('Plan: trade pieces and convert').  Only the HEADER "
-            "form is forbidden — it presents a prescriptive course of "
-            "action, the move-suggestion shape Mode-2 must not produce.  "
-            "The strategic noun is core coaching vocabulary and the "
-            "system prompt explicitly invites it ('discuss themes, plans, "
-            "principles'), so it must pass at every surface.  "
-            "MOVE_ADVISORY_PATTERNS therefore carries the colon-anchored "
-            "``\\bplan\\b\\s*:`` (narrowed 2026-06-04 from the bare "
-            "``\\bplan\\b`` that over-rejected the noun and forced the "
-            "templated deterministic fallback — same retirement shape as "
-            "``\\bshould\\b`` in PR #170).  STRUCTURAL_KEYWORDS keeps the "
-            "bare 'plan' token because the repair loop classifies by "
-            "substring-in-regex-string, and 'plan' is a substring of "
-            "``\\bplan\\b\\s*:``."
+            "Retired 2026-06-07.  History: bare ``\\bplan\\b`` over-rejected "
+            "the strategic noun → narrowed to the header form "
+            "``\\bplan\\b\\s*:`` (2026-06-04) → fully retired now.  DeepSeek "
+            "routinely writes a 'Plan:' heading; the heading word itself is "
+            "harmless because any move-content under it is still caught by "
+            "MOVE_ALGEBRAIC_PATTERNS / 'white can' / 'black can'.  No surface "
+            "enforces 'plan' now."
         ),
         "pr": None,
-        "date": "2026-06-04",
+        "date": "2026-06-07",
     },
     "forced": {
         "enforced_at": "semantic-required",

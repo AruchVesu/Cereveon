@@ -1,6 +1,6 @@
 """
-Regression tests for narrowing ``\\bplan\\b`` → ``\\bplan\\b\\s*:`` in the
-Mode-2 structural filter ``MOVE_ADVISORY_PATTERNS`` (2026-06-04).
+Regression tests for fully retiring ``plan`` from the Mode-2 structural
+filter ``MOVE_ADVISORY_PATTERNS`` (2026-06-07).
 
 Context
 -------
@@ -15,23 +15,29 @@ fallback — the "templated chat" UX report.  This is the same
 false-positive shape as ``\\bshould\\b`` (PR #170,
 test_speculative_should_unlock.py).
 
-The forbidden shape was never the strategic noun.  It was always the
-prescriptive HEADER form — "Plan: trade pieces and convert." — a
-labelled course of action that is a move-suggestion in disguise
-(DUAL_USE_TOKENS["plan"] described exactly this).  Narrowing to
-``\\bplan\\b\\s*:`` keeps the header rejected while letting the noun
-through.
+History: bare ``\\bplan\\b`` was first narrowed to the advisory-header
+form ``\\bplan\\b\\s*:`` on 2026-06-04 (keep the "Plan:" heading
+rejected, accept the noun).  The 2026-06-07 real-model diagnostic showed
+DeepSeek routinely writes a "Plan:" heading and the heading word itself
+is harmless — any move-content under it is still caught by
+MOVE_ALGEBRAIC_PATTERNS / "white can" / "black can" — so the header form
+was pure over-rejection too.  ``plan`` is now FULLY retired from the
+structural surface: NO surface enforces it.
 
 Pinned invariants
 -----------------
- 1. PLAN_BARE_NOT_IN_MOVE_ADVISORY — bare ``\\bplan\\b`` is gone; the
-                                     colon-anchored form is present.
+ 1. PLAN_FULLY_RETIRED_FROM_MOVE_ADVISORY — neither bare ``\\bplan\\b``
+                                     NOR the colon-anchored
+                                     ``\\bplan\\b\\s*:`` is in
+                                     MOVE_ADVISORY_PATTERNS.
  2. PLAN_NOUN_PASSES_STRUCTURE     — strategic-noun "plan" sentences
                                      pass validate_mode_2_structure
                                      (and the lexical gate).
- 3. PLAN_HEADER_STILL_REJECTED     — "Plan:" header sentences still
-                                     fail validate_mode_2_structure.
- 4. PLAN_REMAINS_DOCUMENTED        — DUAL_USE_TOKENS keeps the rationale.
+ 3. PLAN_HEADER_NOW_PASSES         — a "Plan:" heading now PASSES
+                                     validate_mode_2_structure (the
+                                     header word is harmless on its own).
+ 4. PLAN_REMAINS_DOCUMENTED        — DUAL_USE_TOKENS keeps the rationale
+                                     with enforced_at == "none".
 """
 
 from __future__ import annotations
@@ -52,30 +58,38 @@ from llm.rag.validators.mode_2_structure import (
 # ---------------------------------------------------------------------------
 
 
-class TestPlanBareNotInMoveAdvisory:
-    """The bare ``\\bplan\\b`` regex MUST NOT be in MOVE_ADVISORY_PATTERNS.
-    Re-adding it re-opens the over-rejection that forced the templated
-    deterministic fallback."""
+class TestPlanFullyRetiredFromMoveAdvisory:
+    """Neither the bare ``\\bplan\\b`` regex NOR the colon-anchored
+    header form ``\\bplan\\b\\s*:`` may be in MOVE_ADVISORY_PATTERNS.
+    Re-adding either re-opens the over-rejection that forced the
+    templated deterministic fallback."""
 
     def test_PLAN_BARE_NOT_IN_MOVE_ADVISORY(self):
         assert r"\bplan\b" not in MOVE_ADVISORY_PATTERNS, (
             "Bare `\\bplan\\b` was re-added to MOVE_ADVISORY_PATTERNS.  It "
             "over-rejects the strategic noun ('your plan is to ...') that "
             "the Mode-2 system prompt explicitly invites, dropping every "
-            "plan-mentioning reply to the templated fallback.  Use the "
-            "header form `\\bplan\\b\\s*:` instead — see "
-            "test_PLAN_HEADER_STILL_REJECTED for the inverse pin."
+            "plan-mentioning reply to the templated fallback.  'plan' is "
+            "fully retired — see test_PLAN_HEADER_NOW_PASSES for the "
+            "inverse pin."
         )
 
-    def test_plan_header_form_is_present(self):
-        assert r"\bplan\b\s*:" in MOVE_ADVISORY_PATTERNS, (
-            "The narrowed header form `\\bplan\\b\\s*:` is missing from "
-            "MOVE_ADVISORY_PATTERNS — the 'Plan:' prescriptive-section "
-            "guard has been lost entirely.  Restore it."
+    def test_PLAN_HEADER_FORM_ALSO_GONE(self):
+        """The colon-anchored header form ``\\bplan\\b\\s*:`` (the
+        2026-06-04 narrowing) was fully retired 2026-06-07 — the 'Plan:'
+        heading word is harmless on its own because move-content under it
+        is still caught by notation / 'white can' / 'black can'."""
+        assert r"\bplan\b\s*:" not in MOVE_ADVISORY_PATTERNS, (
+            "The header form `\\bplan\\b\\s*:` was re-added to "
+            "MOVE_ADVISORY_PATTERNS.  It was fully retired 2026-06-07 — "
+            "DeepSeek routinely writes a 'Plan:' heading and the heading "
+            "word itself is harmless.  Keep 'plan' accept-only at every "
+            "surface (see DUAL_USE_TOKENS['plan'])."
         )
         # FORBIDDEN_SECTIONS is the structure validator's view of the
         # same list — keep them in lock-step.
-        assert r"\bplan\b\s*:" in FORBIDDEN_SECTIONS
+        assert r"\bplan\b\s*:" not in FORBIDDEN_SECTIONS
+        assert r"\bplan\b" not in FORBIDDEN_SECTIONS
 
     def test_plan_remains_documented_as_dual_use(self):
         """DUAL_USE_TOKENS MUST keep documenting why "plan" is treated
@@ -83,13 +97,14 @@ class TestPlanBareNotInMoveAdvisory:
         contributor needs before touching the pattern."""
         assert "plan" in DUAL_USE_TOKENS, (
             "`plan` is missing from DUAL_USE_TOKENS in _rules.py.  Keep "
-            "the registry entry — it records why only the 'Plan:' header "
-            "form is forbidden while the strategic noun is accepted."
+            "the registry entry — it records the bare→header→fully-retired "
+            "history and why the word is accept-only now."
         )
-        assert DUAL_USE_TOKENS["plan"]["enforced_at"] == "structural-header", (
-            "DUAL_USE_TOKENS['plan'] must record "
-            "enforced_at='structural-header' — only the colon-anchored "
-            "header form is enforced now, not the bare word."
+        assert DUAL_USE_TOKENS["plan"]["enforced_at"] == "none", (
+            "DUAL_USE_TOKENS['plan'] must record enforced_at='none' — "
+            "'plan' was fully retired from every surface 2026-06-07.  If "
+            "you are re-introducing a 'plan' regex at any surface, also "
+            "update this registry entry with the new surface name."
         )
 
 
@@ -134,13 +149,17 @@ class TestPlanNounCoachingAccepted:
 
 
 # ---------------------------------------------------------------------------
-# Pin 3 — the 'Plan:' header form is still rejected
+# Pin 3 — the 'Plan:' header form now PASSES (fully retired 2026-06-07)
 # ---------------------------------------------------------------------------
 
 
-class TestPlanHeaderStillRejected:
-    """Narrowing the pattern must NOT regress the guard against the
-    prescriptive ``Plan:`` section header — the move-suggestion shape."""
+class TestPlanHeaderNowPasses:
+    """The 2026-06-07 full retirement means a prescriptive ``Plan:``
+    section header no longer trips ``validate_mode_2_structure`` — the
+    heading word is harmless because move-content under it is still
+    caught by notation / 'white can' / 'black can'.  Samples are kept
+    free of those still-active triggers so the structural surface is
+    unambiguously what's under test."""
 
     @pytest.mark.parametrize(
         "phrase",
@@ -151,12 +170,7 @@ class TestPlanHeaderStillRejected:
             "Plan : advance on the side where you are stronger.",
         ],
     )
-    def test_PLAN_HEADER_STILL_REJECTED(self, phrase):
-        with pytest.raises(AssertionError) as exc_info:
-            validate_mode_2_structure(phrase)
-        # The structure validator names the offending pattern; confirm it
-        # was the plan-header pattern that fired (not some other section).
-        assert "plan" in str(exc_info.value), (
-            f"Header {phrase!r} was rejected but not by the plan pattern: "
-            f"{exc_info.value}"
-        )
+    def test_PLAN_HEADER_NOW_PASSES(self, phrase):
+        # No exception → the 'Plan:' header passes the structure gate
+        # (it did NOT before the 2026-06-07 full retirement).
+        validate_mode_2_structure(phrase)

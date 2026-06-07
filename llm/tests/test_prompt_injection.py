@@ -308,10 +308,15 @@ class TestMode2NegativeValidator:
         with pytest.raises(AssertionError):
             validate_mode_2_negative("The engine prefers Nf3 here to develop the knight.")
 
-    def test_blocks_should_speculation(self):
-        """INJ-18: 'should' speculation raises AssertionError."""
+    def test_blocks_speculative_language(self):
+        """INJ-18: clear LLM-voice speculation raises AssertionError.
+
+        ``should`` (PR #170) and ``consider`` / ``likely`` (2026-06-07)
+        were retired as over-broad coaching words; ``I think`` remains a
+        blocked LLM-voice marker, so the contract (speculation IS blocked)
+        still holds via a currently-active trigger."""
         with pytest.raises(AssertionError):
-            validate_mode_2_negative("You should consider activating your bishop.")
+            validate_mode_2_negative("I think you should activate your bishop.")
 
     def test_blocks_castling_notation(self):
         """Castling notation (0-0) raises AssertionError."""
