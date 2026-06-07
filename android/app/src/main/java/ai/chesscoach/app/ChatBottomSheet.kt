@@ -514,6 +514,18 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
                     is StreamChunk.Done -> {
                         chunk.engineSignal?.let { updateEngineContextHeader(it) }
                     }
+                    is StreamChunk.Abort -> {
+                        // The server could not safely complete the stream
+                        // (validate-before-emit aborted); replace whatever
+                        // partial we have with the deterministic fallback.
+                        accumulated = chunk.reply
+                        chatAdapter.updateLastMessage(accumulated)
+                        chunk.engineSignal?.let { updateEngineContextHeader(it) }
+                        if (typingDots.visibility == View.VISIBLE) {
+                            typingDots.visibility = View.GONE
+                        }
+                        scrollToBottom()
+                    }
                     is StreamChunk.StreamError -> {
                         if (chunk.message.startsWith("HTTP 401")) handleTokenExpiry()
                     }

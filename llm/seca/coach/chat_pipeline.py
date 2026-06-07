@@ -334,7 +334,7 @@ _COACH_VOICE_INSTRUCTIONS = {
 }
 
 
-def _build_chat_llm(
+def _build_chat_prompt(
     fen: str,
     messages: list[ChatTurn],
     player_profile: dict | None,
@@ -343,9 +343,14 @@ def _build_chat_llm(
     retry_hint: str = "",
     coach_voice: str | None = None,
 ) -> str:
-    """Call the LLM with Mode-2 prompt including conversation history.
+    """Assemble the fully-rendered Mode-2 prompt (system + voice + style +
+    history + player context + RAG + FEN + sanitized user query).
 
-    Raises on any failure so the caller can fall back to _build_reply_deterministic.
+    Extracted from ``_build_chat_llm`` so the streaming pipeline
+    (``chat_stream_pipeline.stream_chat_reply``) builds a BYTE-IDENTICAL
+    prompt — same trust-boundary sanitisation, same injection order — as
+    the non-streaming path.  Keeping one builder is what prevents the two
+    chat paths from drifting (cf. the validator-parity invariant).
     """
     # Sanitize latest user query
     user_turns = [t for t in messages if t.role == "user"]
@@ -424,6 +429,32 @@ def _build_chat_llm(
         rag_docs=rag_docs,
         fen=fen,
         user_query=clean_query,
+    )
+
+    return prompt
+
+
+def _build_chat_llm(
+    fen: str,
+    messages: list[ChatTurn],
+    player_profile: dict | None,
+    engine_signal: dict,
+    past_mistakes: list[str] | None = None,
+    retry_hint: str = "",
+    coach_voice: str | None = None,
+) -> str:
+    """Call the LLM with the Mode-2 prompt (non-streaming) and validate.
+
+    Raises on any failure so the caller can fall back to _build_reply_deterministic.
+    """
+    prompt = _build_chat_prompt(
+        fen,
+        messages,
+        player_profile,
+        engine_signal,
+        past_mistakes=past_mistakes,
+        retry_hint=retry_hint,
+        coach_voice=coach_voice,
     )
 
     response = _call_llm(prompt).strip()

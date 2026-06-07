@@ -77,6 +77,12 @@ from llm.seca.coach.chat_pipeline import (
     generate_chat_reply,
     ChatTurn as _ChatPipelineTurn,
 )
+from llm.seca.coach.chat_stream_pipeline import (
+    stream_chat_reply,
+    StreamChunk as _StreamChunk,
+    StreamDone as _StreamDone,
+    StreamAbort as _StreamAbort,
+)
 from llm.seca.coach.live_move_pipeline import generate_live_reply
 from llm.seca.storage.repo import (
     checkpoint_game,
@@ -1656,187 +1662,181 @@ async def chat_stream(
     player=Depends(get_current_player),
     db=Depends(get_db),
 ):
-    """Streaming variant of POST /chat — same LLM pipeline, chunked via Server-Sent Events.
+    """Streaming variant of POST /chat — REAL token streaming via SSE.
 
-    Emits one SSE event per word of the coaching reply, then a final ``done``
-    event carrying ``engine_signal`` and ``mode``.  Wire format::
+    Unlike /chat (validate the FULL reply, then return it), this route
+    drives the validate-before-emit pipeline
+    (``chat_stream_pipeline.stream_chat_reply``): DeepSeek tokens are
+    forwarded as SSE ``chunk`` events ONLY once the FORBID gates pass on
+    the growing buffer (a lookahead guarantees no forbidden phrase leaks);
+    the REQUIRE gates (mate inevitability) run at stream end.  Wire format::
 
-        data: {"type": "chunk", "text": "<word> "}\n\n
+        data: {"type": "chunk", "text": "..."}\n\n
         ...
         data: {"type": "done", "engine_signal": {...}, "mode": "CHAT_V1"}\n\n
 
-    Uses the same LLM-powered chat_pipeline.generate_chat_reply(); no RL.
-    The pipeline runs in a thread-pool executor so the event loop is not blocked.
+    If the stream cannot be safely completed (a forbidden token appears
+    mid-stream, the mate-inevitability REQUIRE is unmet at the end, the
+    provider errors, or the reply is empty), the pipeline aborts and this
+    route serves the deterministic fallback via a terminal ``abort`` event
+    that the client renders in place of whatever partial it has::
 
-    Chat history is persisted via ``save_exchange`` after boundary
-    validation succeeds — same contract as ``/chat`` above.
+        data: {"type": "abort", "reply": "<fallback>",
+               "engine_signal": {...}, "mode": "CHAT_V1"}\n\n
+
+    See ``docs/ARCHITECTURE.md`` → "Output Validation" (streaming).  No
+    forbidden content ever reaches the client.  History is persisted as the
+    stream resolves (at the terminal event, with the final reply — a
+    best-effort contract: a mid-transmission disconnect before the terminal
+    can lose the row, the trade-off for real streaming where the final
+    reply is unknown until the end).  JWT rotation is owned here exactly as
+    before (X-Auth-Token header pre-set; DB commit after the first chunk).
     """
     derived_profile = _derive_player_profile(player)
     derived_past_mistakes = _derive_past_mistakes(player)
-
     turns = [_ChatPipelineTurn(role=t.role, content=t.content) for t in req.messages]
-    result = await asyncio.to_thread(
-        generate_chat_reply,
-        req.fen,
-        turns,
-        derived_profile,
-        derived_past_mistakes,
-        req.move_count,
-        req.coach_voice,
-    )
+    user_msg = _last_user_message(req.messages)
+    player_id = str(player.id)
 
-    # Boundary validation runs before any bytes are streamed so a contract
-    # failure surfaces as a clean 500 from FastAPI, not a half-delivered
-    # SSE stream the client has to parse to discover the failure.
-    try:
-        validate_chat_response(
-            {
-                "reply": result.reply,
-                "engine_signal": result.engine_signal,
-                "mode": result.mode,
-            }
-        )
-    except ExplainSchemaError as exc:
-        # Defense-in-depth twin of the /chat branch above.  Same
-        # rationale: an ExplainSchemaError here means a drift between
-        # the in-pipeline gates and the boundary validator; rather than
-        # surfacing "Coach is offline" to the user, re-run the pipeline
-        # deterministically so the resulting reply passes by
-        # construction.
-        logger.warning(
-            "validate_chat_response rejected pipeline reply on /chat/stream "
-            "(%s); substituting deterministic fallback",
-            exc,
-        )
-        result = await asyncio.to_thread(
-            generate_chat_reply,
+    # Take ownership of the JWT rotation from the
+    # ``commit_pending_auth_rotation`` middleware: pop it so the middleware
+    # skips its commit, set ``X-Auth-Token`` synchronously (ships with the
+    # response headers, before any body byte), and commit the DB rotation
+    # INSIDE the generator after the first chunk is on the wire — the same
+    # contract as the previous fake-streaming implementation, so the
+    # ``previous_token_hash`` grace window keeps covering the microsecond
+    # race.
+    pending_rotation = getattr(request.state, "pending_auth_rotation", None)
+    if pending_rotation is not None:
+        try:
+            del request.state.pending_auth_rotation
+        except AttributeError:
+            pass
+
+    def _persist(reply: str, mode: str) -> None:
+        # Persist with a FRESH session: the Depends(get_db) session may be
+        # closed by the time this SSE generator runs (it executes during
+        # response transmission, after the handler returns).
+        try:
+            from llm.seca.auth.router import SessionLocal as _SessionLocal  # noqa: PLC0415
+
+            with _SessionLocal() as _db:
+                save_exchange(
+                    db=_db,
+                    player_id=player_id,
+                    user_content=user_msg,
+                    assistant_content=reply,
+                    fen=req.fen,
+                    mode=mode,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "chat/stream history save failed (%s: %s); reply still streamed",
+                type(exc).__name__,
+                exc,
+            )
+
+    def _commit_rotation() -> None:
+        if pending_rotation is None:
+            return
+        try:
+            from llm.seca.auth.router import (  # noqa: PLC0415
+                SessionLocal as _SessionLocal,
+            )
+            from llm.seca.auth.service import (  # noqa: PLC0415
+                AuthService as _AuthService,
+            )
+
+            with _SessionLocal() as _db_rot:
+                _AuthService(_db_rot).rotate_session_token(
+                    pending_rotation["session_id"],
+                    pending_rotation["new_token"],
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "post-stream-start auth rotation commit failed (%s: %s) — "
+                "client received new token but server hash unchanged; "
+                "expecting one re-login",
+                type(exc).__name__,
+                exc,
+            )
+
+    def _sse(payload: dict) -> str:
+        return f"data: {json.dumps(payload)}\n\n"
+
+    def _fallback_reply():
+        # Deterministic reply from trusted inputs only (no LLM); passes the
+        # boundary validator by construction (see chat_pipeline).
+        return generate_chat_reply(
             req.fen,
             turns,
             derived_profile,
             derived_past_mistakes,
             req.move_count,
             req.coach_voice,
-            True,  # force_deterministic — skip LLM, emit hand-tuned fallback
+            True,  # force_deterministic
         )
-        validate_chat_response(
-            {
-                "reply": result.reply,
-                "engine_signal": result.engine_signal,
-                "mode": result.mode,
-            }
-        )
-
-    # Persist the exchange BEFORE returning the StreamingResponse so a
-    # crash during SSE-iteration doesn't leave the row missing.  Same
-    # best-effort contract as ``/chat``.
-    try:
-        save_exchange(
-            db=db,
-            player_id=str(player.id),
-            user_content=_last_user_message(req.messages),
-            assistant_content=result.reply,
-            fen=req.fen,
-            mode=result.mode,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "chat/stream history save failed (%s: %s); reply still streamed",
-            type(exc).__name__,
-            exc,
-        )
-
-    # Take ownership of the JWT rotation from the
-    # ``commit_pending_auth_rotation`` middleware.  The middleware's
-    # default eager-commit model fires the DB write BEFORE the
-    # response body starts streaming — for a non-streaming JSON
-    # route the gap to "headers on the wire" is microseconds and the
-    # ``previous_token_hash`` 10 s grace window absorbs any TCP drop
-    # in that window.  For a long-running SSE stream the same eager
-    # commit still happens microseconds before ASGI flushes the
-    # headers, but the perception is asymmetric: a stream that
-    # subsequently fails mid-transmission is much more common than
-    # a fast-route failure.  By popping the pending rotation here
-    # we tell the middleware "this handler owns the rotation
-    # lifecycle"; we set ``X-Auth-Token`` on the response header
-    # synchronously (so it ships with the first wire bytes), and we
-    # commit the DB rotation INSIDE the generator after the first
-    # chunk has been yielded.  At that point ASGI has handed the
-    # first body bytes to the socket and the headers are
-    # demonstrably out — narrowing the "client received the new
-    # token but server has not yet rotated" race to microseconds
-    # within which the previous_token_hash grace window is more
-    # than enough.
-    pending_rotation = getattr(request.state, "pending_auth_rotation", None)
-    if pending_rotation is not None:
-        # Clear from request.state so the middleware sees None and
-        # skips its commit path.
-        try:
-            del request.state.pending_auth_rotation
-        except AttributeError:
-            # Starlette ``State`` is a plain attrdict; del should
-            # always work, but stay defensive against future
-            # framework changes.
-            pass
 
     def _generate():
-        words = result.reply.split(" ")
         rotation_committed = False
-        for i, word in enumerate(words):
-            text = word if i == len(words) - 1 else word + " "
-            yield f"data: {json.dumps({'type': 'chunk', 'text': text})}\n\n"
-            if not rotation_committed and pending_rotation is not None:
-                # First chunk has been handed to ASGI for socket
-                # transmission; the response headers (including
-                # X-Auth-Token) preceded it.  Safe to land the DB
-                # rotation now — a stream failure before this point
-                # leaves the old token's hash in place, so the
-                # client's next call with its previously-known
-                # token still validates.
-                rotation_committed = True
-                try:
-                    # Deferred import mirrors the middleware path —
-                    # avoids importing auth.router at server.py
-                    # module-import time before lifespan has run
-                    # init_schema.
-                    from llm.seca.auth.router import (  # noqa: PLC0415
-                        SessionLocal as _SessionLocal,
-                    )
-                    from llm.seca.auth.service import (  # noqa: PLC0415
-                        AuthService as _AuthService,
-                    )
-
-                    with _SessionLocal() as _db_rot:
-                        _AuthService(_db_rot).rotate_session_token(
-                            pending_rotation["session_id"],
-                            pending_rotation["new_token"],
-                        )
-                except Exception as exc:  # noqa: BLE001
-                    # Match the middleware's behaviour on commit
-                    # failure: log and continue.  The client has
-                    # already received X-Auth-Token (header is on
-                    # the wire), so a DB hiccup here means server
-                    # token_hash stays at the OLD value while client
-                    # has the NEW — the previous_token_hash grace
-                    # window does not cover this case, so the user
-                    # will re-login on their next call.  Rare
-                    # (single UPDATE + commit) and recoverable.
-                    logger.warning(
-                        "post-stream-start auth rotation commit "
-                        "failed (%s: %s) — client received new "
-                        "token but server hash unchanged; "
-                        "expecting one re-login",
-                        type(exc).__name__,
-                        exc,
-                    )
-        yield f"data: {json.dumps({'type': 'done', 'engine_signal': result.engine_signal, 'mode': result.mode})}\n\n"
+        saw_terminal = False
+        for event in stream_chat_reply(
+            req.fen,
+            turns,
+            derived_profile,
+            derived_past_mistakes,
+            req.move_count,
+            req.coach_voice,
+        ):
+            if isinstance(event, _StreamChunk):
+                yield _sse({"type": "chunk", "text": event.text})
+                if not rotation_committed:
+                    rotation_committed = True
+                    _commit_rotation()
+            elif isinstance(event, _StreamDone):
+                saw_terminal = True
+                _persist(event.reply, event.mode)
+                yield _sse(
+                    {"type": "done", "engine_signal": event.engine_signal, "mode": event.mode}
+                )
+            elif isinstance(event, _StreamAbort):
+                saw_terminal = True
+                fb = _fallback_reply()
+                _persist(fb.reply, fb.mode)
+                if not rotation_committed:
+                    # No chunk preceded the abort (e.g. first-token
+                    # violation); the X-Auth-Token header still shipped, so
+                    # land the DB rotation now.
+                    rotation_committed = True
+                    _commit_rotation()
+                yield _sse(
+                    {
+                        "type": "abort",
+                        "reply": fb.reply,
+                        "engine_signal": fb.engine_signal,
+                        "mode": fb.mode,
+                    }
+                )
+        if not saw_terminal:
+            # Defensive: stream_chat_reply always emits a terminal event,
+            # but never leave the client hanging if that contract breaks.
+            fb = _fallback_reply()
+            _persist(fb.reply, fb.mode)
+            yield _sse(
+                {
+                    "type": "abort",
+                    "reply": fb.reply,
+                    "engine_signal": fb.engine_signal,
+                    "mode": fb.mode,
+                }
+            )
 
     response = StreamingResponse(_generate(), media_type="text/event-stream")
     if pending_rotation is not None:
-        # Pre-populate the rotation header so it ships with the
-        # initial response headers, before the first chunk yields.
-        # The Android client consumes this header via
-        # ``consumeRefreshedToken`` in ``CoachApiClient.kt`` right
-        # after parsing the response code, before reading the body.
+        # Pre-populate the rotation header so it ships with the initial
+        # response headers, before the first chunk yields.  The Android
+        # client consumes it via ``consumeRefreshedToken`` in
+        # ``CoachApiClient.kt`` right after the response code, before the body.
         response.headers["X-Auth-Token"] = pending_rotation["new_token"]
     return response
 

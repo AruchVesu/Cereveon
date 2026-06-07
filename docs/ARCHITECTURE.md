@@ -207,6 +207,44 @@ Explicit refusal on missing data
 
 Validation failure is a hard error.
 
+Streaming Output Validation (validate-before-emit)
+
+The non-streaming path (`/chat`, `/explain`) validates the COMPLETE LLM
+output before returning any byte — the literal "validators before bytes"
+invariant.
+
+The streaming path (`/chat/stream`,
+`llm/seca/coach/chat_stream_pipeline.py::stream_chat_reply`) forwards
+DeepSeek tokens as they arrive, so it upholds the SAME trust boundary by a
+slightly weaker-but-equivalent rule: **no FORBIDDEN content ever reaches
+the client.**
+
+- The validator rules split into FORBID (must-NOT-appear: engine mentions,
+  move notation, advisory prose, speculation, equal-band advantage,
+  invented tactics, firewall categories) and REQUIRE (must-appear: mate
+  inevitability, missing-data refusal).
+- FORBID gates run on the growing buffer after every token.  A token is
+  forwarded only once it is at least `_LOOKAHEAD_WORDS` words behind the
+  frontier, so the leading word of a multi-word forbidden phrase can never
+  escape before the phrase completes and the gate fires.  A FORBID
+  violation aborts the stream; because of the lookahead, nothing forbidden
+  was emitted.
+- REQUIRE gates are whole-reply properties, so they run once at stream end
+  (the full reply is then re-validated with `validate_mode_2_or_raise`,
+  identical to the non-streaming contract).  An unmet REQUIRE aborts.
+- Any abort (FORBID mid-stream, REQUIRE at end, empty reply, provider
+  error) discards the LLM text and serves the Deterministic Fallback
+  (below) via a terminal `abort` event the client renders in place of the
+  partial.  The only thing a user can briefly see and have replaced is
+  clean-but-incomplete text on the rare mate/missing-data abort — never
+  forbidden content.
+
+The trust boundary is therefore preserved: notation, move suggestions,
+engine leakage, invented tactics, and advantage-on-equal can NOT reach the
+user on either path.
+
+Validation failure is a hard error.
+
 Fake LLM
 Purpose
 
