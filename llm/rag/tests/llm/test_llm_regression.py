@@ -98,3 +98,74 @@ def test_llm_regression_contract():
                 case_type=case_type,
                 engine_signal=esv,
             )
+
+
+# ---------------------------------------------------------------------------
+# Production /chat-path stability (added 2026-06-07).
+# ---------------------------------------------------------------------------
+# ``test_llm_regression_contract`` above exercises ``run_mode_2`` + the v1
+# prompt.  Production /chat uses ``generate_chat_reply`` + system_v2_mode_2 +
+# the word-boundary semantic validators.  This case guards THAT path against
+# model drift / validator re-tightening: when the gates over-reject ordinary
+# coaching, the pipeline silently falls through to the templated
+# deterministic reply.  Real-answer rate was ~25% before the 2026-06
+# over-rejection fixes and ~100% (30/30 across a position matrix) after.
+# Deterministic counterpart: llm/tests/test_coaching_not_overrejected.py.
+
+_STABILITY_FENS = [
+    "r1bqkb1r/pppp1ppp/2n2n2/4p3/2P5/2N2N2/PP1PPPPP/R1BQKB1R w KQkq - 4 4",  # equal opening
+    "4k3/8/8/8/8/8/4PPPP/R3K2R w KQ - 0 1",                                   # decisive advantage
+    "8/5k2/8/4K3/4P3/8/8/8 w - - 0 1",                                        # king + pawn endgame
+]
+_STABILITY_QS = [
+    "Why is this bad for my king?",
+    "What's my plan here?",
+    "Is there a tactic I should look for?",
+    "How do I improve my position?",
+]
+# Healthy is ~100%; a real over-rejection regression collapses toward ~25%.
+# The threshold tolerates rare stochastic fallbacks while catching a
+# collapse.
+_MIN_REAL_RATE = 0.80
+
+
+def test_llm_chat_path_not_overrejected():
+    """Production ``generate_chat_reply`` must return REAL LLM answers (not
+    the templated deterministic fallback) for ordinary coaching questions
+    across a position matrix.  Guards the live /chat path against validator
+    over-rejection and model drift."""
+    from llm.seca.coach import chat_pipeline as cp
+    from llm.seca.coach.chat_pipeline import ChatTurn, generate_chat_reply
+
+    fell_back = {"hit": False}
+    orig = cp._build_reply_deterministic
+
+    def _spy(*args, **kwargs):
+        fell_back["hit"] = True
+        return orig(*args, **kwargs)
+
+    cp._build_reply_deterministic = _spy
+    total = 0
+    real = 0
+    fallbacks: list[tuple[str, str]] = []
+    try:
+        for fen in _STABILITY_FENS:
+            for q in _STABILITY_QS:
+                fell_back["hit"] = False
+                generate_chat_reply(fen, [ChatTurn(role="user", content=q)])
+                total += 1
+                if fell_back["hit"]:
+                    fallbacks.append((fen[:24], q))
+                else:
+                    real += 1
+    finally:
+        cp._build_reply_deterministic = orig
+
+    rate = real / total if total else 0.0
+    assert rate >= _MIN_REAL_RATE, (
+        f"Mode-2 /chat over-rejection regression: only {real}/{total} "
+        f"({rate:.0%}) coaching questions got a real LLM answer "
+        f"(threshold {_MIN_REAL_RATE:.0%}).  Fallbacks: {fallbacks}.  A "
+        f"collapsed rate means a validator was re-tightened or the model "
+        f"drifted — grep 'Mode-2 LLM failed after' for the rejected token."
+    )
