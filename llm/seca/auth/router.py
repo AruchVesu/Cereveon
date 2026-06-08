@@ -168,6 +168,18 @@ def init_schema() -> None:
             _column_type_for_dialect("TEXT", "VARCHAR"),
         )
 
+        # Per-game chat in game history.  ``app_game_id`` links a finished
+        # game_events row back to the live ``games.id`` (== chat_turns.game_id)
+        # so the history UI can load each game's coaching thread.  Nullable:
+        # legacy rows, Lichess imports, and pre-game_id clients have none.  No
+        # index — projection-only (the chat lookup hits chat_turns.game_id).
+        _ensure_column(
+            conn,
+            "game_events",
+            "app_game_id",
+            _column_type_for_dialect("TEXT", "VARCHAR"),
+        )
+
         # Per-game chat scoping ("chat history for each game"). game_id is
         # nullable so legacy rows stay player-global and player_id remains the
         # isolation boundary. Add the covering index for the per-game query;

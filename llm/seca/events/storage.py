@@ -24,6 +24,7 @@ class EventStorage:
         result: str,
         accuracy: float,
         weaknesses: dict,
+        app_game_id: str | None = None,
     ) -> GameEvent:
 
         event = GameEvent(
@@ -32,6 +33,7 @@ class EventStorage:
             result=result,
             accuracy=accuracy,
             weaknesses_json=json.dumps(weaknesses),
+            app_game_id=app_game_id,
         )
 
         self.db.add(event)

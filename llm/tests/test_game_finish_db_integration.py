@@ -17,6 +17,12 @@ Pinned invariants
  8. MULTIPLE_EVENTS:     Two store_game() calls create two separate rows.
  9. ANALYTICS_LOGGED:    AnalyticsLogger.log() is called (not suppressed silently).
 10. EMPTY_WEAKNESSES:    store_game() with empty weaknesses dict stores "{}".
+11. APP_GAME_ID_PERSISTED: store_game(app_game_id=...) records the in-app
+                          games.id linking the row to its chat thread.
+12. APP_GAME_ID_DEFAULT:  omitting app_game_id leaves the column NULL
+                          (legacy / imported / pre-game_id finishes).
+13. GAME_HISTORY_GAME_ID: GET /game/history projects app_game_id under the
+                          ``game_id`` key (null, never a missing field).
 """
 
 from __future__ import annotations
@@ -293,3 +299,85 @@ def test_empty_weaknesses_stored_as_empty_json(db_session):
     event = db_session.query(GameEvent).one()
     parsed = json.loads(event.weaknesses_json)
     assert parsed == {}, f"Expected empty dict, got: {parsed}"
+
+
+# ---------------------------------------------------------------------------
+# 11. APP_GAME_ID_PERSISTED
+# ---------------------------------------------------------------------------
+
+
+def test_app_game_id_persisted_when_provided(db_session):
+    """store_game(app_game_id=...) records the in-app games.id so the
+    game-history UI can link a finished game to its coaching chat thread
+    (GET /chat/history?game_id=...)."""
+    storage = EventStorage(db_session)
+    storage.store_game(
+        player_id="p1",
+        pgn=_VALID_PGN,
+        result="win",
+        accuracy=0.8,
+        weaknesses={},
+        app_game_id="live-game-1",
+    )
+    event = db_session.query(GameEvent).one()
+    assert event.app_game_id == "live-game-1"
+
+
+# ---------------------------------------------------------------------------
+# 12. APP_GAME_ID_DEFAULT
+# ---------------------------------------------------------------------------
+
+
+def test_app_game_id_defaults_to_none_when_omitted(db_session):
+    """Omitting app_game_id leaves the column NULL — legacy rows, Lichess
+    imports, and finishes from pre-game_id clients have no chat to surface."""
+    storage = EventStorage(db_session)
+    storage.store_game(
+        player_id="p1",
+        pgn=_VALID_PGN,
+        result="loss",
+        accuracy=0.3,
+        weaknesses={},
+    )
+    event = db_session.query(GameEvent).one()
+    assert event.app_game_id is None
+
+
+# ---------------------------------------------------------------------------
+# 13. GAME_HISTORY_GAME_ID
+# ---------------------------------------------------------------------------
+
+
+def test_game_history_projects_app_game_id_as_game_id(db_session):
+    """GET /game/history surfaces each row's app_game_id under the
+    ``game_id`` key so the client can fetch that game's chat.  Rows without
+    one (legacy / imported) project null — never a missing field, so the
+    client's optional decode stays total."""
+    from types import SimpleNamespace
+
+    from llm.seca.events.router import game_history
+
+    storage = EventStorage(db_session)
+    storage.store_game(
+        player_id="p1",
+        pgn=_VALID_PGN,
+        result="win",
+        accuracy=0.8,
+        weaknesses={},
+        app_game_id="live-game-1",
+    )
+    storage.store_game(
+        player_id="p1",
+        pgn=_VALID_PGN,
+        result="loss",
+        accuracy=0.3,
+        weaknesses={},  # no app_game_id -> NULL
+    )
+
+    resp = game_history(player=SimpleNamespace(id="p1"), db=db_session)
+
+    games = resp["games"]
+    assert len(games) == 2
+    # Every row carries the key (None when absent), never a missing field.
+    assert all("game_id" in g for g in games), f"missing game_id key: {games}"
+    assert {g["game_id"] for g in games} == {"live-game-1", None}
