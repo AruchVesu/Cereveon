@@ -62,6 +62,9 @@ data class ChatRequestBody(
     @SerialName("past_mistakes") val pastMistakes: List<String>? = null,
     @SerialName("move_count") val moveCount: Int? = null,
     @SerialName("coach_voice") val coachVoice: String? = null,
+    // Current server game id, so the server scopes this exchange to its game
+    // thread (per-game chat history). Null when no active game → player-global.
+    @SerialName("game_id") val gameId: String? = null,
 )
 
 /**

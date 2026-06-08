@@ -73,6 +73,9 @@ interface CoachApiClient {
         pastMistakes: List<String>? = null,
         moveCount: Int? = null,
         coachVoice: String? = null,
+        // Per-game chat thread key. Only the real streaming override
+        // (HttpCoachApiClient) forwards it; this non-stream fallback drops it.
+        gameId: String? = null,
     ): Flow<StreamChunk> = flow {
         when (val result = chat(fen, messages, playerProfile, pastMistakes, moveCount, coachVoice)) {
             is ApiResult.Success -> {
@@ -120,8 +123,10 @@ interface CoachApiClient {
      * Returns [ApiResult.HttpError(501)] by default so test fakes
      * don't need to override this method.
      */
-    suspend fun getHistory(limit: Int = 50): ApiResult<ChatHistoryResponseBody> =
-        ApiResult.HttpError(501)
+    suspend fun getHistory(
+        limit: Int = 50,
+        gameId: String? = null,
+    ): ApiResult<ChatHistoryResponseBody> = ApiResult.HttpError(501)
 }
 
 /**
@@ -204,6 +209,7 @@ class HttpCoachApiClient(
         pastMistakes: List<String>?,
         moveCount: Int?,
         coachVoice: String?,
+        gameId: String?,
     ): Flow<StreamChunk> = channelFlow {
         withContext(Dispatchers.IO) {
             // Declared outside the body try so the finally block can
@@ -237,7 +243,11 @@ class HttpCoachApiClient(
                 conn.readTimeout = readTimeoutMs
 
                 conn.outputStream.bufferedWriter(Charsets.UTF_8).use {
-                    it.write(buildJson(fen, messages, playerProfile, pastMistakes, moveCount, coachVoice))
+                    it.write(
+                        buildJson(
+                            fen, messages, playerProfile, pastMistakes, moveCount, coachVoice, gameId,
+                        ),
+                    )
                 }
 
                 val code = conn.responseCode
@@ -354,14 +364,26 @@ class HttpCoachApiClient(
         onResponse = refreshOnSuccess(),
     )
 
-    override suspend fun getHistory(limit: Int): ApiResult<ChatHistoryResponseBody> =
-        http.request(
-            path = "$CHAT_HISTORY_PATH?limit=$limit",
+    override suspend fun getHistory(
+        limit: Int,
+        gameId: String?,
+    ): ApiResult<ChatHistoryResponseBody> {
+        // Scope history to the current game when present (per-game threads);
+        // omit game_id → player-global history (server default).
+        val path = buildString {
+            append(CHAT_HISTORY_PATH).append("?limit=").append(limit)
+            gameId?.takeIf { it.isNotBlank() }?.let {
+                append("&game_id=").append(java.net.URLEncoder.encode(it, "UTF-8"))
+            }
+        }
+        return http.request(
+            path = path,
             method = "GET",
             headers = authHeaders(),
             onResponse = refreshOnSuccess(),
             parse = { body -> ApiJson.decodeFromString<ChatHistoryResponseBody>(body) },
         )
+    }
 
     // -----------------------------------------------------------------------
     // JSON serialisation / deserialisation (private — not unit tested directly)
@@ -383,6 +405,7 @@ class HttpCoachApiClient(
         pastMistakes: List<String>?,
         moveCount: Int?,
         coachVoice: String?,
+        gameId: String? = null,
     ): String = ApiJson.encodeToString(
         ChatRequestBody(
             fen = fen,
@@ -391,6 +414,7 @@ class HttpCoachApiClient(
             pastMistakes = pastMistakes,
             moveCount = moveCount,
             coachVoice = coachVoice?.takeIf { it.isNotBlank() },
+            gameId = gameId?.takeIf { it.isNotBlank() },
         )
     )
 

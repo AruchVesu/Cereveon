@@ -75,6 +75,12 @@ class ChatBottomSheet : DialogFragment() {
     // ---------------------------------------------------------------------------
 
     private var currentFen: String? = null
+
+    /**
+     * Current server game id, refreshed from [MainActivity] at send/load time
+     * so chat saves + history are scoped to this game. Null → player-global.
+     */
+    private var gameId: String? = null
     private var isStreaming = false
 
     /**
@@ -633,7 +639,10 @@ class ChatBottomSheet : DialogFragment() {
      * `ChatSessionStore(maxMessages = 50)`.
      */
     private suspend fun preloadServerHistory() {
-        val result = coachApiClient.getHistory(limit = 50)
+        // Scope the preloaded history to the current game's thread (each game
+        // its own chat); null → player-global, as before.
+        gameId = (activity as? MainActivity)?.currentGameId()
+        val result = coachApiClient.getHistory(limit = 50, gameId = gameId)
         val turns = (result as? ApiResult.Success)?.data?.turns ?: return
         if (turns.isEmpty()) return
         turns.forEach { t ->
@@ -730,6 +739,7 @@ class ChatBottomSheet : DialogFragment() {
         (activity as? MainActivity)?.let { act ->
             act.currentBoardFen()?.let { currentFen = it }
             moveCount = act.currentMoveCount()
+            gameId = act.currentGameId()
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
@@ -800,6 +810,8 @@ class ChatBottomSheet : DialogFragment() {
                     // Coach voice pulled fresh each turn so a Settings change
                     // takes effect on the very next reply.
                     coachVoice = SettingsBottomSheet.readCoachVoice(requireContext()),
+                    // Scope this exchange to the current game's chat thread.
+                    gameId = gameId,
                 ).collect { chunk ->
                     when (chunk) {
                         is StreamChunk.Chunk -> accumulated += chunk.text
