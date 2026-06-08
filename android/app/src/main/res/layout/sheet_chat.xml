@@ -32,15 +32,28 @@
     android:background="@drawable/bg_chat_panel"
     android:paddingStart="@dimen/atrium_space_16"
     android:paddingEnd="@dimen/atrium_space_16"
-    android:paddingTop="@dimen/atrium_space_16"
+    android:paddingTop="@dimen/atrium_space_8"
     android:paddingBottom="@dimen/atrium_space_16">
 
     <!--
-        No drag handle: this panel is a fixed-height non-modal dock (it
-        does not drag), so a handle would imply a gesture that no longer
-        exists. The rounded top + hairline edge (bg_chat_panel) signal
-        the panel boundary instead; the back button dismisses it.
+        Grab handle — swipe DOWN on it to dismiss the panel (the drag is
+        wired in ChatBottomSheet). The FrameLayout is a generous touch
+        target; the centred line is the visual affordance.
     -->
+    <FrameLayout
+        android:id="@+id/dragHandle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="@dimen/atrium_space_4"
+        android:paddingBottom="@dimen/atrium_space_8">
+
+        <View
+            android:layout_width="40dp"
+            android:layout_height="4dp"
+            android:layout_gravity="center_horizontal"
+            android:background="@color/atrium_hairline_strong" />
+
+    </FrameLayout>
 
     <!-- Chapter header + expand/collapse toggle. -->
     <LinearLayout
