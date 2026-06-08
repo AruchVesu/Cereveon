@@ -33,7 +33,7 @@ import re
 from typing import Literal
 
 import chess
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ValidationInfo, field_validator
 
 from llm.rag.prompts.input_sanitizer import sanitize_user_query
 
@@ -186,10 +186,31 @@ class ChatTurnModel(BaseModel):
 
     @field_validator("content")
     @classmethod
-    def validate_content(cls, v: str) -> str:
+    def validate_content(cls, v: str, info: ValidationInfo) -> str:
+        # 2000-char cap applies to EVERY turn (both roles), unconditionally.
         if len(v) > 2000:
             raise ValueError("message content too long (max 2000 chars)")
-        return sanitize_user_query(v) if v else v
+        if not v:
+            return v
+        # Only the coach's OWN assistant turns are trusted server output
+        # (already passed Mode-2 OUTPUT validation when generated). USER turns
+        # — and anything NOT explicitly an assistant turn — are untrusted and
+        # must pass the prompt-injection screen. Screening the coach's own
+        # replies false-positives on legitimate coaching prose and 422s the
+        # whole /chat request (the client shows the silent "Coach is offline").
+        #
+        # Fail CLOSED: a missing/unknown role (role validation failed, or a
+        # future third role) is SCREENED, not trusted. `role` is validated
+        # before `content` (declaration order, pinned by a field-order test),
+        # so it is available via info.data here.
+        #
+        # TODO(durable fix): reconstruct assistant history from the server-
+        # authoritative chat_turns store keyed on the authenticated player and
+        # ignore client-supplied assistant content entirely — then assistant
+        # turns are trusted because they came from the server, closing the
+        # forged-assistant-turn surface this flag leaves open.
+        role = info.data.get("role")
+        return sanitize_user_query(v, reject_injection=(role != "assistant"))
 
 
 class ChatRequest(BaseModel):
