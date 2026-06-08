@@ -291,6 +291,24 @@ class ChatRequest(BaseModel):
             raise ValueError("coach_voice must be one of 'formal', 'conversational', 'terse'")
         return v
 
+    # Per-game chat thread key (``games.id``). When present, the exchange is
+    # saved under this game so chat history is scoped per game; absent/null
+    # keeps it player-global (legacy). ``player_id`` (from the JWT) remains the
+    # isolation boundary, so this is only an organizational key.
+    game_id: str | None = None
+
+    @field_validator("game_id")
+    @classmethod
+    def validate_game_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if v == "":
+            return None
+        if len(v) > 64:
+            raise ValueError("game_id too long (max 64 chars)")
+        return v
+
 
 class GameCheckpointRequest(BaseModel):
     """In-progress board state pushed by the client after each move.

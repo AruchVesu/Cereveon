@@ -19,6 +19,8 @@ Invariants pinned
  3. PERSIST_REPO_FEN_MIRRORED        both rows carry the same fen + mode.
  4. PERSIST_REPO_ORDER_BY_CREATED    recent_turns_for_player returns DESC by created_at.
  5. PERSIST_REPO_CROSS_PLAYER_ISO    one player's history never leaks to another.
+ 5a. PERSIST_REPO_PER_GAME           game_id scopes save + recall; None = player-global; mirrored onto both rows.
+ 5b. PERSIST_REPO_GAME_BOUNDARY      same game_id under two players never crosses (player_id is the boundary).
  6. PERSIST_REPO_LIMIT_CLAMPED       recent_turns_for_player clamps limit to HISTORY_MAX_LIMIT.
  7. PERSIST_REPO_LIMIT_ZERO_FLOOR    limit=0 → 1 (lower bound).
  8. SERVER_CHAT_PERSIST_AFTER_VALID  server.py::chat calls save_exchange AFTER validate_chat_response (AST).
@@ -185,6 +187,47 @@ class TestRepoPersistence:
         b_contents = {r.content for r in b_rows}
         assert "alice ask" in a_contents and "bob ask" not in a_contents
         assert "bob ask" in b_contents and "alice ask" not in b_contents
+
+    def test_persist_repo_per_game_scoping(self, db):
+        """PERSIST_REPO_PER_GAME — game_id scopes save + recall; None is
+        player-global (legacy); game_id is mirrored onto both rows."""
+        player = _make_player(db, "pergame@test.com")
+        save_exchange(db, str(player.id), "g1 ask", "g1 reply", "fen-1", game_id="game-1")
+        save_exchange(db, str(player.id), "g2 ask", "g2 reply", "fen-2", game_id="game-2")
+        save_exchange(db, str(player.id), "gen ask", "gen reply", "fen-0")  # game_id=None
+
+        # save_exchange mirrors game_id onto both rows of an exchange.
+        g1_rows = db.query(ChatTurn).filter(ChatTurn.game_id == "game-1").all()
+        assert len(g1_rows) == 2 and {r.game_id for r in g1_rows} == {"game-1"}
+
+        # Recall scoped to a game returns ONLY that game's turns.
+        scoped1 = recent_turns_for_player(db, str(player.id), game_id="game-1")
+        assert {r.content for r in scoped1} == {"g1 ask", "g1 reply"}
+        scoped2 = recent_turns_for_player(db, str(player.id), game_id="game-2")
+        assert {r.content for r in scoped2} == {"g2 ask", "g2 reply"}
+
+        # No game_id → player-global: every turn, all games + the untied one.
+        all_rows = recent_turns_for_player(db, str(player.id))
+        assert {r.content for r in all_rows} == {
+            "g1 ask",
+            "g1 reply",
+            "g2 ask",
+            "g2 reply",
+            "gen ask",
+            "gen reply",
+        }
+
+    def test_persist_repo_game_id_under_player_boundary(self, db):
+        """A game_id is only a sub-filter within the authenticated player —
+        the SAME game_id under two players never crosses over (player_id is
+        the isolation boundary, so client-supplied game_id is safe)."""
+        alice = _make_player(db, "alice-g@test.com")
+        bob = _make_player(db, "bob-g@test.com")
+        save_exchange(db, str(alice.id), "alice g ask", "alice g reply", "fa", game_id="shared")
+        save_exchange(db, str(bob.id), "bob g ask", "bob g reply", "fb", game_id="shared")
+        a = recent_turns_for_player(db, str(alice.id), game_id="shared")
+        assert {r.content for r in a} == {"alice g ask", "alice g reply"}
+        assert all(r.player_id == str(alice.id) for r in a)
 
     def test_persist_repo_limit_clamped(self, db):
         """PERSIST_REPO_LIMIT_CLAMPED — limit > HISTORY_MAX_LIMIT clamps."""

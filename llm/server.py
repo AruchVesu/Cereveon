@@ -1639,6 +1639,7 @@ async def chat(
             assistant_content=response["reply"],
             fen=req.fen,
             mode=response["mode"],
+            game_id=req.game_id,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
@@ -1728,6 +1729,7 @@ async def chat_stream(
                     assistant_content=reply,
                     fen=req.fen,
                     mode=mode,
+                    game_id=req.game_id,
                 )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -1851,6 +1853,7 @@ async def chat_stream(
 async def chat_history(
     request: Request,
     limit: int = HISTORY_DEFAULT_LIMIT,
+    game_id: str | None = None,
     player=Depends(get_current_player),
     db=Depends(get_db),
 ):
@@ -1860,16 +1863,26 @@ async def chat_history(
     seed its in-memory ``ChatSessionStore`` so a conversation survives
     process restarts, device swaps, and reinstalls.
 
+    ``game_id`` (optional) scopes the history to a single game's thread —
+    the client passes its current server game id so each game shows its own
+    chat. Omitting it returns the player-global history (legacy behaviour).
+
     Cross-player isolation is by ``WHERE player_id = ?`` in the repo
     layer; the route is Bearer-only via ``get_current_player`` so the
     inbound player_id is the authenticated one — no client-supplied
-    player filter is accepted.
+    player filter is accepted. ``game_id`` is only an organizational
+    sub-filter WITHIN the authenticated player's rows.
 
     Response is chronological (oldest first) so the client can
     ``addAll`` directly into its message list without re-ordering.
     """
     bounded = max(1, min(int(limit), HISTORY_MAX_LIMIT))
-    rows = recent_turns_for_player(db, str(player.id), limit=bounded)
+    # Bound the opaque game key defensively; ignore absurd values (fall back
+    # to player-global) rather than 422 a history fetch.
+    scoped_game_id = (game_id or "").strip() or None
+    if scoped_game_id is not None and len(scoped_game_id) > 64:
+        scoped_game_id = None
+    rows = recent_turns_for_player(db, str(player.id), limit=bounded, game_id=scoped_game_id)
     # Repo returns DESC (newest first); reverse for client consumption.
     rows = list(reversed(rows))
     return {
