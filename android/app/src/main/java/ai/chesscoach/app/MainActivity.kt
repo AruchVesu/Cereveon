@@ -898,6 +898,13 @@ class MainActivity : AppCompatActivity() {
         if (::chessBoard.isInitialized) viewModel.moveCount else 0
 
     /**
+     * Current server game id (from /game/start, or restored on resume), so the
+     * coach chat can scope its history per game. Null when no active server
+     * game (e.g. offline, or before /game/start) → chat stays player-global.
+     */
+    fun currentGameId(): String? = currentServerGameId
+
+    /**
      * Called when the backend returns HTTP 401 during an active game session.
      * Shows a non-disruptive dialog instead of silently breaking the game flow.
      * The user can choose to re-authenticate or dismiss and continue offline.
