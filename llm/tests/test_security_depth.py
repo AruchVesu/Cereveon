@@ -423,6 +423,74 @@ class TestPlayerProfileInjectionBypass:
         except Exception:
             pytest.fail("Import chain unavailable")
 
+    def test_svd04d_assistant_turns_are_trusted_not_injection_screened(self):
+        """The coach's OWN assistant turns are trusted server output (already
+        passed Mode-2 output validation when generated). They must NOT be
+        injection-screened on the way back in: screening false-positives on
+        legitimate coaching prose and 422s the whole /chat request, which the
+        Android client surfaces as the silent "Coach is offline" fallback.
+
+        USER turns stay screened (see svd04b). Residual: a forged assistant
+        turn bypasses the screen — bounded by JWT auth, Mode-2 OUTPUT
+        validation on every reply, and the single-user blast radius.
+        """
+        os.environ.setdefault("SECA_API_KEY", "test")
+        os.environ.setdefault("SECA_ENV", "dev")
+
+        try:
+            from pydantic import ValidationError
+
+            from llm.server import ChatRequest
+
+            fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
+            # Same injection-shaped phrase: ACCEPTED in an assistant turn ...
+            req = ChatRequest(
+                fen=fen,
+                messages=[{"role": "assistant", "content": self._INJECTION_PAYLOAD}],
+            )
+            assert req.messages[0].content, "assistant turn was dropped/emptied"
+
+            # ... but STILL REJECTED in a user turn (security preserved).
+            with pytest.raises(ValidationError):
+                ChatRequest(
+                    fen=fen,
+                    messages=[{"role": "user", "content": self._INJECTION_PAYLOAD}],
+                )
+
+            # The 2000-char cap must NOT regress behind the role branch:
+            # an over-long assistant turn is still rejected.
+            with pytest.raises(ValidationError):
+                ChatRequest(fen=fen, messages=[{"role": "assistant", "content": "x" * 2001}])
+
+            # Control chars are still stripped from trusted assistant turns —
+            # the load-bearing defense that remains for assistant content.
+            cleaned = (
+                ChatRequest(fen=fen, messages=[{"role": "assistant", "content": "a\x00b\x07c"}])
+                .messages[0]
+                .content
+            )
+            assert "\x00" not in cleaned and "\x07" not in cleaned, "control chars not stripped"
+        except pytest.skip.Exception:
+            raise
+        except pytest.fail.Exception:
+            raise
+        except Exception as exc:
+            pytest.fail(f"Import chain unavailable: {exc}")
+
+    def test_svd04d_field_order_role_before_content(self):
+        """validate_content reads `role` via ValidationInfo.data, which only
+        works because `role` is validated before `content` (pydantic validates
+        in declaration order). A refactor that reorders the fields would
+        silently disable user-turn injection screening, so pin the order.
+        """
+        from llm.server_schemas import ChatTurnModel
+
+        assert list(ChatTurnModel.model_fields)[:2] == ["role", "content"], (
+            "ChatTurnModel field order changed; validate_content's "
+            "info.data['role'] lookup depends on role being validated first"
+        )
+
     def test_svd04c_validate_player_profile_does_not_call_sanitize(self):
         """SVD_04c: validate_player_profile in server_schemas.py must call sanitize_user_query on values."""
         # Schemas were extracted from server.py to server_schemas.py in the

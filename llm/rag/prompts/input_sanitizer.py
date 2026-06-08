@@ -148,17 +148,23 @@ def _normalize_unicode(text: str) -> str:
     return "".join(c for c in normalized if unicodedata.category(c) != "Cf")
 
 
-def sanitize_user_query(text: str) -> str:
+def sanitize_user_query(text: str, *, reject_injection: bool = True) -> str:
     """Return a sanitized copy of *text* safe to embed in an LLM prompt.
 
     Steps:
     1. Strip dangerous control characters.
     2. Normalize unicode to defeat homoglyph attacks.
-    3. Raise ValueError if any injection pattern fires.
+    3. If *reject_injection* (default), raise ValueError when any injection
+       pattern fires. Pass ``reject_injection=False`` for TRUSTED text —
+       e.g. the coach's own assistant turns replayed in chat history — where
+       a pattern match is a false positive on legitimate generated prose and
+       must not reject the request; such text is still control-stripped and
+       normalized, just not rejected.
     4. Truncate to MAX_USER_QUERY_LENGTH.
 
     Raises:
-        ValueError: if prompt-injection patterns are detected in *text*.
+        ValueError: if prompt-injection patterns are detected in *text* and
+            *reject_injection* is True.
     """
     if not text:
         return text
@@ -169,15 +175,22 @@ def sanitize_user_query(text: str) -> str:
     # 2. Unicode normalization (defeats invisible-char and homoglyph tricks)
     cleaned = _normalize_unicode(cleaned)
 
-    # 3. Detect injection patterns — reject rather than label
+    # 3. Detect injection patterns — reject untrusted input rather than label
     detected = [p.pattern for p in _ALL_PATTERNS if p.search(cleaned)]
     if detected:
-        logger.warning(
-            "Prompt injection detected in user_query — request rejected: %s",
+        if reject_injection:
+            logger.warning(
+                "Prompt injection detected in user_query — request rejected: %s",
+                detected,
+            )
+            raise ValueError(
+                f"Prompt injection detected ({len(detected)} pattern(s) matched). Request rejected."
+            )
+        # Trusted text (e.g. the coach's own assistant turn): keep it, but
+        # record the (near-certain false-positive) match for observability.
+        logger.debug(
+            "Injection pattern matched in trusted text — not rejected: %s",
             detected,
-        )
-        raise ValueError(
-            f"Prompt injection detected ({len(detected)} pattern(s) matched). Request rejected."
         )
 
     # 4. Truncate
