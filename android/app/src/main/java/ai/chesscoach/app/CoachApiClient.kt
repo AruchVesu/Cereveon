@@ -242,7 +242,16 @@ class HttpCoachApiClient(
 
                 val code = conn.responseCode
                 if (code != HttpURLConnection.HTTP_OK) {
-                    send(StreamChunk.StreamError("HTTP $code"))
+                    // DIAGNOSTIC: include the error body (e.g. FastAPI 422
+                    // validation detail naming the offending field) so the
+                    // client log shows WHY, not just the status code.
+                    val errBody = try {
+                        conn.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                    } catch (_: Exception) {
+                        null
+                    }
+                    val suffix = errBody?.takeIf { it.isNotBlank() }?.let { ": " + it.take(400) } ?: ""
+                    send(StreamChunk.StreamError("HTTP $code$suffix"))
                     return@withContext
                 }
 

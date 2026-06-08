@@ -2,25 +2,30 @@ package ai.chesscoach.app
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.os.SystemClock
+import android.util.Log
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.bottomsheet.BottomSheetBehavior
-import com.google.android.material.bottomsheet.BottomSheetDialog
-import com.google.android.material.bottomsheet.BottomSheetDialogFragment
+import androidx.recyclerview.widget.SimpleItemAnimator
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 /**
- * Long-form chat coaching bottom sheet.
+ * Long-form chat coaching panel.
  *
  * Displays a GPT-style chess conversation that:
  *  - Sends full conversation context (FEN + history) to the backend /chat endpoint.
@@ -28,12 +33,21 @@ import kotlinx.coroutines.launch
  *  - Shows an engine context header (evaluation band + game phase).
  *  - Falls back gracefully when the backend is unavailable or returns no reply.
  *
+ * Presentation: a NON-MODAL, bottom-anchored ~half-height dialog (see
+ * [onStart]).  It is deliberately NOT a `BottomSheetDialogFragment`: a
+ * bottom-sheet dialog owns a full-screen window whose scrim eats every
+ * touch, which freezes the live board behind it.  Here the window covers
+ * only the lower half and carries `FLAG_NOT_TOUCH_MODAL` with no dim, so
+ * taps above the panel fall through to [MainActivity]'s board — the user
+ * can keep playing while the coach is open.  The in-panel preview board
+ * is hidden because the real, interactive board is now visible above.
+ *
  * Auth tokens, timeouts, and base URL are configured in [BuildConfig] per build
  * variant and owned by [HttpCoachApiClient] — not duplicated here.
  *
  * No RL adaptation. All coaching logic lives server-side in chat_pipeline.py.
  */
-class ChatBottomSheet : BottomSheetDialogFragment() {
+class ChatBottomSheet : DialogFragment() {
 
     // ---------------------------------------------------------------------------
     // Views
@@ -45,6 +59,7 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
     private lateinit var miniBoard: ChessBoardView
     private lateinit var engineContextHeader: LinearLayout
     private lateinit var txtEngineContext: TextView
+    private lateinit var btnExpandChat: TextView
     /**
      * Atrium typing-dots indicator.  Visible while the chat stream is
      * waiting for the first chunk; hidden as soon as text starts
@@ -58,6 +73,14 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
 
     private var currentFen: String? = null
     private var isStreaming = false
+
+    /**
+     * Panel size state. Opens COLLAPSED so the board is immediately visible
+     * and tappable (the point of "play while chatting" — an expanded panel
+     * covers the board and reads as "frozen"). The header chevron expands it
+     * to a tall reading height on demand. See [applyPanelHeight].
+     */
+    private var panelExpanded = false
 
     /**
      * True while [preloadServerHistory] is in flight on a fresh open.
@@ -176,6 +199,50 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
         private const val CHAT_READ_TIMEOUT_MS = 60_000
 
         /**
+         * Minimum gap between streamed-bubble re-renders, in ms.
+         *
+         * On-device measurement showed each render (`notifyItemChanged` +
+         * scroll) is <8 ms and triggers zero dropped frames, so rendering is
+         * NOT the bottleneck. A coarse 60 ms cadence only made the text arrive
+         * in chunky ~16-char jumps ("not like typing"). One render per display
+         * frame (~16 ms, ≈60 fps) tracks the ~word-rate token stream closely
+         * for a smooth typing feel while still coalescing any burst the channel
+         * delivers at once (so a flood can't stack re-layouts in a tight loop).
+         * A guaranteed final flush at stream end renders any tail skipped by
+         * this cadence.
+         */
+        private const val STREAM_UI_REFRESH_MS = 16L
+
+        /** logcat tag for chat-stream transport/validation errors. */
+        private const val STREAM_TAG = "ChatStream"
+
+        /**
+         * Chat panel heights as a fraction of screen height (see [onStart] /
+         * [applyPanelHeight]). The panel toggles between two sizes:
+         *
+         *  - EXPANDED: a tall reading surface (default on open) so the
+         *    conversation isn't cramped — the "too small" complaint.
+         *  - COLLAPSED: short enough that the full 332dp board + rails clear
+         *    the panel's top edge and stay tappable — the "play while
+         *    chatting" state. The board bottom sits ~53% down the screen, so
+         *    ≤45% keeps the whole board (incl. rank 1) clear with margin.
+         */
+        private const val CHAT_PANEL_EXPANDED_FRACTION = 0.86f
+        private const val CHAT_PANEL_COLLAPSED_FRACTION = 0.45f
+
+        /**
+         * Server ChatRequest limits the conversation history (see
+         * `llm/server_schemas.py` ChatRequest / ChatTurnModel): at most 50
+         * turns, each turn's content ≤ 2000 chars, role ∈ {user, assistant}.
+         * The client must conform or the whole request 422s — which the UI
+         * shows as the silent "Coach is offline" fallback. A long coach reply
+         * (replies routinely run >1.5k chars) stored in history is the usual
+         * trip-wire.
+         */
+        private const val MAX_CHAT_HISTORY = 50
+        private const val MAX_CHAT_CONTENT = 2000
+
+        /**
          * Create a new instance with the current board position and optional
          * player context for personalised coaching.
          *
@@ -243,6 +310,47 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
         savedInstanceState: Bundle?,
     ): View = inflater.inflate(R.layout.sheet_chat, container, false)
 
+    /**
+     * Configure the dialog window: bottom-anchored, ~half the screen tall,
+     * no scrim, and `FLAG_NOT_TOUCH_MODAL` so pointer events above the panel
+     * pass through to the live board in [MainActivity] behind it — this is
+     * what lets the user keep playing while the coach is open. Done here
+     * because the window only exists once the dialog is shown.
+     */
+    override fun onStart() {
+        super.onStart()
+        val window = dialog?.window ?: return
+        window.setGravity(Gravity.BOTTOM)
+        // sheet_chat paints its own panel surface — drop the default frame.
+        window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        // No dim: the board above must look (and be) live, not greyed out.
+        window.setDimAmount(0f)
+        window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        // The crux of "play while chatting": touches outside this now-partial
+        // window reach the board window behind it. Keep the window focusable
+        // (NO FLAG_NOT_FOCUSABLE) so the composer keyboard still works.
+        window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
+        applyPanelHeight()
+    }
+
+    /**
+     * Resize the dialog window to the current [panelExpanded] state and
+     * sync the chevron glyph. Only the height changes (how much board
+     * shows above); width is always full-bleed, anchored to the bottom.
+     */
+    private fun applyPanelHeight() {
+        val window = dialog?.window ?: return
+        val fraction =
+            if (panelExpanded) CHAT_PANEL_EXPANDED_FRACTION else CHAT_PANEL_COLLAPSED_FRACTION
+        val height = (resources.displayMetrics.heightPixels * fraction).toInt()
+        window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, height)
+        window.setGravity(Gravity.BOTTOM)
+        if (::btnExpandChat.isInitialized) {
+            // ⌄ = tap to collapse (panel is tall now); ⌃ = tap to expand.
+            btnExpandChat.text = if (panelExpanded) "⌄" else "⌃"
+        }
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
@@ -254,10 +362,23 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
         engineContextHeader = view.findViewById(R.id.engineContextHeader)
         txtEngineContext = view.findViewById(R.id.txtEngineContext)
         typingDots = view.findViewById(R.id.typingDots)
+        btnExpandChat = view.findViewById(R.id.btnExpandChat)
 
-        // Mini board — non-interactive position preview
+        // Expand/collapse the panel: tall for reading, short to free the
+        // board for play. onStart() applies the initial (expanded) height.
+        btnExpandChat.setOnClickListener {
+            panelExpanded = !panelExpanded
+            applyPanelHeight()
+        }
+
+        // In-panel preview board — hidden now that the chat is a half-height
+        // non-modal panel and the real, interactive board is visible above it
+        // (see class KDoc / onStart). Hiding its mat container reclaims the
+        // vertical space for the conversation. Kept seeded for safety in case
+        // the panel is ever shown full-height again.
         miniBoard.isInteractive = false
         currentFen?.let { miniBoard.setFEN(it) }
+        (miniBoard.parent as? View)?.visibility = View.GONE
 
         // Wire feedback thumbs — fire-and-forget; ignore result
         chatAdapter.onFeedback = { _, isHelpful ->
@@ -275,13 +396,15 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
             }
         recyclerMessages.layoutManager = layoutManager
         recyclerMessages.adapter = chatAdapter
+        // Streaming re-binds the last bubble many times per second; the
+        // default change animation cross-fades on every notifyItemChanged,
+        // stacking into a visible shimmer and extra main-thread work.
+        // Disable change animations so the streamed bubble grows cleanly.
+        (recyclerMessages.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
 
-        // Expand bottom sheet fully
-        (dialog as? BottomSheetDialog)?.behavior?.apply {
-            state = BottomSheetBehavior.STATE_EXPANDED
-            skipCollapsed = true
-            peekHeight = resources.displayMetrics.heightPixels
-        }
+        // Window sizing/flags are applied in onStart() (the dialog window
+        // exists by then). The panel is bottom-anchored, half-height, and
+        // non-touch-modal so the live board above stays interactive.
 
         // Restore messages after rotation; otherwise preload
         // server-persisted history before falling back to the greeting.
@@ -469,11 +592,32 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
         // it doesn't compete with the streamed prose.
         typingDots.visibility = View.VISIBLE
 
+        // Refresh coach context from the LIVE board. The chat is a non-modal
+        // panel, so the user may have played moves since it opened — pull the
+        // current FEN + move count so the coach answers about the position on
+        // the board NOW, not the snapshot captured when the panel opened.
+        (activity as? MainActivity)?.let { act ->
+            act.currentBoardFen()?.let { currentFen = it }
+            moveCount = act.currentMoveCount()
+        }
+
         viewLifecycleOwner.lifecycleScope.launch {
+            // Conform the history to the server's ChatRequest contract so the
+            // request can't 422 (which surfaces as "Coach is offline"):
+            //  - at most MAX_CHAT_HISTORY most-recent turns,
+            //  - each content truncated to MAX_CHAT_CONTENT chars (a long
+            //    coach reply in history is the usual offender),
+            //  - role coerced to the Literal["user","assistant"] the server
+            //    accepts. Truncation is request-only; the store keeps full text.
             val messages =
-                sessionStore.messages.map { msg ->
-                    ChatMessageDto(role = msg.role, content = msg.text)
-                }
+                sessionStore.messages
+                    .takeLast(MAX_CHAT_HISTORY)
+                    .map { msg ->
+                        ChatMessageDto(
+                            role = if (msg.role == "user") "user" else "assistant",
+                            content = msg.text.take(MAX_CHAT_CONTENT),
+                        )
+                    }
 
             // Insert an empty assistant placeholder so the user sees a response
             // bubble immediately. The adapter is updated in-place as chunks arrive;
@@ -482,6 +626,9 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
             scrollToBottom()
 
             var accumulated = ""
+            // Last time we pushed accumulated text to the adapter; throttles
+            // streamed re-renders to STREAM_UI_REFRESH_MS (see companion).
+            var lastRenderMs = 0L
 
             coachApiClient.chatStream(
                 fen = currentFen ?: STARTING_FEN,
@@ -505,10 +652,18 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
                 when (chunk) {
                     is StreamChunk.Chunk -> {
                         accumulated += chunk.text
-                        chatAdapter.updateLastMessage(accumulated)
-                        scrollToBottom()
                         if (typingDots.visibility == View.VISIBLE) {
                             typingDots.visibility = View.GONE
+                        }
+                        // Coalesce re-renders so continuous token streaming
+                        // doesn't flood the main thread (which would freeze the
+                        // board behind the sheet). The post-loop flush renders
+                        // any tail text skipped by this throttle.
+                        val now = SystemClock.uptimeMillis()
+                        if (now - lastRenderMs >= STREAM_UI_REFRESH_MS) {
+                            chatAdapter.updateLastMessage(accumulated)
+                            scrollToBottom()
+                            lastRenderMs = now
                         }
                     }
                     is StreamChunk.Done -> {
@@ -527,14 +682,18 @@ class ChatBottomSheet : BottomSheetDialogFragment() {
                         scrollToBottom()
                     }
                     is StreamChunk.StreamError -> {
+                        Log.w(STREAM_TAG, "stream error: ${chunk.message}")
                         if (chunk.message.startsWith("HTTP 401")) handleTokenExpiry()
                     }
                 }
             }
 
-            // Commit the final (or fallback) text to the session store.
+            // Final flush: the throttle above may have skipped the last
+            // refresh window, so render the complete reply now (or the
+            // fallback if the stream produced nothing), then persist it.
             val displayReply = accumulated.takeIf { it.isNotBlank() } ?: FALLBACK_REPLY
-            if (accumulated.isBlank()) chatAdapter.updateLastMessage(displayReply)
+            chatAdapter.updateLastMessage(displayReply)
+            scrollToBottom()
             sessionStore.addMessage("assistant", displayReply)
 
             isStreaming = false

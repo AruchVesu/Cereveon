@@ -884,6 +884,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Live coach context for an OPEN [ChatBottomSheet]. The sheet captures a
+     * position snapshot when it opens, but the chat is now a non-modal panel
+     * over the live board — the user can play moves while it's up. The sheet
+     * re-pulls these at send time so the coach discusses the CURRENT position,
+     * not the one from when the panel opened. Source matches the open-time
+     * snapshot in [presentChatSheet]: board FEN + ViewModel move count.
+     */
+    fun currentBoardFen(): String? =
+        if (::chessBoard.isInitialized) chessBoard.exportFEN() else null
+
+    fun currentMoveCount(): Int =
+        if (::chessBoard.isInitialized) viewModel.moveCount else 0
+
+    /**
      * Called when the backend returns HTTP 401 during an active game session.
      * Shows a non-disruptive dialog instead of silently breaking the game flow.
      * The user can choose to re-authenticate or dismiss and continue offline.
