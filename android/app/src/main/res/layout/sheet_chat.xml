@@ -29,30 +29,55 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@drawable/bg_atrium_gradient"
+    android:background="@drawable/bg_chat_panel"
     android:paddingStart="@dimen/atrium_space_16"
     android:paddingEnd="@dimen/atrium_space_16"
-    android:paddingTop="@dimen/atrium_space_8"
+    android:paddingTop="@dimen/atrium_space_16"
     android:paddingBottom="@dimen/atrium_space_16">
 
-    <!-- Drag handle. -->
-    <View
-        android:layout_width="40dp"
-        android:layout_height="3dp"
-        android:layout_gravity="center_horizontal"
-        android:layout_marginTop="@dimen/atrium_space_4"
-        android:layout_marginBottom="@dimen/atrium_space_8"
-        android:background="@color/atrium_hairline_strong" />
+    <!--
+        No drag handle: this panel is a fixed-height non-modal dock (it
+        does not drag), so a handle would imply a gesture that no longer
+        exists. The rounded top + hairline edge (bg_chat_panel) signal
+        the panel boundary instead; the back button dismisses it.
+    -->
 
-    <!-- Chapter header. -->
-    <ai.chesscoach.app.AtriumChapterHeaderView
+    <!-- Chapter header + expand/collapse toggle. -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingTop="@dimen/atrium_space_4"
-        android:paddingBottom="@dimen/atrium_space_4"
-        app:atriumKicker="Dialogue"
-        app:atriumTitle="With the coach"
-        xmlns:app="http://schemas.android.com/apk/res-auto" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        xmlns:app="http://schemas.android.com/apk/res-auto">
+
+        <ai.chesscoach.app.AtriumChapterHeaderView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:paddingTop="@dimen/atrium_space_4"
+            android:paddingBottom="@dimen/atrium_space_4"
+            app:atriumKicker="Dialogue"
+            app:atriumTitle="With the coach" />
+
+        <!--
+            Expand / collapse the panel. Collapsed shows the full board
+            above so the user can play; expanded gives a tall reading
+            surface. ChatBottomSheet flips the glyph (⌄ when expanded,
+            ⌃ when collapsed) and resizes the dialog window.
+        -->
+        <TextView
+            android:id="@+id/btnExpandChat"
+            android:layout_width="@dimen/atrium_tap_target"
+            android:layout_height="@dimen/atrium_tap_target"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:text="⌃"
+            android:textColor="@color/atrium_accent_cyan"
+            android:textSize="22sp"
+            android:contentDescription="Expand or collapse the coach panel" />
+
+    </LinearLayout>
 
     <!-- Mini board on raised mat. -->
     <FrameLayout
