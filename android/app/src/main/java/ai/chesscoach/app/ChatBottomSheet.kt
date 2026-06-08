@@ -5,7 +5,6 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
-import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -21,7 +20,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.SimpleItemAnimator
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -81,6 +82,14 @@ class ChatBottomSheet : DialogFragment() {
      * to a tall reading height on demand. See [applyPanelHeight].
      */
     private var panelExpanded = false
+
+    /**
+     * Whether the streamed reply should auto-scroll to follow new text. True
+     * while the user is at the bottom; the RecyclerView scroll listener clears
+     * it when they drag up to read and restores it when they return. Reset to
+     * true at the start of each send.
+     */
+    private var followStream = true
 
     /**
      * True while [preloadServerHistory] is in flight on a fresh open.
@@ -200,19 +209,16 @@ class ChatBottomSheet : DialogFragment() {
         private const val CHAT_READ_TIMEOUT_MS = 60_000
 
         /**
-         * Minimum gap between streamed-bubble re-renders, in ms.
-         *
-         * On-device measurement showed each render (`notifyItemChanged` +
-         * scroll) is <8 ms and triggers zero dropped frames, so rendering is
-         * NOT the bottleneck. A coarse 60 ms cadence only made the text arrive
-         * in chunky ~16-char jumps ("not like typing"). One render per display
-         * frame (~16 ms, ≈60 fps) tracks the ~word-rate token stream closely
-         * for a smooth typing feel while still coalescing any burst the channel
-         * delivers at once (so a flood can't stack re-layouts in a tight loop).
-         * A guaranteed final flush at stream end renders any tail skipped by
-         * this cadence.
+         * Typewriter reveal pace. The server can stream a full reply in a few
+         * seconds — far faster than reading — so instead of rendering whatever
+         * has arrived, a ticker reveals the buffered text at a fixed rate:
+         * [TYPEWRITER_CHARS_PER_TICK] characters every [TYPEWRITER_TICK_MS] ms
+         * (≈ 75 chars/s). Slow enough to read along, brisk enough not to drag;
+         * also bounds the re-render rate so a burst can't flood the UI thread.
+         * Tune these two numbers to change the feel.
          */
-        private const val STREAM_UI_REFRESH_MS = 16L
+        private const val TYPEWRITER_CHARS_PER_TICK = 3
+        private const val TYPEWRITER_TICK_MS = 40L
 
         /** logcat tag for chat-stream transport/validation errors. */
         private const val STREAM_TAG = "ChatStream"
@@ -338,10 +344,11 @@ class ChatBottomSheet : DialogFragment() {
         // window reach the board window behind it. Keep the window focusable
         // (NO FLAG_NOT_FOCUSABLE) so the composer keyboard still works.
         window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
-        // The dialog has its own window, so MainActivity's manifest
-        // adjustResize doesn't apply here. Resize this panel above the IME so
-        // the composer stays visible when typing in the short collapsed state.
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        // The dialog has its own fixed-height, bottom-anchored window, so
+        // ADJUST_RESIZE has no effect (the explicit setLayout height wins, the
+        // content never reflows above the IME). ADJUST_PAN instead pans the
+        // whole window up so the focused composer clears the keyboard.
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN)
         applyPanelHeight()
     }
 
@@ -401,13 +408,36 @@ class ChatBottomSheet : DialogFragment() {
             }
         }
 
-        // RecyclerView — stable message rendering
-        val layoutManager =
-            LinearLayoutManager(requireContext()).apply {
-                stackFromEnd = true
-            }
+        // RecyclerView — stable message rendering.
+        // stackFromEnd is OFF: with it on, the LayoutManager re-anchors to the
+        // bottom every time the streaming bubble grows — that auto-pull is what
+        // kept dragging the view down even after the user touched, and no
+        // scroll guard can stop it. Top-anchored instead preserves the user's
+        // scroll position; following the stream is done explicitly by
+        // scrollToBottom() (which scrolls to the content's TRUE bottom), gated
+        // on [followStream] (cleared the moment the user drags).
+        val layoutManager = LinearLayoutManager(requireContext())
         recyclerMessages.layoutManager = layoutManager
         recyclerMessages.adapter = chatAdapter
+        recyclerMessages.addOnScrollListener(
+            object : RecyclerView.OnScrollListener() {
+                override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {
+                    when (newState) {
+                        // Finger grabbed the list — stop auto-following so the
+                        // per-tick scroll doesn't fight the user.
+                        RecyclerView.SCROLL_STATE_DRAGGING -> followStream = false
+                        // The user let go: resume following only if they settled
+                        // at the bottom; otherwise stay put so they can read.
+                        // (Our own scrollToPosition is INSTANT and never enters
+                        // DRAGGING/SETTLING, so it can't re-enable following
+                        // behind the user's back — which is what made it fight.)
+                        RecyclerView.SCROLL_STATE_IDLE ->
+                            followStream = !rv.canScrollVertically(1)
+                        else -> Unit
+                    }
+                }
+            },
+        )
         // Streaming re-binds the last bubble many times per second; the
         // default change animation cross-fades on every notifyItemChanged,
         // stacking into a visible shimmer and extra main-thread work.
@@ -478,6 +508,18 @@ class ChatBottomSheet : DialogFragment() {
                 sendToBackend(text)
             }
         }
+
+        // Raise the panel when the composer is focused so the keyboard doesn't
+        // crowd the typing area — expand for room above the IME (ADJUST_PAN
+        // then pans the taller panel up). The user can collapse with the
+        // chevron once done. Only auto-expands from the collapsed state.
+        input.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus && !panelExpanded) {
+                panelExpanded = true
+                applyPanelHeight()
+                scrollToBottom()
+            }
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -498,7 +540,33 @@ class ChatBottomSheet : DialogFragment() {
 
     private fun scrollToBottom() {
         val count = chatAdapter.itemCount
-        if (count > 0) recyclerMessages.scrollToPosition(count - 1)
+        if (count == 0) return
+        val lm = recyclerMessages.layoutManager as? LinearLayoutManager
+        val lastVisible = lm?.findLastVisibleItemPosition() ?: RecyclerView.NO_POSITION
+        // Only jump to the last item if it isn't already on screen (e.g. after
+        // a history load). During streaming it is, so skip the jump (which
+        // would flash the bubble's top) and just nudge to the content's true
+        // bottom — scrollToPosition shows the item's TOP, but a tall streaming
+        // bubble's latest text sits below the fold.
+        if (lastVisible == RecyclerView.NO_POSITION || lastVisible < count - 1) {
+            recyclerMessages.scrollToPosition(count - 1)
+        }
+        recyclerMessages.post {
+            if (recyclerMessages.canScrollVertically(1)) {
+                recyclerMessages.scrollBy(0, recyclerMessages.computeVerticalScrollRange())
+            }
+        }
+    }
+
+    /**
+     * Render a streamed reply update, auto-scrolling to follow it only while
+     * [followStream] is set. The scroll listener clears [followStream] the
+     * moment the user drags to read back, and restores it when they return to
+     * the bottom — so the per-tick scroll never fights their finger.
+     */
+    private fun renderStreamUpdate(text: String) {
+        chatAdapter.updateLastMessage(text)
+        if (followStream) scrollToBottom()
     }
 
     /**
@@ -598,6 +666,8 @@ class ChatBottomSheet : DialogFragment() {
      */
     private fun sendToBackend(@Suppress("UNUSED_PARAMETER") query: String) {
         isStreaming = true
+        // A fresh reply follows from the bottom until the user scrolls up.
+        followStream = true
         sendBtn.isEnabled = false
         // Atrium: 3 cyan staggered-pulse dots while we wait for the
         // first chunk.  Hidden as soon as text begins accumulating so
@@ -637,75 +707,76 @@ class ChatBottomSheet : DialogFragment() {
             chatAdapter.addMessage(ChatMessage(role = "assistant", text = ""))
             scrollToBottom()
 
+            // Full text received from the server so far; the typewriter ticker
+            // reveals it to the user at a readable pace (see TYPEWRITER_*).
             var accumulated = ""
-            // Last time we pushed accumulated text to the adapter; throttles
-            // streamed re-renders to STREAM_UI_REFRESH_MS (see companion).
-            var lastRenderMs = 0L
+            var streamFinished = false
 
-            coachApiClient.chatStream(
-                fen = currentFen ?: STARTING_FEN,
-                messages = messages,
-                // Server now derives player_profile + past_mistakes
-                // from the authenticated player row + skill_vector_json
-                // (see ``llm/server.py::_derive_player_profile``).
-                // Sending null here keeps the wire payload minimal and
-                // prevents a stale local cache from overriding the
-                // server-authoritative coach context.  The fields are
-                // still kept on the request body type for backwards
-                // compatibility — `encodeDefaults=false` drops them.
-                playerProfile = null,
-                pastMistakes = null,
-                moveCount = moveCount.takeIf { it > 0 },
-                // Coach voice from Settings — pulled fresh on every
-                // chat turn so a setting change takes effect on the
-                // very next reply, not after a reopen.
-                coachVoice = SettingsBottomSheet.readCoachVoice(requireContext()),
-            ).collect { chunk ->
-                when (chunk) {
-                    is StreamChunk.Chunk -> {
-                        accumulated += chunk.text
+            // Typewriter reveal — paces the (often very fast) server stream to a
+            // readable rate, running concurrently with the collector below.
+            // renderStreamUpdate auto-scrolls only while the user is pinned to
+            // the bottom, so they can scroll up and read while it streams.
+            val reveal = launch {
+                var shown = 0
+                while (isActive) {
+                    val full = accumulated
+                    if (shown > full.length) shown = full.length // an abort shortened it
+                    if (shown < full.length) {
+                        shown = minOf(shown + TYPEWRITER_CHARS_PER_TICK, full.length)
+                        renderStreamUpdate(full.substring(0, shown))
                         if (typingDots.visibility == View.VISIBLE) {
                             typingDots.visibility = View.GONE
                         }
-                        // Coalesce re-renders so continuous token streaming
-                        // doesn't flood the main thread (which would freeze the
-                        // board behind the sheet). The post-loop flush renders
-                        // any tail text skipped by this throttle.
-                        val now = SystemClock.uptimeMillis()
-                        if (now - lastRenderMs >= STREAM_UI_REFRESH_MS) {
-                            chatAdapter.updateLastMessage(accumulated)
-                            scrollToBottom()
-                            lastRenderMs = now
-                        }
+                    } else if (streamFinished) {
+                        break
                     }
-                    is StreamChunk.Done -> {
-                        chunk.engineSignal?.let { updateEngineContextHeader(it) }
-                    }
-                    is StreamChunk.Abort -> {
-                        // The server could not safely complete the stream
-                        // (validate-before-emit aborted); replace whatever
-                        // partial we have with the deterministic fallback.
-                        accumulated = chunk.reply
-                        chatAdapter.updateLastMessage(accumulated)
-                        chunk.engineSignal?.let { updateEngineContextHeader(it) }
-                        if (typingDots.visibility == View.VISIBLE) {
-                            typingDots.visibility = View.GONE
-                        }
-                        scrollToBottom()
-                    }
-                    is StreamChunk.StreamError -> {
-                        Log.w(STREAM_TAG, "stream error: ${chunk.message}")
-                        if (chunk.message.startsWith("HTTP 401")) handleTokenExpiry()
-                    }
+                    delay(TYPEWRITER_TICK_MS)
                 }
             }
 
-            // Final flush: the throttle above may have skipped the last
-            // refresh window, so render the complete reply now (or the
-            // fallback if the stream produced nothing), then persist it.
+            try {
+                coachApiClient.chatStream(
+                    fen = currentFen ?: STARTING_FEN,
+                    messages = messages,
+                    // Server now derives player_profile + past_mistakes from the
+                    // authenticated player row + skill_vector_json (see
+                    // llm/server.py::_derive_player_profile). Sending null keeps
+                    // the wire payload minimal and prevents a stale local cache
+                    // from overriding the server-authoritative coach context; the
+                    // fields stay on the request type for back-compat
+                    // (encodeDefaults=false drops them).
+                    playerProfile = null,
+                    pastMistakes = null,
+                    moveCount = moveCount.takeIf { it > 0 },
+                    // Coach voice pulled fresh each turn so a Settings change
+                    // takes effect on the very next reply.
+                    coachVoice = SettingsBottomSheet.readCoachVoice(requireContext()),
+                ).collect { chunk ->
+                    when (chunk) {
+                        is StreamChunk.Chunk -> accumulated += chunk.text
+                        is StreamChunk.Done ->
+                            chunk.engineSignal?.let { updateEngineContextHeader(it) }
+                        is StreamChunk.Abort -> {
+                            // Replace whatever partial we have with the
+                            // deterministic fallback; the reveal loop picks it up.
+                            accumulated = chunk.reply
+                            chunk.engineSignal?.let { updateEngineContextHeader(it) }
+                        }
+                        is StreamChunk.StreamError -> {
+                            Log.w(STREAM_TAG, "stream error: ${chunk.message}")
+                            if (chunk.message.startsWith("HTTP 401")) handleTokenExpiry()
+                        }
+                    }
+                }
+            } finally {
+                streamFinished = true
+            }
+            reveal.join()
+
+            // Ensure the complete reply is shown (fallback if the stream produced
+            // nothing; also covers an abort that shortened the text), then persist.
             val displayReply = accumulated.takeIf { it.isNotBlank() } ?: FALLBACK_REPLY
-            chatAdapter.updateLastMessage(displayReply)
-            scrollToBottom()
+            renderStreamUpdate(displayReply)
             sessionStore.addMessage("assistant", displayReply)
 
             isStreaming = false
