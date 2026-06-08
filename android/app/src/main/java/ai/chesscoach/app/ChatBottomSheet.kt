@@ -1,5 +1,6 @@
 package ai.chesscoach.app
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -8,6 +9,7 @@ import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -224,17 +226,14 @@ class ChatBottomSheet : DialogFragment() {
         private const val STREAM_TAG = "ChatStream"
 
         /**
-         * Chat panel heights as a fraction of screen height (see [onStart] /
-         * [applyPanelHeight]). The panel toggles between two sizes:
-         *
-         *  - EXPANDED: a tall reading surface (default on open) so the
-         *    conversation isn't cramped — the "too small" complaint.
-         *  - COLLAPSED: short enough that the full 332dp board + rails clear
-         *    the panel's top edge and stay tappable — the "play while
-         *    chatting" state. The board bottom sits ~53% down the screen, so
-         *    ≤45% keeps the whole board (incl. rank 1) clear with margin.
+         * Collapsed panel height as a fraction of screen height (see
+         * [applyPanelHeight]). Short enough that the full 332dp board + rails
+         * clear the panel's top edge and stay tappable — the "play while
+         * chatting" state. The board bottom sits ~53% down the screen, so ≤45%
+         * keeps the whole board (incl. rank 1) clear with margin. The EXPANDED
+         * state is full-height (MATCH_PARENT) so ADJUST_RESIZE can lift a
+         * multi-line composer above the keyboard.
          */
-        private const val CHAT_PANEL_EXPANDED_FRACTION = 0.86f
         private const val CHAT_PANEL_COLLAPSED_FRACTION = 0.45f
 
         /**
@@ -248,6 +247,12 @@ class ChatBottomSheet : DialogFragment() {
          */
         private const val MAX_CHAT_HISTORY = 50
         private const val MAX_CHAT_CONTENT = 2000
+
+        /**
+         * Fraction of the panel height the grab handle must be dragged DOWN
+         * before release dismisses the panel; a shorter drag snaps back.
+         */
+        private const val DRAG_DISMISS_FRACTION = 0.25f
 
         /**
          * Create a new instance with the current board position and optional
@@ -344,11 +349,13 @@ class ChatBottomSheet : DialogFragment() {
         // window reach the board window behind it. Keep the window focusable
         // (NO FLAG_NOT_FOCUSABLE) so the composer keyboard still works.
         window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
-        // The dialog has its own fixed-height, bottom-anchored window, so
-        // ADJUST_RESIZE has no effect (the explicit setLayout height wins, the
-        // content never reflows above the IME). ADJUST_PAN instead pans the
-        // whole window up so the focused composer clears the keyboard.
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN)
+        // ADJUST_RESIZE so the panel's content (the message list shrinks, the
+        // composer stays at the bottom) reflows ABOVE the keyboard — this keeps
+        // even a multi-line composer fully visible while typing. It only takes
+        // effect on a non-fixed-height window, which is why the EXPANDED state
+        // (where typing happens — focus auto-expands) is MATCH_PARENT; the
+        // collapsed "play" state stays a fixed partial height.
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         applyPanelHeight()
     }
 
@@ -359,9 +366,15 @@ class ChatBottomSheet : DialogFragment() {
      */
     private fun applyPanelHeight() {
         val window = dialog?.window ?: return
-        val fraction =
-            if (panelExpanded) CHAT_PANEL_EXPANDED_FRACTION else CHAT_PANEL_COLLAPSED_FRACTION
-        val height = (resources.displayMetrics.heightPixels * fraction).toInt()
+        // Expanded is full-height (MATCH_PARENT) so ADJUST_RESIZE can reflow the
+        // content above the keyboard while typing; collapsed is a fixed partial
+        // height that leaves the live board visible + tappable above it.
+        val height =
+            if (panelExpanded) {
+                ViewGroup.LayoutParams.MATCH_PARENT
+            } else {
+                (resources.displayMetrics.heightPixels * CHAT_PANEL_COLLAPSED_FRACTION).toInt()
+            }
         window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, height)
         window.setGravity(Gravity.BOTTOM)
         if (::btnExpandChat.isInitialized) {
@@ -370,6 +383,9 @@ class ChatBottomSheet : DialogFragment() {
         }
     }
 
+    // The grab-handle drag is a swipe-to-dismiss gesture, not a click, so the
+    // accessibility-performClick lint check doesn't apply.
+    @SuppressLint("ClickableViewAccessibility")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
@@ -510,14 +526,47 @@ class ChatBottomSheet : DialogFragment() {
         }
 
         // Raise the panel when the composer is focused so the keyboard doesn't
-        // crowd the typing area — expand for room above the IME (ADJUST_PAN
-        // then pans the taller panel up). The user can collapse with the
-        // chevron once done. Only auto-expands from the collapsed state.
+        // crowd the typing area: expand to full height, where ADJUST_RESIZE
+        // reflows the content (list shrinks, composer stays) above the IME — so
+        // even a multi-line message stays visible. Collapse again with the
+        // chevron. Only auto-expands from the collapsed state.
         input.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus && !panelExpanded) {
                 panelExpanded = true
                 applyPanelHeight()
                 scrollToBottom()
+            }
+        }
+
+        // Swipe the grab handle DOWN to dismiss: drag the whole panel with the
+        // finger, then dismiss past DRAG_DISMISS_FRACTION or snap back. Lives on
+        // its own touch target so it never competes with message scrolling.
+        var dragStartY = 0f
+        view.findViewById<View>(R.id.dragHandle).setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    dragStartY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dy = event.rawY - dragStartY
+                    if (dy > 0f) view.translationY = dy // only drag downward
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    val dy = event.rawY - dragStartY
+                    if (dy > view.height * DRAG_DISMISS_FRACTION) {
+                        view.animate()
+                            .translationY(view.height.toFloat())
+                            .setDuration(160L)
+                            .withEndAction { if (isAdded) dismissAllowingStateLoss() }
+                            .start()
+                    } else {
+                        view.animate().translationY(0f).setDuration(160L).start()
+                    }
+                    true
+                }
+                else -> false
             }
         }
     }
