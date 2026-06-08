@@ -171,6 +171,7 @@ class ChatBottomSheet : DialogFragment() {
         private const val ARG_SEED_PROMPT = "arg_seed_prompt"
         private const val KEY_MSG_ROLES = "chat_msg_roles"
         private const val KEY_MSG_TEXTS = "chat_msg_texts"
+        private const val KEY_PANEL_EXPANDED = "chat_panel_expanded"
 
         private const val STARTING_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
@@ -283,6 +284,7 @@ class ChatBottomSheet : DialogFragment() {
         val msgs = sessionStore.messages
         outState.putStringArray(KEY_MSG_ROLES, Array(msgs.size) { msgs[it].role })
         outState.putStringArray(KEY_MSG_TEXTS, Array(msgs.size) { msgs[it].text })
+        outState.putBoolean(KEY_PANEL_EXPANDED, panelExpanded)
     }
 
     override fun onAttach(context: Context) {
@@ -302,6 +304,12 @@ class ChatBottomSheet : DialogFragment() {
         moveCount = arguments?.getInt(ARG_MOVE_COUNT, 0) ?: 0
         seedPrompt = arguments?.getString(ARG_SEED_PROMPT)
         isCancelable = true
+        // Restore the panel size across rotation (messages are restored in
+        // onViewCreated); without this the panel snaps back to collapsed
+        // while the conversation survives, which reads as a glitch.
+        savedInstanceState?.let {
+            panelExpanded = it.getBoolean(KEY_PANEL_EXPANDED, panelExpanded)
+        }
     }
 
     override fun onCreateView(
@@ -330,6 +338,10 @@ class ChatBottomSheet : DialogFragment() {
         // window reach the board window behind it. Keep the window focusable
         // (NO FLAG_NOT_FOCUSABLE) so the composer keyboard still works.
         window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
+        // The dialog has its own window, so MainActivity's manifest
+        // adjustResize doesn't apply here. Resize this panel above the IME so
+        // the composer stays visible when typing in the short collapsed state.
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         applyPanelHeight()
     }
 

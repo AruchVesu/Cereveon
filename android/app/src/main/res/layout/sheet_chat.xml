@@ -72,7 +72,7 @@
             android:gravity="center"
             android:clickable="true"
             android:focusable="true"
-            android:text="⌄"
+            android:text="⌃"
             android:textColor="@color/atrium_accent_cyan"
             android:textSize="22sp"
             android:contentDescription="Expand or collapse the coach panel" />
