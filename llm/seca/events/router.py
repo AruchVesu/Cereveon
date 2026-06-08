@@ -478,6 +478,10 @@ def _finish_game_body(
         result=req.result,
         accuracy=accuracy,
         weaknesses=weaknesses,
+        # Link this history row back to the live game's chat thread so the
+        # game-history UI can load its coaching conversation.  Already
+        # validated + normalised (blank -> None) by GameFinishRequest.
+        app_game_id=req.game_id,
     )
 
     # If the client tracked the game_id from /game/start, mark the
@@ -912,6 +916,11 @@ def game_history(
         games.append(
             {
                 "id": str(ev.id),
+                # The live ``games.id`` (== chat_turns.game_id) this finished
+                # game maps to, so the client can fetch its coaching chat via
+                # GET /chat/history?game_id=...  None for legacy / imported /
+                # pre-game_id rows (no per-game chat to show).
+                "game_id": ev.app_game_id,
                 "result": ev.result,
                 "accuracy": ev.accuracy,
                 "created_at": ev.created_at.isoformat() if ev.created_at else None,

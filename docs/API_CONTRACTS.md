@@ -315,6 +315,7 @@ Any client expecting a standalone `/coach` endpoint will receive HTTP 404.
   "games": [
     {
       "id":           <string>,
+      "game_id":      <string | null>,
       "result":       <"win" | "loss" | "draw">,
       "accuracy":     <float 0..1>,
       "created_at":   <string | null>,
@@ -327,7 +328,8 @@ Any client expecting a standalone `/coach` endpoint will receive HTTP 404.
 | Field | Type | Notes |
 |-------|------|-------|
 | `games` | `array` | Up to 20 entries, ordered newest-first |
-| `id` | `string` | Game event UUID |
+| `id` | `string` | Game event UUID (the `game_events` row id) |
+| `game_id` | `string \| null` | Live game id (the `games.id` from `POST /game/start`, equal to `chat_turns.game_id`). Pass to `GET /chat/history?game_id=…` to load this game's coaching chat. `null` for legacy rows, imported (e.g. Lichess) games, and finishes from clients that didn't send a `game_id` — those have no per-game chat thread. |
 | `result` | `string` | One of `"win"`, `"loss"`, `"draw"` |
 | `accuracy` | `float` | 0.0–1.0 as submitted via `POST /game/finish` |
 | `created_at` | `string \| null` | ISO-8601 datetime string |

@@ -40,6 +40,18 @@ class GameEvent(Base):
     # create duplicate rows.  NULL for in-app games.
     external_game_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
+    # In-app game id (the ``games.id`` minted by /game/start) this finished
+    # row corresponds to, captured from ``GameFinishRequest.game_id`` at
+    # /game/finish.  Distinct from ``external_game_id`` (reserved for external
+    # platforms like Lichess, NULL for in-app games): this links a history row
+    # back to the live game's chat thread (``chat_turns.game_id``) so the
+    # game-history UI can surface each game's coaching conversation.  NULL for
+    # legacy rows, imported games, and finishes from older clients that never
+    # sent a game_id — those simply have no per-game chat to show.  Not
+    # indexed: it is projection-only here (the chat lookup filters
+    # ``chat_turns.game_id``, which carries its own covering index).
+    app_game_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
     created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
 
     player: Mapped["Player"] = relationship("Player")

@@ -33,6 +33,10 @@ Pinned invariants
                                     fail the finish endpoint — the
                                     GameEvent + skill update are the
                                     load-bearing writes.
+ 8. RESUME_APP_GAME_ID_FORWARDED    req.game_id is threaded into
+                                    store_game(app_game_id=...) so the
+                                    game_events row links to the live
+                                    game's chat thread; None when omitted.
 """
 
 from __future__ import annotations
@@ -73,9 +77,17 @@ _DEFAULT_REQ = {
 
 
 def _fake_request() -> StarletteRequest:
+    # The finish handler reads ``request.app.state.engine_pool`` for the
+    # server-side PGN accuracy recompute.  Stub an app with empty state so the
+    # resolver falls back to client-supplied accuracy (no engine pool ->
+    # ACC_FALLBACK path), mirroring _make_game_finish_mocks in
+    # test_api_contract_validation.py.  Without the "app" scope key, starlette
+    # raises ``KeyError: 'app'`` on ``request.app`` before the resolver's
+    # getattr default can apply.
     return StarletteRequest({
         "type": "http", "method": "POST", "path": "/game/finish",
         "headers": [], "client": ("127.0.0.1", 0),
+        "app": SimpleNamespace(state=SimpleNamespace()),
     })
 
 
@@ -240,3 +252,65 @@ class TestFinishGameRepoCall:
     def test_repo_called_with_draw_result(self):
         _, repo_mock = _call_finish({**_DEFAULT_REQ, "result": "draw", "game_id": "abc"})
         repo_mock.assert_called_once_with("abc", "draw")
+
+
+# ---------------------------------------------------------------------------
+# 3.  app_game_id forwarding (game-history -> chat link)
+# ---------------------------------------------------------------------------
+
+
+class TestFinishGameForwardsAppGameId:
+    """RESUME_APP_GAME_ID_FORWARDED — finish_game threads req.game_id into
+    EventStorage.store_game(app_game_id=...) so the persisted game_events row
+    carries the live games.id, letting the game-history UI load that game's
+    coaching chat via GET /chat/history?game_id=..."""
+
+    def _finish_capturing_store(self, req_kwargs):
+        """Run finish_game with EventStorage mocked; return the store_game
+        mock so the caller can inspect how it was invoked."""
+        player, db = _make_player_and_db()
+        req = GameFinishRequest(**req_kwargs)
+        request = _fake_request()
+        fake_event = SimpleNamespace(id=99)
+
+        prev = limiter.enabled
+        limiter.enabled = False
+        try:
+            with (
+                patch("llm.seca.events.router.EventStorage") as MockStorage,
+                patch("llm.seca.events.router.SkillUpdater"),
+                patch("llm.seca.storage.repo.finish_game", MagicMock()),
+            ):
+                MockStorage.return_value.store_game.return_value = fake_event
+                MockStorage.return_value.get_recent_games.return_value = []
+                from fastapi import BackgroundTasks as _BackgroundTasks  # noqa: PLC0415
+
+                finish_game(
+                    req=req,
+                    request=request,
+                    background_tasks=_BackgroundTasks(),
+                    player=player,
+                    db=db,
+                )
+                return MockStorage.return_value.store_game
+        finally:
+            limiter.enabled = prev
+
+    def test_app_game_id_forwarded_from_game_id(self):
+        """A provided game_id is passed straight through to store_game."""
+        store_mock = self._finish_capturing_store({**_DEFAULT_REQ, "game_id": "live-game-7"})
+        store_mock.assert_called_once()
+        assert store_mock.call_args.kwargs.get("app_game_id") == "live-game-7"
+
+    def test_app_game_id_none_when_game_id_omitted(self):
+        """No game_id -> store_game gets app_game_id=None (no chat link)."""
+        store_mock = self._finish_capturing_store(_DEFAULT_REQ)
+        store_mock.assert_called_once()
+        assert store_mock.call_args.kwargs.get("app_game_id") is None
+
+    def test_app_game_id_none_for_blank_game_id(self):
+        """Blank game_id is normalised to None by the validator, so the
+        store link is None too — consistent with the repo-call skip."""
+        store_mock = self._finish_capturing_store({**_DEFAULT_REQ, "game_id": "   "})
+        store_mock.assert_called_once()
+        assert store_mock.call_args.kwargs.get("app_game_id") is None
