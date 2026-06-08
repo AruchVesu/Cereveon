@@ -168,6 +168,24 @@ def init_schema() -> None:
             _column_type_for_dialect("TEXT", "VARCHAR"),
         )
 
+        # Per-game chat scoping ("chat history for each game"). game_id is
+        # nullable so legacy rows stay player-global and player_id remains the
+        # isolation boundary. Add the covering index for the per-game query;
+        # CREATE INDEX IF NOT EXISTS is portable across SQLite + Postgres.
+        _ensure_column(
+            conn,
+            "chat_turns",
+            "game_id",
+            _column_type_for_dialect("TEXT", "VARCHAR"),
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_chat_turn_player_game_created "
+                "ON chat_turns (player_id, game_id, created_at)"
+            )
+        )
+        conn.commit()
+
         # Lichess background-import jobs (PR: v2 async import).  One
         # non-terminal row per player is enforced by:
         #   (a) llm.seca.lichess.get_player_import_lock — primary

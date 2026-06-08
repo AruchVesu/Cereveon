@@ -228,7 +228,8 @@ is wire-backward-compatible with any unknown client.
   "player_profile": <object | null>,
   "past_mistakes":  <string[] | null>,
   "move_count":     <int | null>,
-  "coach_voice":    <string | null>
+  "coach_voice":    <string | null>,
+  "game_id":        <string | null>
 }
 ```
 
@@ -240,6 +241,7 @@ is wire-backward-compatible with any unknown client.
 | `past_mistakes` | `string[] \| null` | Optional — ≤ 20 items |
 | `move_count` | `int \| null` | Optional — 0–10 000; injects "This is move N of the game." into the context block |
 | `coach_voice` | `string \| null` | Optional tone setting. Allow-list: `"formal"`, `"conversational"`, `"terse"` (case-insensitive, whitespace-stripped; empty string is coerced to `null`). Unknown values reject the request with 422. Default `null` → server treats as `"conversational"`. Affects tone only; engine truth and validator gates are unchanged. Pinned by `test_chat_coach_voice.py`. |
+| `game_id` | `string \| null` | Optional — per-game chat thread key (the client's current `games.id`). When present, the saved exchange is scoped to that game so `GET /chat/history?game_id=…` shows only that game's chat; absent/null keeps it player-global (legacy). ≤ 64 chars; empty → `null`. `player_id` (from the JWT) stays the isolation boundary, so this is an organizational key only. Same field on `POST /chat/stream`. |
 
 ### Response
 
@@ -853,6 +855,7 @@ Returns recent chat turns for the authenticated player. Backs `ChatBottomSheet.p
 | Param | Type | Default | Notes |
 |-------|------|---------|-------|
 | `limit` | `int` | `HISTORY_DEFAULT_LIMIT` (50) | Bounded to `[1, HISTORY_MAX_LIMIT=200]` server-side. |
+| `game_id` | `string` | _(none)_ | Optional — scope history to one game's thread (the client's current `games.id`). Omitted → player-global history (every turn, all games). Absurd lengths (> 64) are ignored (fall back to player-global) rather than 422-ing the fetch. |
 
 ### Response
 
@@ -872,7 +875,7 @@ Returns recent chat turns for the authenticated player. Backs `ChatBottomSheet.p
 }
 ```
 
-Turns are returned chronologically (oldest first) so the client can `addAll` directly without re-ordering. Cross-player isolation is by `WHERE player_id = ?` in the repo layer; the route is Bearer-only so the player_id is the authenticated one. No client-supplied player filter is accepted.
+Turns are returned chronologically (oldest first) so the client can `addAll` directly without re-ordering. Cross-player isolation is by `WHERE player_id = ?` in the repo layer; the route is Bearer-only so the player_id is the authenticated one. No client-supplied player filter is accepted. `game_id`, when supplied, only adds `AND game_id = ?` WITHIN the authenticated player's rows — an organizational sub-filter, not a security boundary.
 
 ---
 

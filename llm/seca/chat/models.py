@@ -26,9 +26,12 @@ satisfied by deleting the player).
 
 Indexes
 -------
-``ix_chat_turn_player_created`` covers the ``GET /chat/history?limit=N``
-query (``WHERE player_id = ? ORDER BY created_at DESC LIMIT N``).  No
-other read pattern is supported today.
+``ix_chat_turn_player_created`` covers the player-global
+``GET /chat/history?limit=N`` query
+(``WHERE player_id = ? ORDER BY created_at DESC LIMIT N``).
+``ix_chat_turn_player_game_created`` covers the per-game variant
+(``... AND game_id = ? ...``) used when the client scopes history to a
+game (see the ``game_id`` column).
 """
 
 from __future__ import annotations
@@ -51,6 +54,16 @@ class ChatTurn(Base):
     player_id: Mapped[str] = mapped_column(
         String, ForeignKey("players.id"), index=True, nullable=False
     )
+
+    # Game this turn belongs to (``games.id``) so chat history is scoped
+    # per game — each game is its own thread. Nullable on purpose: turns
+    # saved outside an active game (or before this column existed) are
+    # player-global (the legacy behaviour) and surface when no game_id is
+    # requested. Intentionally NOT a hard ForeignKey — chat must survive a
+    # ``games`` row being pruned; the ``player_id`` FK already covers the
+    # GDPR delete-cascade. ``player_id`` stays the isolation boundary, so a
+    # stray game_id only reshuffles a player's OWN grouping.
+    game_id: Mapped[str | None] = mapped_column(String)
 
     # ``user`` / ``assistant`` / ``system``.  Mirrors the
     # ``ChatTurn`` dataclass in ``llm.seca.coach.chat_pipeline`` —
@@ -87,4 +100,9 @@ class ChatTurn(Base):
         DateTime, default=datetime.utcnow, index=True, nullable=False
     )
 
-    __table_args__ = (Index("ix_chat_turn_player_created", "player_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_chat_turn_player_created", "player_id", "created_at"),
+        # Covers the per-game query
+        # (WHERE player_id = ? AND game_id = ? ORDER BY created_at DESC).
+        Index("ix_chat_turn_player_game_created", "player_id", "game_id", "created_at"),
+    )

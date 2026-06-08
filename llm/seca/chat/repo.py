@@ -27,6 +27,7 @@ def save_exchange(
     assistant_content: str,
     fen: str,
     mode: str = "CHAT_V1",
+    game_id: str | None = None,
 ) -> None:
     """Persist one ``/chat`` exchange (user message + assistant reply).
 
@@ -39,11 +40,16 @@ def save_exchange(
     (deterministic fallback included when the safety net replaced an
     LLM reply that failed the boundary validator — see
     ``server.py::chat``).
+
+    ``game_id`` scopes the exchange to a game (each game its own thread);
+    ``None`` keeps it player-global (legacy behaviour). It is mirrored onto
+    both rows so the pair stays in one thread.
     """
     db.add_all(
         [
             ChatTurn(
                 player_id=player_id,
+                game_id=game_id,
                 role="user",
                 content=user_content,
                 fen=fen,
@@ -51,6 +57,7 @@ def save_exchange(
             ),
             ChatTurn(
                 player_id=player_id,
+                game_id=game_id,
                 role="assistant",
                 content=assistant_content,
                 fen=fen,
@@ -65,6 +72,7 @@ def recent_turns_for_player(
     db: DBSession,
     player_id: str,
     limit: int = HISTORY_DEFAULT_LIMIT,
+    game_id: str | None = None,
 ) -> list[ChatTurn]:
     """Return the most-recent ``limit`` turns for ``player_id``.
 
@@ -74,12 +82,15 @@ def recent_turns_for_player(
     ``get_current_player`` so the inbound ``player_id`` is the
     authenticated player.  ``limit`` is clamped to [1, HISTORY_MAX_LIMIT]
     so a malformed client request can't issue an unbounded scan.
+
+    ``game_id`` scopes the result to a single game's thread when provided;
+    ``None`` returns the player-global history (every turn, all games +
+    untied), preserving the legacy behaviour for callers that don't pass
+    a game. ``player_id`` is always applied, so it stays the isolation
+    boundary regardless of ``game_id``.
     """
     bounded = max(1, min(limit, HISTORY_MAX_LIMIT))
-    return (
-        db.query(ChatTurn)
-        .filter(ChatTurn.player_id == player_id)
-        .order_by(ChatTurn.created_at.desc(), ChatTurn.id.desc())
-        .limit(bounded)
-        .all()
-    )
+    query = db.query(ChatTurn).filter(ChatTurn.player_id == player_id)
+    if game_id is not None:
+        query = query.filter(ChatTurn.game_id == game_id)
+    return query.order_by(ChatTurn.created_at.desc(), ChatTurn.id.desc()).limit(bounded).all()
