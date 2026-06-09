@@ -183,6 +183,41 @@ class TestEngineSignalDeterminism:
         assert esv["evaluation"]["side"] == expected_side
 
     @pytest.mark.parametrize(
+        "value,fen,expected_side",
+        [
+            # White delivers the mate (value > 0) → side is White, even when
+            # it is BLACK to move (the FEN AFTER the player's move).  This is
+            # the regression: side_from_fen returned "black" here and the
+            # player-perspective framing told the winning player they were
+            # about to be mated.
+            (3, "r1bq1rk1/pppp1ppp/2n5/4p3/3PPQ2/2N2N2/PPP2PPP/R1B1KB1R b KQ - 5 6", "white"),
+            (1, "6k1/5ppp/8/8/8/8/5PPP/4R1K1 b - - 0 1", "white"),
+            (3, "6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1", "white"),
+            # Black delivers the mate (value < 0) → side is Black, even when
+            # it is WHITE to move.
+            (-3, "6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1", "black"),
+            (-1, "r1bq1rk1/pppp1ppp/2n5/4p3/3PPQ2/2N2N2/PPP2PPP/R1B1KB1R b KQ - 5 6", "black"),
+        ],
+    )
+    def test_mate_side_uses_signed_value_not_side_to_move(self, value, fen, expected_side):
+        """A mate's ``side`` is the colour DELIVERING mate (the sign of the
+        White-relative value), never the side to move.  Guards the production
+        inversion where a winning player was told they were about to be mated
+        because extraction ran on the post-move FEN (opponent to move) and
+        used ``side_from_fen``."""
+        from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
+
+        esv = extract_engine_signal(
+            {
+                "evaluation": {"type": "mate", "value": value},
+                "eval_delta": 0,
+                "errors": {"last_move_quality": "excellent"},
+            },
+            fen=fen,
+        )
+        assert esv["evaluation"]["side"] == expected_side
+
+    @pytest.mark.parametrize(
         "delta,expected",
         [
             (50, "increase"),
