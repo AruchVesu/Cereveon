@@ -214,11 +214,13 @@ class TestSF03EsvMalformedInputHandling:
         except Exception as exc:
             pytest.fail(f"extract_engine_signal crashed on unknown eval type: {exc}")
 
-    def test_malformed_fen_in_mate_branch_returns_unknown_side(self):
-        """A malformed FEN for a mate signal must yield side='unknown', not an exception."""
+    def test_malformed_fen_in_mate_branch_uses_value_sign(self):
+        """A mate's side comes from the signed value, so a malformed FEN is
+        irrelevant: it must not raise, and must yield the value-sign side
+        (value=3 → White delivers mate → 'white')."""
         esv = extract_engine_signal(_VALID_MATE_JSON, fen="this-is-not-a-valid-fen")
-        assert esv["evaluation"]["side"] == "unknown", (
-            "Malformed FEN in mate branch must yield side='unknown'"
+        assert esv["evaluation"]["side"] == "white", (
+            "Mate side must come from the value sign, independent of the FEN"
         )
 
 
@@ -251,17 +253,18 @@ class TestSF04EsvDeterminism:
                 f"first={first!r}, got={result!r}"
             )
 
-    def test_different_fens_produce_different_sides_for_mate(self):
-        """For mate signals, different FENs with different active color yield different sides."""
+    def test_mate_side_is_independent_of_fen_active_color(self):
+        """A mate's side is the colour delivering mate (value sign), so it does
+        NOT depend on the FEN's active color — both FENs yield the same side."""
         white_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
         black_fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
 
         esv_white = extract_engine_signal(_VALID_MATE_JSON, fen=white_fen)
         esv_black = extract_engine_signal(_VALID_MATE_JSON, fen=black_fen)
 
-        assert esv_white["evaluation"]["side"] != esv_black["evaluation"]["side"], (
-            "Mate ESV side must differ for FENs with different active color"
-        )
+        assert (
+            esv_white["evaluation"]["side"] == esv_black["evaluation"]["side"] == "white"
+        ), "Mate side must be value-driven (white for value>0), not FEN-driven"
 
     def test_evaluation_band_is_deterministic_across_calls(self):
         """Band assignment must be deterministic for the same centipawn value."""

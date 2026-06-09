@@ -232,19 +232,21 @@ class TestMatePath:
                 f"Mate-in-{mate_in} must be decisive_advantage"
             )
 
-    def test_mate_side_from_white_to_move_fen(self):
-        """ESV-19: Mate with white-to-move FEN → side=white."""
+    def test_mate_side_white_when_white_delivers_mate(self):
+        """ESV-19: positive mate value (White delivers mate) → side=white,
+        regardless of the FEN's side to move."""
         esv = extract_engine_signal(
             {"evaluation": {"type": "mate", "value": 1}}, fen=_STARTING_FEN
         )
         assert esv["evaluation"]["side"] == "white", (
-            "White-to-move FEN must produce side=white for mate signal"
+            "Positive mate value (White mates) must produce side=white"
         )
 
-    def test_mate_side_from_black_to_move_fen(self):
-        """ESV-19b: Mate with black-to-move FEN → side=black."""
+    def test_mate_side_black_when_black_delivers_mate(self):
+        """ESV-19b: negative mate value (Black delivers mate) → side=black,
+        even on a white-to-move FEN — side is value-driven, not FEN-driven."""
         esv = extract_engine_signal(
-            {"evaluation": {"type": "mate", "value": 1}}, fen=_AFTER_E4_FEN
+            {"evaluation": {"type": "mate", "value": -1}}, fen=_STARTING_FEN
         )
         assert esv["evaluation"]["side"] == "black"
 
@@ -264,10 +266,11 @@ class TestMatePath:
         )
         assert esv["eval_delta"] == "decrease"
 
-    def test_mate_no_fen_gives_unknown_side(self):
-        """Mate with no FEN → side=unknown."""
+    def test_mate_no_fen_uses_value_sign(self):
+        """A non-zero mate value yields the value-sign side even without a FEN
+        (the FEN is only consulted for the degenerate value==0 fallback)."""
         esv = extract_engine_signal({"evaluation": {"type": "mate", "value": 1}})
-        assert esv["evaluation"]["side"] == "unknown"
+        assert esv["evaluation"]["side"] == "white"
 
 
 # ===========================================================================
