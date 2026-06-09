@@ -237,9 +237,8 @@ def extract_engine_signal(
             # value == 0 should not occur for a real mate (the pool emits cp
             # for non-terminal positions); fall back to side-neutral rather
             # than assert a winner on degenerate data.
-            side = side_from_fen(fen)
-            if side not in ("white", "black"):
-                side = "unknown"
+            fen_side = side_from_fen(fen)
+            side = fen_side if fen_side in ("white", "black") else "unknown"
 
         delta = stockfish_json.get("eval_delta", 0)
         if delta >= 50:
