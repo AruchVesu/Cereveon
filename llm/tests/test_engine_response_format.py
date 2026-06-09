@@ -254,26 +254,52 @@ class TestEngineSignalSchema:
 
 
 # ---------------------------------------------------------------------------
-# side_from_fen — FEN side extraction
+# Mate side attribution — the colour DELIVERING mate (sign of the value)
 # ---------------------------------------------------------------------------
 
 
-class TestSideFromFen:
-    """FEN side parsing used in the mate branch of extract_engine_signal."""
+class TestMateSideAttribution:
+    """A mate's ``side`` is the colour delivering mate, taken from the sign of
+    the White-relative value (the pool emits ``white_score.mate()``), NOT the
+    side to move.  ``side_from_fen`` is only the value==0 degenerate fallback.
 
-    def test_white_fen_yields_white_side_in_mate_signal(self):
+    Regression: the mate branch used to read ``side_from_fen(fen)``.  Because
+    the live-move pipeline extracts this signal from the FEN *after* the
+    player's move (opponent to move), a forced mate FOR the player (White,
+    value > 0) was attributed to Black and the player was told "you are about
+    to be mated".
+    """
+
+    @staticmethod
+    def _mate(value: int) -> dict:
+        return {"evaluation": {"type": "mate", "value": value}}
+
+    def test_white_mate_is_white_regardless_of_side_to_move(self):
+        # Black-to-move FEN — the post-player-move case that exposed the bug.
         fen = "r1bq1rk1/pppp1ppp/2n5/4p3/3PPQ2/2N2N2/PPP2PPP/R1B1KB1R b KQ - 5 6"
-        esv = extract_engine_signal(_mate_signal(), fen=fen)
-        # The mate branch uses side_from_fen(fen) not value
-        assert esv["evaluation"]["side"] in ("white", "black")  # either, but valid
+        assert extract_engine_signal(self._mate(3), fen=fen)["evaluation"]["side"] == "white"
 
-    def test_no_fen_in_mate_branch_returns_unknown(self):
-        esv = extract_engine_signal(_mate_signal(), fen=None)
-        assert esv["evaluation"]["side"] == "unknown"
+    def test_white_mate_is_white_without_fen(self):
+        # Side comes from the value sign, so no FEN is required.
+        assert extract_engine_signal(self._mate(3), fen=None)["evaluation"]["side"] == "white"
 
-    def test_malformed_fen_in_mate_branch_returns_unknown(self):
-        esv = extract_engine_signal(_mate_signal(), fen="not-a-fen")
-        assert esv["evaluation"]["side"] == "unknown"
+    def test_white_mate_is_white_with_malformed_fen(self):
+        assert (
+            extract_engine_signal(self._mate(3), fen="not-a-fen")["evaluation"]["side"] == "white"
+        )
+
+    def test_black_mate_is_black_regardless_of_side_to_move(self):
+        # White-to-move FEN, but Black delivers the mate (value < 0).
+        fen = "6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1"
+        assert extract_engine_signal(self._mate(-3), fen=fen)["evaluation"]["side"] == "black"
+
+    def test_degenerate_zero_mate_falls_back_to_side_to_move(self):
+        # value == 0 never occurs for a real mate; the fallback reads the FEN.
+        fen = "6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1"
+        assert extract_engine_signal(self._mate(0), fen=fen)["evaluation"]["side"] == "white"
+
+    def test_degenerate_zero_mate_without_fen_is_unknown(self):
+        assert extract_engine_signal(self._mate(0), fen=None)["evaluation"]["side"] == "unknown"
 
 
 # ---------------------------------------------------------------------------

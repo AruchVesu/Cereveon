@@ -97,7 +97,7 @@ If a request violates these rules:
 End of system instructions.
 
 ENGINE SIGNAL:
-evaluation: {'type': 'mate', 'band': 'decisive_advantage', 'side': 'black'}
+evaluation: {'type': 'mate', 'band': 'decisive_advantage', 'side': 'white'}
 eval_delta: stable
 last_move_quality: blunder
 tactical_flags: ['forced_mate']

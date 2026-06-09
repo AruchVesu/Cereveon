@@ -216,9 +216,29 @@ def extract_engine_signal(
     # MATE (TERMINAL STATE)
     # -------------------------
     if eval_type == "mate":
-        side = side_from_fen(fen)
-        if side not in ("white", "black"):
-            side = "unknown"
+        # ``value`` is the signed mate distance from White's perspective
+        # (pool.py emits ``white_score.mate()``): positive → White delivers
+        # the mate, negative → Black does.  Use the SAME White-relative sign
+        # convention as the cp branch below.
+        #
+        # The previous ``side_from_fen(fen)`` was a latent inversion: the
+        # live-move pipeline extracts this signal from the FEN *after* the
+        # player's move, so the side to move is the OPPONENT.  A forced mate
+        # FOR the player (White, value > 0) was attributed to ``side="black"``
+        # and the player-perspective framing (render._frame_player_perspective)
+        # then told the winning player "you are about to be mated" — the
+        # in-app report that surfaced this: a clear win where the coach's last
+        # Mode-1 messages said the player was losing.
+        if value > 0:
+            side = "white"
+        elif value < 0:
+            side = "black"
+        else:
+            # value == 0 should not occur for a real mate (the pool emits cp
+            # for non-terminal positions); fall back to side-neutral rather
+            # than assert a winner on degenerate data.
+            fen_side = side_from_fen(fen)
+            side = fen_side if fen_side in ("white", "black") else "unknown"
 
         delta = stockfish_json.get("eval_delta", 0)
         if delta >= 50:
