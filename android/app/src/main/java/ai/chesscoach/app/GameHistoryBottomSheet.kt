@@ -132,7 +132,7 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
                 header.text = headerText(game, expanded = expanding, expandable = true)
                 if (expanding && !loaded) {
                     loaded = true
-                    loadChatInto(chatContainer, gid)
+                    loadChatInto(chatContainer, gid) { loaded = false }
                 }
             }
         }
@@ -183,13 +183,19 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
      * empty/error note. Runs on [lifecycleScope] so it's cancelled if the
      * sheet is dismissed mid-flight.
      */
-    private fun loadChatInto(container: LinearLayout, gameId: String) {
+    private fun loadChatInto(
+        container: LinearLayout,
+        gameId: String,
+        onFailure: () -> Unit,
+    ) {
         val coach = coachApiClient ?: return
-        val loading = mutedNote("Loading chat…")
-        container.addView(loading)
+        // Clear any prior content (e.g. a stale error note from a failed
+        // attempt) so each load starts from a clean "Loading…" state.
+        container.removeAllViews()
+        container.addView(mutedNote("Loading chat…"))
         lifecycleScope.launch {
             val result = coach.getHistory(limit = 50, gameId = gameId)
-            container.removeView(loading)
+            container.removeAllViews()
             when (result) {
                 is ApiResult.Success -> {
                     val turns = result.data.turns
@@ -199,7 +205,13 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
                         turns.forEach { container.addView(buildChatTurn(it)) }
                     }
                 }
-                else -> container.addView(mutedNote("Could not load this game's chat."))
+                else -> {
+                    container.addView(mutedNote("Could not load this game's chat."))
+                    // Reset the load guard so re-expanding retries a transient
+                    // failure (otherwise the row stays stuck on the error until
+                    // the sheet is reopened).
+                    onFailure()
+                }
             }
         }
     }
