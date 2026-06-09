@@ -19,6 +19,11 @@ import java.time.format.DateTimeFormatter
  * Data is fetched from GET /game/history (Bearer auth). Shows a rating sparkline
  * (when ≥2 rated games exist), result, accuracy, rating-after, and date for each
  * game. Falls back to an empty-state message on network error or no games.
+ *
+ * Tapping a game expands it inline to reveal that game's coaching chat, loaded
+ * lazily from GET /chat/history?game_id= via [coachApiClient]. Rows with no
+ * linked game_id (legacy / imported games, or finishes from pre-#230 clients)
+ * have no expand affordance.
  */
 class GameHistoryBottomSheet : BottomSheetDialogFragment() {
 
@@ -39,6 +44,13 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
 
     /** Injected by [MainActivity] before [show] is called. */
     var gameApiClient: GameApiClient? = null
+
+    /**
+     * Injected by [MainActivity] before [show]. Used to lazily load a past
+     * game's coaching chat (GET /chat/history?game_id=) when its row is tapped
+     * to expand. Null disables the expand affordance.
+     */
+    var coachApiClient: CoachApiClient? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -85,30 +97,143 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
         }
     }
 
-    private fun buildGameRow(game: GameHistoryItem): TextView {
-        // Atrium two-tone signal — cyan for player wins, amber for
-        // losses (warning role), atrium_muted for draws.  Replaces
-        // the previous traffic-light Color.GREEN / RED / YELLOW which
-        // never matched the rest of the dashboard.
+    /**
+     * One history entry: a tappable header (result · accuracy · rating · date)
+     * that expands inline to reveal that game's coaching chat. The chat is
+     * fetched lazily on first expand (and kept for the row's lifetime) from
+     * GET /chat/history?game_id=. Rows with no linked game_id or no
+     * [coachApiClient] render as before, with no expand affordance.
+     */
+    private fun buildGameRow(game: GameHistoryItem): View {
         val ctx = requireContext()
-        val resultLabel = game.result.uppercase()
-        val resultColor = when (game.result.lowercase()) {
-            "win"  -> androidx.core.content.ContextCompat.getColor(ctx, R.color.atrium_accent_cyan)
-            "loss" -> androidx.core.content.ContextCompat.getColor(ctx, R.color.atrium_accent_amber)
-            else   -> androidx.core.content.ContextCompat.getColor(ctx, R.color.atrium_muted)
-        }
-        val accuracy = "${(game.accuracy * 100).toInt()}% acc"
-        val rating = game.ratingAfter?.let { "  ·  %.0f pts".format(it) } ?: ""
-        val date = formatDate(game.createdAt)
+        // Non-blank linked game id (if any) gates the chat-expand affordance.
+        val gid = game.gameId?.takeIf { it.isNotBlank() }
+        val expandable = gid != null && coachApiClient != null
 
-        return TextView(ctx).apply {
-            text = "$resultLabel  ·  $accuracy$rating\n$date"
-            setTextColor(resultColor)
+        val header = TextView(ctx).apply {
+            text = headerText(game, expanded = false, expandable = expandable)
+            setTextColor(resultColor(game))
             textSize = 13f
             typeface = android.graphics.Typeface.MONOSPACE
             setPadding(0, 14, 0, 14)
         }
+
+        val chatContainer = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(dp(12), 0, 0, dp(10))
+        }
+
+        if (gid != null && coachApiClient != null) {
+            var loaded = false
+            header.setOnClickListener {
+                val expanding = chatContainer.visibility == View.GONE
+                chatContainer.visibility = if (expanding) View.VISIBLE else View.GONE
+                header.text = headerText(game, expanded = expanding, expandable = true)
+                if (expanding && !loaded) {
+                    loaded = true
+                    loadChatInto(chatContainer, gid)
+                }
+            }
+        }
+
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+            addView(header)
+            addView(chatContainer)
+        }
     }
+
+    // Atrium two-tone signal — cyan for wins, amber for losses (warning
+    // role), atrium_muted for draws.  Matches the rest of the dashboard.
+    private fun resultColor(game: GameHistoryItem): Int {
+        val ctx = requireContext()
+        return when (game.result.lowercase()) {
+            "win"  -> androidx.core.content.ContextCompat.getColor(ctx, R.color.atrium_accent_cyan)
+            "loss" -> androidx.core.content.ContextCompat.getColor(ctx, R.color.atrium_accent_amber)
+            else   -> androidx.core.content.ContextCompat.getColor(ctx, R.color.atrium_muted)
+        }
+    }
+
+    private fun headerText(
+        game: GameHistoryItem,
+        expanded: Boolean,
+        expandable: Boolean,
+    ): String {
+        val resultLabel = game.result.uppercase()
+        val accuracy = "${(game.accuracy * 100).toInt()}% acc"
+        val rating = game.ratingAfter?.let { "  ·  %.0f pts".format(it) } ?: ""
+        val date = formatDate(game.createdAt)
+        // ▾ when open, ▸ when closed; nothing when there's no chat to show.
+        val chevron = when {
+            !expandable -> ""
+            expanded    -> "  ▾"
+            else        -> "  ▸"
+        }
+        return "$resultLabel  ·  $accuracy$rating$chevron\n$date"
+    }
+
+    /**
+     * Fetch the game's chat thread and append it under [container]. Shows a
+     * transient "Loading…" note, then the turns (read-only) or a muted
+     * empty/error note. Runs on [lifecycleScope] so it's cancelled if the
+     * sheet is dismissed mid-flight.
+     */
+    private fun loadChatInto(container: LinearLayout, gameId: String) {
+        val coach = coachApiClient ?: return
+        val loading = mutedNote("Loading chat…")
+        container.addView(loading)
+        lifecycleScope.launch {
+            val result = coach.getHistory(limit = 50, gameId = gameId)
+            container.removeView(loading)
+            when (result) {
+                is ApiResult.Success -> {
+                    val turns = result.data.turns
+                    if (turns.isEmpty()) {
+                        container.addView(mutedNote("No coaching chat for this game."))
+                    } else {
+                        turns.forEach { container.addView(buildChatTurn(it)) }
+                    }
+                }
+                else -> container.addView(mutedNote("Could not load this game's chat."))
+            }
+        }
+    }
+
+    private fun buildChatTurn(turn: ChatHistoryTurnDto): TextView {
+        val ctx = requireContext()
+        val isUser = turn.role == "user"
+        val speaker = if (isUser) "You" else "Coach"
+        // Coach replies in accent cyan (the coaching voice); the player's own
+        // questions in muted grey — same hierarchy as the live chat sheet.
+        val color = androidx.core.content.ContextCompat.getColor(
+            ctx,
+            if (isUser) R.color.atrium_muted else R.color.atrium_accent_cyan,
+        )
+        return TextView(ctx).apply {
+            text = "$speaker:  ${turn.content}"
+            setTextColor(color)
+            textSize = 12f
+            setPadding(0, dp(4), 0, dp(4))
+        }
+    }
+
+    private fun mutedNote(message: String): TextView {
+        val ctx = requireContext()
+        return TextView(ctx).apply {
+            text = message
+            setTextColor(androidx.core.content.ContextCompat.getColor(ctx, R.color.atrium_muted))
+            textSize = 12f
+            setPadding(0, dp(4), 0, dp(4))
+        }
+    }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 
     private fun buildDivider(): View = View(requireContext()).apply {
         layoutParams = LinearLayout.LayoutParams(
