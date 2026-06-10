@@ -60,6 +60,7 @@ REGRESSION_GROUPS: list[tuple[str, list[str]]] = [
         [
             "llm/tests/test_api_contract_validation.py",
             "llm/tests/test_api_security.py",
+            "llm/tests/test_security_host_header_poisoning.py",
             "llm/tests/test_explain_schema_validation.py",
             "llm/rag/tests/test_run_mode_2_additional.py",
             "llm/rag/tests/test_run_mode_2_cascades.py",
