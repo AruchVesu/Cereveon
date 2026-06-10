@@ -66,6 +66,13 @@ TEST_TARGETS = [
     # real client IP instead of collapsing onto the proxy's container
     # peer.  Regression guard for the wiring is TPA_14.
     "llm/tests/test_security_proxy_aware_limiter.py",
+    # Host-header poisoning (BADHOST_01..08) — pins the starlette "BadHost"
+    # fix (CVE-2026-48710 / PYSEC-2026-161): a malformed Host header can no
+    # longer poison request.url.path, so the path-allow-list exemption in
+    # api_version_gate (and the /metrics filter) cannot be bypassed.  RED on
+    # the previously-pinned starlette 0.50.0, GREEN on the 1.2.1 now pinned;
+    # BADHOST_08 fails CI if starlette is ever re-pinned below 1.0.1.
+    "llm/tests/test_security_host_header_poisoning.py",
     # Container hardening floor (CH_01..CH_13) — pins the
     # docker-compose.prod.yml runtime-sandbox contract: api+redis carry
     # read_only / tmpfs / cap_drop ALL / no-new-privileges; caddy+db
