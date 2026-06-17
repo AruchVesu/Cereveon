@@ -185,3 +185,49 @@ CVE-2026-5435 until:2027-07-01
 # ``apt-get upgrade -y`` ships a fixed libc6 (Debian security tracker
 # shows no fix as of 2026-05-27; libc6/libc-bin still 2.41-12+deb13u3).
 CVE-2026-6238 until:2027-07-01
+
+# ---------------------------------------------------------------------------
+# perl-base 5.40.1-6 (python:3.13-slim / Debian 13 Trixie): an 8-CVE cluster,
+# ALL UNFIXED in Debian (no FixedVersion via ``apt-get upgrade -y``; the
+# Dockerfile already runs ``apt-get upgrade -y``).  Confirmed by the Trivy
+# SARIF scan on 2026-06-17 as GitHub code-scanning alerts #355-#362.
+#
+# ``perl-base`` is a Debian ``Essential: yes`` / ``Priority: required``
+# package: it ships in every Debian base image to support dpkg/apt maintainer
+# scripts and cannot be removed without breaking the package manager.  It is
+# NOT an application dependency.
+#
+# Reachability analysis (2026-06-17) — shared by all 8 entries below:
+#   - The runtime image launches ``uvicorn llm.server:app`` as USER appuser
+#     (uid 10001).  The app is pure CPython; the HEALTHCHECK is python; the
+#     ONLY external binary the code spawns is Stockfish, located via
+#     ``shutil.which("stockfish")`` (llm/server.py:275) and driven over the
+#     UCI text protocol (ASCII bytes only — see
+#     llm/seca/engines/stockfish/pool.py).
+#   - The perl INTERPRETER is never executed: no ``system("perl")``, no
+#     subprocess spawning perl, no CGI, no ``.pl``/``.cgi`` handlers, and no
+#     first-party reference to perl anywhere in ``llm/`` (grep is clean).
+#   - Every vulnerable code path requires perl to run on attacker-influenced
+#     input: regex/pattern compilation (CVE-2026-8376) and the Archive::Tar /
+#     IO::Compress / IO::Uncompress / HTTP::Tiny modules (the other seven).
+#     Those modules are not part of the minimal perl-base, and nothing in the
+#     image invokes them.
+# Accepted risk pending a Debian perl patch; remove each entry once
+# ``apt-get upgrade -y`` ships a fixed perl-base.
+
+# CVE-2026-8376 CRITICAL: heap buffer overflow compiling a crafted pattern (alert #356)
+CVE-2026-8376 until:2027-07-01
+# CVE-2026-42496 CRITICAL: Archive::Tar path traversal via crafted symlinks (alert #355)
+CVE-2026-42496 until:2027-07-01
+# CVE-2026-42497 HIGH: Archive::Tar extracts hardlinks to attacker paths (alert #357)
+CVE-2026-42497 until:2027-07-01
+# CVE-2026-48959 HIGH: IO::Uncompress::Unzip CPU exhaustion (alert #358)
+CVE-2026-48959 until:2027-07-01
+# CVE-2026-48962 HIGH: IO::Compress arbitrary code execution via output glob (alert #359)
+CVE-2026-48962 until:2027-07-01
+# CVE-2026-9538 HIGH: Archive::Tar memory exhaustion (alert #360)
+CVE-2026-9538 until:2027-07-01
+# CVE-2025-15649 MEDIUM: IO::Uncompress::Unzip propagates uncaught error (alert #361)
+CVE-2025-15649 until:2027-07-01
+# CVE-2026-7010 MEDIUM: HTTP::Tiny does not validate CRLF in request fields (alert #362)
+CVE-2026-7010 until:2027-07-01
