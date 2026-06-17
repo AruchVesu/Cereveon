@@ -322,7 +322,6 @@ class MainActivity : AppCompatActivity() {
             drawerLayout.closeDrawer(GravityCompat.END)
             val sheet = GameHistoryBottomSheet()
             sheet.gameApiClient = gameApiClient
-            sheet.coachApiClient = coachApiClient
             sheet.show(supportFragmentManager, "GameHistoryBottomSheet")
         }
 

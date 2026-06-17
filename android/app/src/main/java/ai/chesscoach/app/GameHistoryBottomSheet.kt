@@ -1,6 +1,5 @@
 package ai.chesscoach.app
 
-import android.graphics.Color
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -20,10 +19,10 @@ import java.time.format.DateTimeFormatter
  * (when ≥2 rated games exist), result, accuracy, rating-after, and date for each
  * game. Falls back to an empty-state message on network error or no games.
  *
- * Tapping a game expands it inline to reveal that game's coaching chat, loaded
- * lazily from GET /chat/history?game_id= via [coachApiClient]. Rows with no
- * linked game_id (legacy / imported games, or finishes from pre-#230 clients)
- * have no expand affordance.
+ * Tapping a game loads it onto the main board for replay + live coaching (see
+ * [MainActivity.openFinishedGameReview]) and dismisses this sheet. Replay works
+ * for every game (positions are replayed server-side from the stored PGN), so
+ * every row with an event id is tappable.
  */
 class GameHistoryBottomSheet : BottomSheetDialogFragment() {
 
@@ -44,13 +43,6 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
 
     /** Injected by [MainActivity] before [show] is called. */
     var gameApiClient: GameApiClient? = null
-
-    /**
-     * Injected by [MainActivity] before [show]. Used to lazily load a past
-     * game's coaching chat (GET /chat/history?game_id=) when its row is tapped
-     * to expand. Null disables the expand affordance.
-     */
-    var coachApiClient: CoachApiClient? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
