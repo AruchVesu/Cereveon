@@ -128,10 +128,26 @@ data class GameHistoryItem(
     // its coaching chat via GET /chat/history?game_id=.  Null for legacy /
     // imported / pre-game_id rows (no per-game chat thread).  Server: #230.
     @SerialName("game_id") val gameId: String? = null,
+    // SAN of the game's final move (e.g. "Qh7#"), for a history-row preview.
+    // Null for moveless / legacy rows.  Server: GET /game/history.
+    @SerialName("last_move") val lastMove: String? = null,
     val result: String = "",
     val accuracy: Float = 0f,
     @SerialName("rating_after") val ratingAfter: Float? = null,
     @SerialName("created_at") val createdAt: String = "",
+)
+
+/**
+ * Wire shape for GET /game/{event_id}/positions — game-replay data.
+ *
+ * [positions] N+1 FENs: index 0 is the start, index i is the board AFTER ply i
+ *             (positions.last() is the final position).
+ * [moves]     N SANs: moves[i] produced positions[i+1] (for move-list labels).
+ */
+@Serializable
+data class GamePositionsResponse(
+    val positions: List<String> = emptyList(),
+    val moves: List<String> = emptyList(),
 )
 
 /**

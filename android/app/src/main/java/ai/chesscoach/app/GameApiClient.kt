@@ -35,6 +35,10 @@ interface GameApiClient {
      */
     suspend fun getGameHistory(): ApiResult<List<GameHistoryItem>> = ApiResult.HttpError(501)
 
+    /** GET /game/{eventId}/positions — per-ply FENs + SANs for game replay. */
+    suspend fun getGamePositions(eventId: String): ApiResult<GamePositionsResponse> =
+        ApiResult.HttpError(501)
+
     /**
      * GET /seca/status — open endpoint, no auth required.
      *
@@ -318,6 +322,17 @@ class HttpGameApiClient(
         onResponse = refreshOnSuccess(),
         parse = { body -> ApiJson.decodeFromString<GameHistoryResponse>(body).games },
     )
+
+    override suspend fun getGamePositions(eventId: String): ApiResult<GamePositionsResponse> =
+        http.request(
+            // eventId is a server-minted UUID (path-safe); the server caps it
+            // at 64 chars and enforces ownership.
+            path = "/game/$eventId/positions",
+            method = "GET",
+            headers = authHeaders(includeApiKey = false),
+            onResponse = refreshOnSuccess(),
+            parse = { body -> ApiJson.decodeFromString<GamePositionsResponse>(body) },
+        )
 
     override suspend fun getPlayerProgress(): ApiResult<PlayerProgressResponse> = http.request(
         path = "/player/progress",

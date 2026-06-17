@@ -93,6 +93,18 @@ class MainActivity : AppCompatActivity() {
      */
     private var currentServerGameId: String? = null
 
+    // ── Game-review (replay) state ───────────────────────────────────────────
+    // Set when a finished game is opened from history for replay + live
+    // coaching.  reviewPositions are per-ply FENs from GET /game/{id}/positions;
+    // ◀/▶ step through them on the (passive) board.  Empty == normal play.
+    private var reviewPositions: List<String> = emptyList()
+    private var reviewMoves: List<String> = emptyList()
+    private var reviewPly: Int = 0
+    private lateinit var reviewNavBar: View
+    private lateinit var btnReviewPrev: Button
+    private lateinit var btnReviewNext: Button
+    private lateinit var txtReviewMove: TextView
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -191,6 +203,12 @@ class MainActivity : AppCompatActivity() {
 
         txtWeaknessTags = findViewById(R.id.txtWeaknessTags)
         txtNextTrainingChip = findViewById(R.id.txtNextTrainingChip)
+        reviewNavBar = findViewById(R.id.reviewNavBar)
+        btnReviewPrev = findViewById(R.id.btnReviewPrev)
+        btnReviewNext = findViewById(R.id.btnReviewNext)
+        txtReviewMove = findViewById(R.id.txtReviewMove)
+        btnReviewPrev.setOnClickListener { stepReview(-1) }
+        btnReviewNext.setOnClickListener { stepReview(+1) }
         val btnExitToHome = findViewById<Button>(R.id.btnExitToHome)
         val btnReset = findViewById<Button>(R.id.btnReset)
         val btnUndo = findViewById<Button>(R.id.btnUndo)
@@ -995,7 +1013,72 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * Open a finished game from history for replay + live coaching: fetch its
+     * per-ply positions, load them onto the (passive) main board, and reveal
+     * the ◀/▶ nav.  The live coach chat (Coach button) then reasons about the
+     * position currently shown — exactly like during a game — scoped to this
+     * game's thread (currentServerGameId).
+     */
+    fun openFinishedGameReview(eventId: String, gameId: String?) {
+        lifecycleScope.launch {
+            when (val r = gameApiClient.getGamePositions(eventId)) {
+                is ApiResult.Success ->
+                    loadFinishedGameForReview(r.data.positions, r.data.moves, gameId)
+                else ->
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Couldn't load that game for review.",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+            }
+        }
+    }
+
+    private fun loadFinishedGameForReview(
+        positions: List<String>,
+        moves: List<String>,
+        gameId: String?,
+    ) {
+        if (positions.isEmpty()) return
+        reviewPositions = positions
+        reviewMoves = moves
+        reviewPly = positions.size - 1
+        // The coach chat reads currentGameId() + the live board FEN, so set the
+        // game thread and make the board a passive replay surface (no play taps).
+        currentServerGameId = gameId?.takeIf { it.isNotBlank() }
+        chessBoard.isInteractive = false
+        reviewNavBar.visibility = View.VISIBLE
+        renderReviewPly()
+    }
+
+    private fun stepReview(delta: Int) {
+        if (reviewPositions.isEmpty()) return
+        reviewPly = (reviewPly + delta).coerceIn(0, reviewPositions.size - 1)
+        renderReviewPly()
+    }
+
+    private fun renderReviewPly() {
+        if (reviewPositions.isEmpty()) return
+        chessBoard.setFEN(reviewPositions[reviewPly])
+        val san = if (reviewPly in 1..reviewMoves.size) reviewMoves[reviewPly - 1] else "start"
+        txtReviewMove.text = "move $reviewPly / ${reviewPositions.size - 1}  ·  $san"
+        btnReviewPrev.isEnabled = reviewPly > 0
+        btnReviewNext.isEnabled = reviewPly < reviewPositions.size - 1
+    }
+
+    /** Leave replay mode and restore the normal interactive play board. */
+    private fun exitReviewMode() {
+        val wasReviewing = reviewPositions.isNotEmpty()
+        reviewPositions = emptyList()
+        reviewMoves = emptyList()
+        reviewPly = 0
+        if (wasReviewing) chessBoard.isInteractive = true
+        if (::reviewNavBar.isInitialized) reviewNavBar.visibility = View.GONE
+    }
+
     private fun startNewGameSession() {
+        exitReviewMode()
         bumpGameNumber()
         currentServerGameId = null
         lifecycleScope.launch {

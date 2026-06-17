@@ -316,6 +316,7 @@ Any client expecting a standalone `/coach` endpoint will receive HTTP 404.
     {
       "id":           <string>,
       "game_id":      <string | null>,
+      "last_move":    <string | null>,
       "result":       <"win" | "loss" | "draw">,
       "accuracy":     <float 0..1>,
       "created_at":   <string | null>,
@@ -330,10 +331,40 @@ Any client expecting a standalone `/coach` endpoint will receive HTTP 404.
 | `games` | `array` | Up to 20 entries, ordered newest-first |
 | `id` | `string` | Game event UUID (the `game_events` row id) |
 | `game_id` | `string \| null` | Live game id (the `games.id` from `POST /game/start`, equal to `chat_turns.game_id`). Pass to `GET /chat/history?game_id=…` to load this game's coaching chat. `null` for legacy rows, imported (e.g. Lichess) games, and finishes from clients that didn't send a `game_id` — those have no per-game chat thread. |
+| `last_move` | `string \| null` | SAN of the final mainline move (e.g. `"Nc6"`, `"Qxh7#"`), derived server-side from the stored PGN, so the history list can preview how each game ended. `null` for moveless or unparseable / legacy PGN. |
 | `result` | `string` | One of `"win"`, `"loss"`, `"draw"` |
 | `accuracy` | `float` | 0.0–1.0 as submitted via `POST /game/finish` |
 | `created_at` | `string \| null` | ISO-8601 datetime string |
 | `rating_after` | `float \| null` | Rating after this game; `null` if no rating update was stored |
+
+---
+
+## 7a. `GET /game/{event_id}/positions`
+
+**Host:** `llm/seca/events/router.py`
+**Auth:** `Authorization: Bearer <token>` required
+
+Per-ply board positions for replaying a finished game in the history "review"
+screen. Derived server-side from the stored `GameEvent.pgn` (python-chess) —
+the client never parses PGN. Keyed by `event_id` (the `id` from
+`GET /game/history`), so it works for every game, including legacy rows with no
+chat thread.
+
+### Response
+
+```json
+{
+  "positions": ["<fen>", "…"],
+  "moves":     ["<san>", "…"]
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `positions` | `array<string>` | N+1 FENs: index 0 is the start, index *i* is the board after ply *i* (`positions` last entry is the final position) |
+| `moves` | `array<string>` | N SANs: `moves[i]` produced `positions[i+1]` (e.g. `"e4"`, `"Nf3"`); for move-list labels |
+
+Status codes: `400` (`event_id` over the 64-char cap), `403` (not the owner), `404` (unknown event).
 
 ---
 

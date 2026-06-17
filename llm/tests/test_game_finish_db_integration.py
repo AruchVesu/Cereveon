@@ -23,6 +23,8 @@ Pinned invariants
                           (legacy / imported / pre-game_id finishes).
 13. GAME_HISTORY_GAME_ID: GET /game/history projects app_game_id under the
                           ``game_id`` key (null, never a missing field).
+14. GAME_HISTORY_LAST_MOVE: GET /game/history projects the final mainline SAN
+                          under ``last_move`` (null for moveless / legacy PGN).
 """
 
 from __future__ import annotations
@@ -381,3 +383,54 @@ def test_game_history_projects_app_game_id_as_game_id(db_session):
     # Every row carries the key (None when absent), never a missing field.
     assert all("game_id" in g for g in games), f"missing game_id key: {games}"
     assert {g["game_id"] for g in games} == {"live-game-1", None}
+
+
+# ---------------------------------------------------------------------------
+# 14. GAME_HISTORY_LAST_MOVE
+# ---------------------------------------------------------------------------
+
+
+def test_game_history_projects_last_move_san(db_session):
+    """GET /game/history previews how each game ended: the final mainline
+    move's SAN under ``last_move``.  Moveless / unparseable PGN projects null
+    (never a missing field) so the client's optional decode stays total."""
+    from types import SimpleNamespace
+
+    from llm.seca.events.router import game_history
+
+    moveless_pgn = (
+        '[Event "Test"]\n'
+        '[Site "?"]\n'
+        '[White "Player1"]\n'
+        '[Black "Player2"]\n'
+        '[Result "*"]\n'
+        "\n"
+        "*"
+    )
+
+    storage = EventStorage(db_session)
+    storage.store_game(
+        player_id="p1",
+        pgn=_VALID_PGN,  # 1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0 -> last move "a6"
+        result="win",
+        accuracy=0.8,
+        weaknesses={},
+        app_game_id="live-game-1",
+    )
+    storage.store_game(
+        player_id="p1",
+        pgn=moveless_pgn,  # no moves -> last_move None
+        result="draw",
+        accuracy=0.5,
+        weaknesses={},
+    )
+
+    resp = game_history(player=SimpleNamespace(id="p1"), db=db_session)
+
+    games = resp["games"]
+    assert len(games) == 2
+    # Every row carries the key (None when moveless), never a missing field.
+    assert all("last_move" in g for g in games), f"missing last_move key: {games}"
+    by_game = {g["game_id"]: g["last_move"] for g in games}
+    assert by_game["live-game-1"] == "a6"
+    assert by_game[None] is None

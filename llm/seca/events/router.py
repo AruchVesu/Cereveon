@@ -898,6 +898,27 @@ def game_finish_status(
         )
 
 
+def _last_move_san(pgn_text: str) -> str | None:
+    """Return the SAN of the final mainline move in ``pgn_text``, or None.
+
+    Lets GET /game/history preview how each game ended without the client
+    opening it. Parse failures (malformed / legacy PGN) and moveless games
+    return None rather than raising.
+    """
+    try:
+        game = chess.pgn.read_game(io.StringIO(pgn_text))
+        if game is None:
+            return None
+        board = game.board()
+        last_san: str | None = None
+        for move in game.mainline_moves():
+            last_san = board.san(move)
+            board.push(move)
+        return last_san
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @router.get("/history")
 def game_history(
     player=Depends(get_current_player),
@@ -921,6 +942,9 @@ def game_history(
                 # GET /chat/history?game_id=...  None for legacy / imported /
                 # pre-game_id rows (no per-game chat to show).
                 "game_id": ev.app_game_id,
+                # Final mainline move (SAN) so the history list previews how the
+                # game ended without opening it; None for moveless / legacy rows.
+                "last_move": _last_move_san(ev.pgn),
                 "result": ev.result,
                 "accuracy": ev.accuracy,
                 "created_at": ev.created_at.isoformat() if ev.created_at else None,

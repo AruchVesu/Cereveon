@@ -479,6 +479,7 @@ class TestApiContractsAndroidCoverage:
         "/game/{game_id}/checkpoint": "`POST /game/{game_id}/checkpoint`",
         "/game/active": "`GET /game/active`",
         "/game/history": "`GET /game/history`",
+        "/game/{event_id}/positions": "`GET /game/{event_id}/positions`",
         "/game/coach-feedback": "`POST /game/coach-feedback`",
         # Training + analytics
         # /next-training/{player_id} retired in PR 26 (2026-05-15) alongside
