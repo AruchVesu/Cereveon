@@ -1,3 +1,8 @@
+# pylint: disable=too-many-lines
+# This module hosts the full game-events HTTP surface (start / finish /
+# checkpoint / active / history / positions / coach-feedback). It is a
+# split candidate, but carving it up is a dedicated refactor out of scope
+# for any single feature change.
 import io
 import json
 import logging
