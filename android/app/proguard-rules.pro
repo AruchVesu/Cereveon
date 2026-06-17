@@ -36,3 +36,12 @@
 # R8 generates missing_rules.txt with these; suppress to keep the build clean.
 -dontwarn javax.annotation.Nullable
 -dontwarn javax.annotation.concurrent.GuardedBy
+
+# Strip verbose/debug logging from release builds: R8 removes calls whose
+# return value is unused.  Drops Log.d / Log.v lines that echo game IDs and
+# internal state IDs, while keeping Log.i / Log.w / Log.e for crash and error
+# diagnostics.
+-assumenosideeffects class android.util.Log {
+    public static int v(...);
+    public static int d(...);
+}

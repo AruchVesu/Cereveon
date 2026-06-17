@@ -145,9 +145,14 @@ void SachmatuLenta::loadFromBoard64(const char* fen) {
     while (*p && *p != ' ') p++;
     if (*p == ' ') p++;
 
-    // Half-move clock
-    while (*p >= '0' && *p <= '9')
-        halfMoveClock = halfMoveClock * 10 + (*p++ - '0');
+    // Half-move clock.  Cap the accumulation: a real clock is well under 1000,
+    // and an attacker-supplied run of digits would otherwise overflow the int
+    // (signed overflow is undefined behaviour).
+    while (*p >= '0' && *p <= '9') {
+        if (halfMoveClock < 100000)
+            halfMoveClock = halfMoveClock * 10 + (*p - '0');
+        ++p;
+    }
 
     currentHash = computeHash();
 }

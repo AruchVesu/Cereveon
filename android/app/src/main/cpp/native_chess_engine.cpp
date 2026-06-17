@@ -5,13 +5,25 @@
 
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "AI_NATIVE", __VA_ARGS__)
 
+// A legitimate FEN / 64-char board string is well under this bound; reject
+// pathologically long input rather than parse it.  This bounds the parser's
+// work and keeps the placement loop's column/rank counters small (the board
+// write is already guarded by r < 8 && c < 8).
+static constexpr int kMaxFenLen = 256;
+
 /**
  * Helper: convert FEN -> engine board
  * Uses a LOCAL engine instance — never global.
+ * Returns false (leaving the engine untouched) for null or over-long input.
  */
-static void loadFenIntoEngine(SachmatuLenta& engine, const char* fen) {
+static bool loadFenIntoEngine(SachmatuLenta& engine, const char* fen) {
+    if (fen == nullptr) return false;
+    int n = 0;
+    while (n <= kMaxFenLen && fen[n] != '\0') ++n;
+    if (n > kMaxFenLen) return false;
     // Current SachmatuLenta::loadFromBoard64 handles FEN automatically
     engine.loadFromBoard64(fen);
+    return true;
 }
 
 extern "C" {
@@ -34,9 +46,11 @@ Java_ai_chesscoach_app_ChessNative_getBestMove(
 
     // 2️⃣ LOCAL engine instance (🔥 KEY FIX)
     SachmatuLenta engine;
-    loadFenIntoEngine(engine, fenStr);
+    bool loaded = loadFenIntoEngine(engine, fenStr);
 
     env->ReleaseStringUTFChars(fen, fenStr);
+
+    if (!loaded) return nullptr;
 
     // 3️⃣ Ask engine for ONE move (BLACK ONLY)
     SachmatuLenta::Move m = engine.getBestMove(JUODA);
@@ -84,8 +98,9 @@ Java_ai_chesscoach_app_ChessNative_getBestMoveWithStrength(
     if (!fenStr) return nullptr;
 
     SachmatuLenta engine;
-    loadFenIntoEngine(engine, fenStr);
+    bool loaded = loadFenIntoEngine(engine, fenStr);
     env->ReleaseStringUTFChars(fen, fenStr);
+    if (!loaded) return nullptr;
 
     SachmatuLenta::Move m = engine.getBestMove(JUODA, static_cast<int>(strengthLevel));
     if (!m.isValid()) return nullptr;
