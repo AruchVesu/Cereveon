@@ -474,6 +474,12 @@ class MainActivity : AppCompatActivity() {
             // so the summary sheet sees the values from the just-finished game.
             val finalResult = result
             val finalMoveCount = chessBoard.moveCount
+            // FIX: capture the live server game id BEFORE clearInProgressSnapshot()
+            // nulls currentServerGameId. /game/finish MUST carry it so the server
+            // links this GameEvent to its coaching-chat thread (app_game_id).
+            // Previously the clear ran first, so finish sent game_id=null and
+            // every finished game's chat was unreachable in history.
+            val finishedGameId = currentServerGameId
             moveClassifications.clear()
             // Game's done — clear the in-progress flag so HomeActivity
             // doesn't show a stale Resume card on the next visit.
@@ -484,7 +490,7 @@ class MainActivity : AppCompatActivity() {
                 accuracy = accuracy,
                 weaknesses = weaknesses,
                 playerId = currentPlayerId,
-                gameId = currentServerGameId,
+                gameId = finishedGameId,
             )
             lifecycleScope.launch {
                 when (val r = gameApiClient.finishGame(finishReq)) {

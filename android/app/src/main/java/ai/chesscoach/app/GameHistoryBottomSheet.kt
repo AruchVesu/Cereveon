@@ -202,6 +202,13 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
                     if (turns.isEmpty()) {
                         container.addView(mutedNote("No coaching chat for this game."))
                     } else {
+                        // Show the board from this game's last coaching moment,
+                        // mirroring the live chat's mini-board so the past
+                        // conversation carries the same visual context it had
+                        // in-game.  Each turn persists the FEN it was sent at.
+                        turns.lastOrNull { !it.fen.isNullOrBlank() }?.fen?.let { fen ->
+                            container.addView(buildMiniBoard(fen))
+                        }
                         turns.forEach { container.addView(buildChatTurn(it)) }
                     }
                 }
@@ -214,6 +221,19 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
                 }
             }
         }
+    }
+
+    /** Non-interactive mini-board of the game's last coaching position. */
+    private fun buildMiniBoard(fen: String): View {
+        val board = ChessBoardView(requireContext()).apply {
+            isInteractive = false
+            setFEN(fen)
+        }
+        val side = dp(200)
+        board.layoutParams = LinearLayout.LayoutParams(side, side).apply {
+            bottomMargin = dp(10)
+        }
+        return board
     }
 
     private fun buildChatTurn(turn: ChatHistoryTurnDto): TextView {
