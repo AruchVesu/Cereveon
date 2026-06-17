@@ -928,3 +928,62 @@ def game_history(
             }
         )
     return {"games": games}
+
+
+@router.get("/{event_id}/positions")
+def game_positions(
+    event_id: str,
+    player=Depends(get_current_player),
+    db: DBSession = Depends(get_db),
+):
+    """Return the per-ply board positions of a finished game, for replay.
+
+    The Android game-history review screen steps through these FENs with the
+    coaching chat alongside.  Positions are derived deterministically from the
+    stored ``GameEvent.pgn`` via python-chess — the server owns the move
+    sequence, so the client never parses PGN.
+
+    Response:
+      positions — N+1 FENs: index 0 is the start position, index i is the
+                  board AFTER ply i (positions[-1] is the final position).
+      moves     — N SANs: moves[i] is the move that produced positions[i+1]
+                  (e.g. "e4", "Nf3"), for move-list labels.
+
+    Authorisation mirrors ``GET /game/finish/{event_id}/status``: JWT plus an
+    explicit ownership check that the event belongs to the calling player.
+
+    Status-code map:
+      200 — body is {positions, moves}
+      400 — event_id longer than the defensive cap
+      403 — event exists but the caller isn't its owner
+      404 — event doesn't exist
+    """
+    if len(event_id) > _EVENT_ID_MAX_LEN:
+        raise HTTPException(status_code=400, detail="event_id too long")
+
+    event = db.query(GameEvent).filter(GameEvent.id == event_id).first()
+    if event is None:
+        raise HTTPException(status_code=404, detail="event not found")
+    if event.player_id != str(player.id):
+        # 403 (not 404) so cross-player probes show up in access logs —
+        # same convention as game_finish_status.
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot read game positions for another player",
+        )
+
+    # Replay the stored PGN deterministically.  The PGN was validated at
+    # /game/finish (validate_pgn), so read_game succeeds for in-app rows;
+    # the None guard defends any malformed / legacy row (returns just the
+    # start position rather than 500ing the review screen).
+    game = chess.pgn.read_game(io.StringIO(event.pgn))
+    board = game.board() if game is not None else chess.Board()
+    positions = [board.fen()]
+    moves: list[str] = []
+    if game is not None:
+        for move in game.mainline_moves():
+            moves.append(board.san(move))
+            board.push(move)
+            positions.append(board.fen())
+
+    return {"positions": positions, "moves": moves}
