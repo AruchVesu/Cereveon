@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity() {
 
     // ── Game session state ───────────────────────────────────────────────────
     private lateinit var gameApiClient: GameApiClient
+    private lateinit var coachApiClient: CoachApiClient
     private lateinit var authApiClient: AuthApiClient
     private lateinit var authRepo: AuthRepository
     private lateinit var txtWeaknessTags: TextView
@@ -111,6 +112,18 @@ class MainActivity : AppCompatActivity() {
         currentPlayerId = (authRepo.authState() as? AuthState.Authenticated)?.playerId ?: "demo"
         gameApiClient =
             HttpGameApiClient(
+                baseUrl = BuildConfig.COACH_API_BASE,
+                apiKey = BuildConfig.COACH_API_KEY,
+                tokenProvider = { authRepo.getToken() },
+                tokenSink = { newToken -> authRepo.saveToken(newToken) },
+            )
+
+        // Coach client for the read-only per-game chat shown in game history
+        // (expand a past game to see its coaching thread).  Same auth wiring
+        // as gameApiClient; default read timeout — history is a quick GET,
+        // not the long-poll /chat/stream that needs CHAT_READ_TIMEOUT_MS.
+        coachApiClient =
+            HttpCoachApiClient(
                 baseUrl = BuildConfig.COACH_API_BASE,
                 apiKey = BuildConfig.COACH_API_KEY,
                 tokenProvider = { authRepo.getToken() },
@@ -291,6 +304,7 @@ class MainActivity : AppCompatActivity() {
             drawerLayout.closeDrawer(GravityCompat.END)
             val sheet = GameHistoryBottomSheet()
             sheet.gameApiClient = gameApiClient
+            sheet.coachApiClient = coachApiClient
             sheet.show(supportFragmentManager, "GameHistoryBottomSheet")
         }
 

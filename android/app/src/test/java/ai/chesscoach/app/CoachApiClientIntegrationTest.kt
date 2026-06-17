@@ -364,6 +364,32 @@ class CoachApiClientIntegrationTest {
     }
 
     @Test
+    fun `INT_HISTORY_PATH_WITH_GAME_ID - per-game scope appends game_id`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"turns":[]}"""))
+        client(token = "history-token").getHistory(limit = 25, gameId = "abc-123")
+        val request = server.takeRequest(10, TimeUnit.SECONDS)!!
+        assertEquals("/chat/history?limit=25&game_id=abc-123", request.path)
+    }
+
+    @Test
+    fun `INT_HISTORY_GAME_ID_URL_ENCODED - game_id is URL-encoded`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"turns":[]}"""))
+        client(token = "history-token").getHistory(limit = 25, gameId = "a b/c")
+        val request = server.takeRequest(10, TimeUnit.SECONDS)!!
+        // URLEncoder: space -> '+', '/' -> '%2F'. Guards against an unescaped
+        // game_id corrupting the query string or smuggling extra params.
+        assertEquals("/chat/history?limit=25&game_id=a+b%2Fc", request.path)
+    }
+
+    @Test
+    fun `INT_HISTORY_BLANK_GAME_ID_OMITTED - blank game_id stays player-global`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"turns":[]}"""))
+        client(token = "history-token").getHistory(limit = 25, gameId = "   ")
+        val request = server.takeRequest(10, TimeUnit.SECONDS)!!
+        assertEquals("/chat/history?limit=25", request.path)
+    }
+
+    @Test
     fun `INT_HISTORY_BEARER_SENT - Authorization Bearer header is sent`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"turns":[]}"""))
         client(token = "history-token").getHistory(limit = 5)

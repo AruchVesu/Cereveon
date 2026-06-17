@@ -124,6 +124,10 @@ data class CurriculumRecommendation(
 @Serializable
 data class GameHistoryItem(
     val id: String = "",
+    // The live game id (games.id) this finished game maps to, used to load
+    // its coaching chat via GET /chat/history?game_id=.  Null for legacy /
+    // imported / pre-game_id rows (no per-game chat thread).  Server: #230.
+    @SerialName("game_id") val gameId: String? = null,
     val result: String = "",
     val accuracy: Float = 0f,
     @SerialName("rating_after") val ratingAfter: Float? = null,
