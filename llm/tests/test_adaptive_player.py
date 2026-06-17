@@ -29,6 +29,9 @@ os.environ.setdefault("SECRET_KEY", "ci-secret-key-that-is-32-chars-long!!")
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from starlette.requests import Request
+
+from llm.seca.shared_limiter import limiter
 
 from llm.seca.auth.models import Base
 import llm.seca.auth.models  # noqa: F401
@@ -238,6 +241,29 @@ class TestGameFinishIncludesRecommendations:
 # ---------------------------------------------------------------------------
 
 
+def _call_route(handler, **kwargs):
+    """Invoke a rate-limited route handler directly in a unit test.
+
+    /curriculum/next carries ``@limiter.limit`` + a ``request: Request``
+    parameter, so a direct (non-HTTP) call must supply a synthetic Request and
+    disable the limiter for the call — the same idiom test_stress_suite.py uses
+    for other rate-limited handlers.
+    """
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/curriculum/next",
+        "headers": [],
+        "client": ("127.0.0.1", 0),
+    }
+    prev = limiter.enabled
+    limiter.enabled = False
+    try:
+        return handler(request=Request(scope), **kwargs)
+    finally:
+        limiter.enabled = prev
+
+
 class TestCurriculumUsesGameHistory:
     """Curriculum topic must reflect the dominant weakness from game history."""
 
@@ -255,7 +281,7 @@ class TestCurriculumUsesGameHistory:
                 weaknesses={"endgame": 0.25},
             )
 
-        result = next_training(player=beginner_player, db=db_session)
+        result = _call_route(next_training, player=beginner_player, db=db_session)
         assert result["topic"] == "endgame", (
             f"Expected topic='endgame' from dominant endgame weakness, got {result['topic']!r}"
         )
@@ -274,7 +300,7 @@ class TestCurriculumUsesGameHistory:
                 weaknesses={"opening": 0.20},
             )
 
-        result = next_training(player=beginner_player, db=db_session)
+        result = _call_route(next_training, player=beginner_player, db=db_session)
         # opening phase → opening_preparation (1.0 weight) → topic "opening"
         assert result["topic"] == "opening", (
             f"Expected topic='opening' from opening weakness, got {result['topic']!r}"
@@ -283,7 +309,7 @@ class TestCurriculumUsesGameHistory:
     def test_curriculum_response_includes_recommendations_field(self, db_session, beginner_player):
         from llm.seca.curriculum.router import next_training
 
-        result = next_training(player=beginner_player, db=db_session)
+        result = _call_route(next_training, player=beginner_player, db=db_session)
         assert "recommendations" in result, "curriculum/next response missing 'recommendations'"
         assert isinstance(result["recommendations"], list), (
             f"recommendations must be a list, got {type(result['recommendations'])}"
@@ -294,7 +320,7 @@ class TestCurriculumUsesGameHistory:
     ):
         from llm.seca.curriculum.router import next_training
 
-        result = next_training(player=beginner_player, db=db_session)
+        result = _call_route(next_training, player=beginner_player, db=db_session)
         assert "dominant_category" in result, (
             "curriculum/next response missing 'dominant_category'"
         )
@@ -303,7 +329,7 @@ class TestCurriculumUsesGameHistory:
         """Without game history the topic comes from skill_vector (or default)."""
         from llm.seca.curriculum.router import next_training
 
-        result = next_training(player=beginner_player, db=db_session)
+        result = _call_route(next_training, player=beginner_player, db=db_session)
         assert isinstance(result["topic"], str) and result["topic"]
         assert result["dominant_category"] is None, (
             "dominant_category must be None when player has no game history"

@@ -273,7 +273,18 @@ async def lifespan(app: FastAPI):
             default_stockfish_path = "engines/stockfish.exe"
         else:
             default_stockfish_path = shutil.which("stockfish") or "/usr/games/stockfish"
-        stockfish_path = os.getenv("STOCKFISH_PATH", default_stockfish_path)
+        explicit_stockfish_path = os.getenv("STOCKFISH_PATH")
+        stockfish_path = explicit_stockfish_path or default_stockfish_path
+        # Fail fast (and clearly) when an operator points STOCKFISH_PATH at a
+        # path that is not a regular file: a typo or stale path would otherwise
+        # surface later as an opaque engine-spawn error, and an explicitly
+        # supplied path must not be trusted blindly. The auto-detected default
+        # (shutil.which / platform fallback) is left untouched.
+        if explicit_stockfish_path and not os.path.isfile(explicit_stockfish_path):
+            raise RuntimeError(
+                f"STOCKFISH_PATH={explicit_stockfish_path!r} is not a regular file. "
+                "Point it at a valid Stockfish engine binary (see .env.example)."
+            )
         settings = EnginePoolSettings(
             stockfish_path=stockfish_path,
             pool_size=max(1, _env_int("ENGINE_POOL_SIZE", 8)),

@@ -1,8 +1,10 @@
 import json
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session as DBSession
+
+from llm.seca.shared_limiter import limiter
 
 from llm.seca.auth.router import get_db, get_current_player
 from llm.seca.events.storage import EventStorage
@@ -16,7 +18,9 @@ router = APIRouter(prefix="/curriculum", tags=["curriculum"])
 
 
 @router.post("/next")
+@limiter.limit("30/minute")
 def next_training(
+    request: Request,
     player=Depends(get_current_player),
     db: DBSession = Depends(get_db),
 ):

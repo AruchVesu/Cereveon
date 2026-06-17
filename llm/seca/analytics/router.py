@@ -1,8 +1,10 @@
 import json
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session as DBSession
+
+from llm.seca.shared_limiter import limiter
 
 from llm.seca.auth.router import get_db, get_current_player
 from llm.seca.events.storage import EventStorage
@@ -20,7 +22,9 @@ _TIER = {"simple": "beginner", "intermediate": "intermediate", "advanced": "adva
 
 
 @router.get("/progress")
+@limiter.limit("30/minute")
 def get_player_progress(
+    request: Request,
     player=Depends(get_current_player),
     db: DBSession = Depends(get_db),
 ):

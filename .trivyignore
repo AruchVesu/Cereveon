@@ -231,3 +231,48 @@ CVE-2026-9538 until:2027-07-01
 CVE-2025-15649 until:2027-07-01
 # CVE-2026-7010 MEDIUM: HTTP::Tiny does not validate CRLF in request fields (alert #362)
 CVE-2026-7010 until:2027-07-01
+
+# ---------------------------------------------------------------------------
+# libsqlite3-0 3.46.1-7+deb13u1 (python:3.13-slim / Debian 13 Trixie): two
+# FTS5 full-text-search memory-corruption CVEs, BOTH UNFIXED in Debian (no
+# FixedVersion via ``apt-get upgrade -y``).  Surfaced by the Trivy SARIF scan
+# on 2026-06-17 as GitHub code-scanning alerts #353 (CVE-2026-11822, HIGH —
+# OOB read in fts5LeafSeek + heap write) and #354 (CVE-2026-11824, HIGH —
+# heap buffer overflow in fts5ChunkIterate).
+#
+# Reachability analysis (2026-06-17) — shared by both entries below:
+#   - Both CVEs require executing an FTS5 ``MATCH`` query against an
+#     ATTACKER-CONTROLLED SQLite database (crafted FTS5 leaf / continuation
+#     pages).  Exploitation is impossible without opening a malicious .sqlite
+#     file AND running a full-text-search query against it.
+#   - Production uses PostgreSQL (psycopg2 → Hetzner Postgres), not SQLite.
+#     SQLite appears only on the dev/test path via SQLAlchemy over an
+#     app-created schema; the service never opens an externally-supplied
+#     database file.
+#   - The codebase uses NO FTS5 extension and issues NO ``MATCH`` queries:
+#     ``grep -rin "fts5\|MATCH\|enable_load_extension" llm/`` returns only
+#     Python ``re.match`` hits.  The vulnerable FTS5 code path is never
+#     exercised on any input this service handles.
+# Accepted risk pending a Debian sqlite3 patch; remove both entries once
+# ``apt-get upgrade -y`` ships a fixed libsqlite3-0.
+CVE-2026-11822 until:2027-07-01
+CVE-2026-11824 until:2027-07-01
+
+# libbz2-1.0 1.0.8-6 (python:3.13-slim / Debian 13 Trixie): off-by-one
+# out-of-bounds write in the ``bzip2recover`` UTILITY → memory corruption /
+# crash (DoS).  MEDIUM.  UNFIXED in Debian (no FixedVersion).  Surfaced by
+# the Trivy SARIF scan on 2026-06-17 as GitHub code-scanning alert #352
+# (CVE-2026-42250).
+# Reachability analysis (2026-06-17):
+#   - The flaw lives in the standalone ``bzip2recover`` command-line tool,
+#     which reconstructs damaged ``.bz2`` archives.  The runtime image never
+#     invokes it: no subprocess spawns ``bzip2recover``, there is no .bz2
+#     recovery path, and the service processes no ``.bz2`` archives at all
+#     (``grep -rin "bz2\|bzip2recover" llm/`` is clean).
+#   - Python's stdlib ``bz2`` module exposes the libbz2 compression /
+#     decompression routines, NOT the separate ``bzip2recover`` program where
+#     this bug lives; even a bz2-using app would not reach the vulnerable
+#     code.
+# Accepted risk pending a Debian bzip2 patch; remove this entry once
+# ``apt-get upgrade -y`` ships a fixed libbz2-1.0.
+CVE-2026-42250 until:2027-07-01

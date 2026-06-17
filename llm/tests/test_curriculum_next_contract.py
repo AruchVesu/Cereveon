@@ -63,6 +63,7 @@ os.environ.setdefault("SECRET_KEY", "ci-secret-key-that-is-32-chars-long!!")
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from starlette.requests import Request
 
 from llm.seca.auth.models import Base
 import llm.seca.auth.models  # noqa: F401
@@ -73,6 +74,7 @@ import llm.seca.analytics.models  # noqa: F401
 from llm.seca.auth.models import Player
 from llm.seca.curriculum.policy import CurriculumPolicy
 from llm.seca.curriculum.router import next_training
+from llm.seca.shared_limiter import limiter
 
 
 # ---------------------------------------------------------------------------
@@ -117,8 +119,26 @@ def player(db_session):
 
 
 def _call_next(player, db):
-    """Call next_training() with the given player and db session."""
-    return next_training(player=player, db=db)
+    """Call next_training() directly with a synthetic Request.
+
+    /curriculum/next carries ``@limiter.limit`` + a ``request: Request``
+    parameter, so a direct (non-HTTP) call must supply a Request and disable
+    the limiter for the call — the same idiom test_stress_suite.py uses for
+    other rate-limited handlers.
+    """
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/curriculum/next",
+        "headers": [],
+        "client": ("127.0.0.1", 0),
+    }
+    prev = limiter.enabled
+    limiter.enabled = False
+    try:
+        return next_training(request=Request(scope), player=player, db=db)
+    finally:
+        limiter.enabled = prev
 
 
 # ---------------------------------------------------------------------------

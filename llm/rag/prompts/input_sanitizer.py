@@ -114,6 +114,11 @@ _CAT_E: list[re.Pattern[str]] = [
     re.compile(r"<<SYS>>|<\/s>(?!\w)", re.IGNORECASE),
     # Generic role-tag injection
     re.compile(r"<\s*(system|user|assistant|instruction)\s*>", re.IGNORECASE),
+    # Mode-2 prompt-wrapper delimiter. render_mode_2_prompt wraps the query in
+    # <user_query>…</user_query>; a query containing either tag (especially the
+    # closing one) could break out of its own block and inject a fake prompt
+    # section. See THREAT_MODEL.md §T1.
+    re.compile(r"<\s*/?\s*user_query\s*>", re.IGNORECASE),
 ]
 
 # ---------------------------------------------------------------------------
