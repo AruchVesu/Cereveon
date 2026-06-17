@@ -4,6 +4,7 @@ import hashlib
 import logging
 import os
 import queue
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -32,6 +33,14 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     redis = None  # type: ignore[assignment]
 # pylint: enable=invalid-name
+
+
+# An engine move read back from Redis must look like a UCI move (e.g. ``e2e4``,
+# ``e7e8q``).  Anything else — a poisoned or corrupted cache entry written by
+# another process sharing the Redis instance — is treated as a cache miss so
+# the caller recomputes from the trusted engine rather than serving an
+# attacker-chosen string to the user as a move.
+_UCI_MOVE_RE = re.compile(r"[a-h][1-8][a-h][1-8][qrbnQRBN]?")
 
 
 @dataclass(frozen=True)
@@ -194,7 +203,12 @@ class FenMoveCache:
                 # picks the right side without a runtime cost.
                 cached = cast("bytes | None", self._redis.get(key))
                 if cached:
-                    return cached.decode("utf-8")
+                    move = cached.decode("utf-8")
+                    # Validate the shape before serving it: a poisoned Redis
+                    # entry must never reach a caller as an engine move. A
+                    # non-UCI value falls through to the L1/engine path.
+                    if _UCI_MOVE_RE.fullmatch(move):
+                        return move
             except Exception:
                 pass
 

@@ -28,7 +28,33 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from starlette.requests import Request
+
 from llm.seca.analytics.router import get_player_progress
+from llm.seca.shared_limiter import limiter
+
+
+def _call_route(handler, **kwargs):
+    """Invoke a rate-limited route handler directly in a unit test.
+
+    /player/progress carries ``@limiter.limit`` + a ``request: Request``
+    parameter, so a direct (non-HTTP) call must supply a synthetic Request and
+    disable the limiter for the call — the same idiom test_stress_suite.py uses
+    for other rate-limited handlers. The callers' assertions are unchanged.
+    """
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/player/progress",
+        "headers": [],
+        "client": ("127.0.0.1", 0),
+    }
+    prev = limiter.enabled
+    limiter.enabled = False
+    try:
+        return handler(request=Request(scope), **kwargs)
+    finally:
+        limiter.enabled = prev
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +119,7 @@ class TestCurrentSnapshot:
         db.query.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = []
         with patch("llm.seca.analytics.router.EventStorage") as MockStorage:
             MockStorage.return_value.get_recent_games.return_value = []
-            return get_player_progress(player=player, db=db)
+            return _call_route(get_player_progress, player=player, db=db)
 
     def test_current_has_all_required_fields(self):
         """CURRENT_HAS_ALL_REQUIRED_FIELDS"""
@@ -159,7 +185,7 @@ class TestHistoryItems:
         )
         with patch("llm.seca.analytics.router.EventStorage") as MockStorage:
             MockStorage.return_value.get_recent_games.return_value = []
-            return get_player_progress(player=player, db=db)
+            return _call_route(get_player_progress, player=player, db=db)
 
     def test_history_is_a_list(self):
         """HISTORY_IS_A_LIST"""
@@ -215,7 +241,7 @@ class TestAnalysisFields:
         db.query.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = []
         with patch("llm.seca.analytics.router.EventStorage") as MockStorage:
             MockStorage.return_value.get_recent_games.return_value = []
-            result = get_player_progress(player=player, db=db)
+            result = _call_route(get_player_progress, player=player, db=db)
         analysis = result["analysis"]
         required = {"dominant_category", "games_analyzed", "category_scores", "phase_rates", "recommendations"}
         missing = required - set(analysis.keys())
@@ -228,7 +254,7 @@ class TestAnalysisFields:
         db.query.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = []
         with patch("llm.seca.analytics.router.EventStorage") as MockStorage:
             MockStorage.return_value.get_recent_games.return_value = []
-            result = get_player_progress(player=player, db=db)
+            result = _call_route(get_player_progress, player=player, db=db)
         assert result["analysis"]["games_analyzed"] == 0
         assert result["analysis"]["dominant_category"] is None
         assert result["analysis"]["recommendations"] == []
@@ -280,7 +306,7 @@ class TestAnalysisFields:
             MockStorage.return_value.get_recent_games.return_value = [object()]
             MockPipeline.return_value.run.return_value = fake_stats
 
-            result = get_player_progress(player=player, db=db)
+            result = _call_route(get_player_progress, player=player, db=db)
 
         analysis = result["analysis"]
         assert analysis["games_analyzed"] == 3
@@ -303,7 +329,7 @@ def test_safe_mode_does_not_block_progress_endpoint():
     db.query.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = []
     with patch("llm.seca.analytics.router.EventStorage") as MockStorage:
         MockStorage.return_value.get_recent_games.return_value = []
-        result = get_player_progress(player=player, db=db)
+        result = _call_route(get_player_progress, player=player, db=db)
     assert "current" in result
     assert "history" in result
     assert "analysis" in result
