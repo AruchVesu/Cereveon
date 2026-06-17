@@ -1,11 +1,13 @@
 [versions]
 agp = "9.2.1"
 kotlin = "2.4.0"
-# kotlinx-serialization-json runtime.  Plugin version is tied to ``kotlin``
-# above via the ``kotlin-serialization`` plugin alias.  Sprint 4.3.C
-# migrated the API clients off hand-rolled org.json parsing onto this.
-# 1.8.1 is the lowest runtime release compatible with Kotlin 2.3's
-# serialization plugin (1.7.x targeted Kotlin 2.0 only).
+# kotlinx-serialization-json runtime.  The serialization compiler PLUGIN
+# version is tied to ``kotlin`` above via the ``kotlin-serialization``
+# plugin alias.  Sprint 4.3.C migrated the API clients off hand-rolled
+# org.json parsing onto this.  Compatibility rule (kotlinx.serialization
+# policy): the compiler plugin must be at least as new as the Kotlin
+# version this runtime was built against — 1.11.0 is built on Kotlin
+# 2.3.20 and the plugin is 2.4.0, so the bound holds.
 kotlinxSerializationJson = "1.11.0"
 coreKtx = "1.17.0"
 junit = "4.13.2"
