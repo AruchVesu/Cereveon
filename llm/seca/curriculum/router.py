@@ -1,3 +1,7 @@
+# Slowapi reads ``request: Request`` from each rate-limited handler's signature
+# even when the handler body never references it; pylint then reports it as an
+# unused argument.  Disable the rule file-wide (same idiom as lichess/router.py).
+# pylint: disable=unused-argument
 import json
 import logging
 
