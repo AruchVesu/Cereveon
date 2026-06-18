@@ -261,18 +261,33 @@ class TestEngineSignalSchema:
 class TestMateSideAttribution:
     """A mate's ``side`` is the colour delivering mate, taken from the sign of
     the White-relative value (the pool emits ``white_score.mate()``), NOT the
-    side to move.  ``side_from_fen`` is only the value==0 degenerate fallback.
+    side to move.
 
     Regression: the mate branch used to read ``side_from_fen(fen)``.  Because
     the live-move pipeline extracts this signal from the FEN *after* the
     player's move (opponent to move), a forced mate FOR the player (White,
     value > 0) was attributed to Black and the player was told "you are about
     to be mated".
+
+    value == 0 is the mate-in-0 (terminal checkmate) case: the side to move
+    has just been mated, so the winner is the OPPOSITE colour (confirmed
+    against the board).  This is reachable — ``/live/move`` evaluating a
+    game-ending FEN gets ``mate:0`` from Stockfish — and used to crown the
+    just-mated loser.  Degenerate value==0 data (missing / non-checkmate
+    FEN) stays side-neutral.  See ``_terminal_mate_winner``.
     """
 
     @staticmethod
     def _mate(value: int) -> dict:
         return {"evaluation": {"type": "mate", "value": value}}
+
+    @staticmethod
+    def _checkmate_fen(moves: list[str]) -> str:
+        board = chess.Board()
+        for uci in moves:
+            board.push(chess.Move.from_uci(uci))
+        assert board.is_checkmate(), "test setup: move list must end in checkmate"
+        return board.fen()
 
     def test_white_mate_is_white_regardless_of_side_to_move(self):
         # Black-to-move FEN — the post-player-move case that exposed the bug.
@@ -293,10 +308,27 @@ class TestMateSideAttribution:
         fen = "6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1"
         assert extract_engine_signal(self._mate(-3), fen=fen)["evaluation"]["side"] == "black"
 
-    def test_degenerate_zero_mate_falls_back_to_side_to_move(self):
-        # value == 0 never occurs for a real mate; the fallback reads the FEN.
-        fen = "6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1"
+    def test_terminal_checkmate_value_zero_white_delivered_is_white(self):
+        # mate-in-0: White just played Qxf7# (Scholar's mate); Black is to
+        # move and checkmated, so the winner is White.  The pre-fix code
+        # crowned the side to move (Black, the loser) and the coach told the
+        # player who delivered mate that the opponent "has a forced win".
+        fen = self._checkmate_fen(["e2e4", "e7e5", "f1c4", "b8c6", "d1h5", "g8f6", "h5f7"])
         assert extract_engine_signal(self._mate(0), fen=fen)["evaluation"]["side"] == "white"
+
+    def test_terminal_checkmate_value_zero_black_delivered_is_black(self):
+        # mate-in-0: Fool's mate — White is to move and checkmated by ...Qh4#,
+        # so the winner is Black.
+        fen = self._checkmate_fen(["f2f3", "e7e5", "g2g4", "d8h4"])
+        assert extract_engine_signal(self._mate(0), fen=fen)["evaluation"]["side"] == "black"
+
+    def test_degenerate_zero_mate_on_non_checkmate_fen_is_unknown(self):
+        # value == 0 with type "mate" on a board that is NOT checkmate is
+        # corrupt engine data — stay side-neutral rather than crown the side
+        # to move (the old behaviour, which wrongly assumed value==0 never
+        # occurs for a real mate).
+        fen = "6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1"
+        assert extract_engine_signal(self._mate(0), fen=fen)["evaluation"]["side"] == "unknown"
 
     def test_degenerate_zero_mate_without_fen_is_unknown(self):
         assert extract_engine_signal(self._mate(0), fen=None)["evaluation"]["side"] == "unknown"
