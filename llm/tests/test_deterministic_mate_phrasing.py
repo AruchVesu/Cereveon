@@ -218,3 +218,66 @@ class TestValidatorVocabNonContradictory:
                 f"/live/move + falls through chat to deterministic — "
                 f"exactly the 2026-05-15 incident."
             )
+
+
+# ---------------------------------------------------------------------------
+# 7  Player-perspective framing — second person, still gate-safe
+# ---------------------------------------------------------------------------
+
+
+class TestDeterministicMatePlayerPerspective:
+    """When the player's colour is known, the Mode-1 deterministic mate
+    sentence is framed in the second person ("you" / "your opponent")
+    instead of the detached third-person side name (the #12 probe finding:
+    a player up a queen with a forced mate was told "white secures the
+    decisive outcome").  Only the subject noun changes, so both Mode-2
+    gates must still pass — this is the regression guard against that.
+
+    Comparison is case-insensitive: this fixture uses ``side="White"``
+    while ``extract_engine_signal`` emits lowercase in production.
+    """
+
+    @staticmethod
+    def _hint(player_color: str) -> str:
+        return _build_hint(
+            uci="h7h8",
+            engine_signal=_MATE_ENGINE_SIGNAL,  # side == "White"
+            base_explanation="",
+            explanation_style="intermediate",
+            player_color=player_color,
+        )
+
+    def test_player_is_mating_side_says_you_and_passes_gates(self):
+        hint = self._hint("white")
+        assert "you secure the decisive outcome" in hint.lower()
+        assert "white secures" not in hint.lower()
+        validate_mode_2_negative(hint)
+        validate_mode_2_semantic(hint, _MATE_ENGINE_SIGNAL)
+
+    def test_player_is_mated_side_says_your_opponent_and_passes_gates(self):
+        hint = self._hint("black")
+        assert "your opponent secures the decisive outcome" in hint.lower()
+        validate_mode_2_negative(hint)
+        validate_mode_2_semantic(hint, _MATE_ENGINE_SIGNAL)
+
+    def test_unknown_player_color_keeps_third_person_side(self):
+        # Default player_color="unknown" must preserve the pre-existing
+        # third-person phrasing (backward compatibility for callers that
+        # don't supply a colour, and for the gate-safety pins above).
+        hint = _build_hint(
+            uci="h7h8",
+            engine_signal=_MATE_ENGINE_SIGNAL,
+            base_explanation="",
+            explanation_style="intermediate",
+        )
+        assert "white secures the decisive outcome" in hint.lower()
+        assert "you secure" not in hint.lower()
+
+    @pytest.mark.parametrize("pattern", MATE_CLAIM_PATTERNS)
+    def test_perspective_variants_have_no_forbidden_mate_phrase(self, pattern):
+        for color in ("white", "black"):
+            hint = self._hint(color)
+            assert not re.search(pattern, hint, re.IGNORECASE), (
+                f"Perspective mate output (player_color={color}) contains the "
+                f"forbidden MATE_CLAIM pattern `{pattern}`: {hint!r}"
+            )
