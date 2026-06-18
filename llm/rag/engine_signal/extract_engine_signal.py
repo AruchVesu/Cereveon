@@ -76,6 +76,36 @@ def side_from_fen(fen: str | None) -> str | None:
         return None
 
 
+def _terminal_mate_winner(fen: str | None) -> str:
+    """Winner of a mate-in-0 (terminal checkmate) position.
+
+    ``value == 0`` in the mate branch means mate-in-0: the side to move has
+    just been checkmated (Stockfish emits ``cp`` — never ``mate`` — for
+    non-terminal positions, and stalemate scores as a ``cp`` draw), so the
+    winner is the OPPOSITE colour.
+
+    The previous code attributed value==0 to ``side_from_fen`` (the side to
+    move = the just-mated LOSER).  When ``/live/move`` evaluated the FEN of
+    a game-ending checkmate, Stockfish returned ``mate:0`` and the player
+    who had just delivered mate was told their opponent "has a forced win"
+    (Mode-1 terminal-move probe, 2026-06-19).
+
+    Returns ``"unknown"`` when *fen* is missing, unparseable, or not
+    actually a checkmate — we do not assert a winner on degenerate engine
+    data (a value==0 mate on a non-terminal board is corrupt input).
+    """
+    if not fen:
+        return "unknown"
+    try:
+        board = chess.Board(fen)
+    except Exception:  # noqa: BLE001
+        return "unknown"
+    if not board.is_checkmate():
+        return "unknown"
+    # The side to move is the mated side; the winner is the other colour.
+    return "black" if board.turn == chess.WHITE else "white"
+
+
 def _fen_material_cp(board: chess.Board) -> int:
     return sum(
         _PIECE_CP.get(pt, 0) * (
@@ -234,11 +264,14 @@ def extract_engine_signal(
         elif value < 0:
             side = "black"
         else:
-            # value == 0 should not occur for a real mate (the pool emits cp
-            # for non-terminal positions); fall back to side-neutral rather
-            # than assert a winner on degenerate data.
-            fen_side = side_from_fen(fen)
-            side = fen_side if fen_side in ("white", "black") else "unknown"
+            # value == 0 IS reachable for a real mate: when /live/move
+            # evaluates the FEN of a game-ending checkmate, Stockfish scores
+            # the (already-mated) position as mate-in-0.  The side to move is
+            # the mated loser, so the winner is the opposite colour.  Confirm
+            # the board is genuinely checkmate before asserting a winner;
+            # otherwise stay side-neutral on degenerate data.  See
+            # _terminal_mate_winner for the full rationale.
+            side = _terminal_mate_winner(fen)
 
         delta = stockfish_json.get("eval_delta", 0)
         if delta >= 50:
