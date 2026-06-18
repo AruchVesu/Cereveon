@@ -671,13 +671,23 @@ class ChatBottomSheet : DialogFragment() {
 
         if (band.isEmpty() && phase.isEmpty()) return
 
+        // Reframe the evaluation from the player's (always White) perspective —
+        // the raw "BLACK: EQUAL" read oddly to users. Equal has no side; for a
+        // real edge it's YOU (White) or your OPPONENT (Black) who's ahead.
+        val evalPart =
+            when {
+                band.isEmpty() -> ""
+                band == "equal" -> "equal"
+                side == "white" -> "you: ${band.replace('_', ' ')}"
+                side == "black" -> "opponent: ${band.replace('_', ' ')}"
+                else -> band.replace('_', ' ')
+            }
+
         val label =
             buildString {
                 if (phase.isNotEmpty()) append(phase.uppercase())
-                if (phase.isNotEmpty() && (side.isNotEmpty() || band.isNotEmpty())) append("  ·  ")
-                if (side.isNotEmpty()) append(side)
-                if (side.isNotEmpty() && band.isNotEmpty()) append(": ")
-                if (band.isNotEmpty()) append(band.replace('_', ' '))
+                if (phase.isNotEmpty() && evalPart.isNotEmpty()) append("  ·  ")
+                append(evalPart)
             }
         txtEngineContext.text = label
         engineContextHeader.visibility = View.VISIBLE
