@@ -352,20 +352,37 @@ class ChessBoardView @JvmOverloads constructor(
             row.toString()
         }
         val side = if (whiteToMove) "w" else "b"
-        // Server's _validate_fen_field (llm/server.py:518) requires all 6
-        // FEN fields and parses with python-chess; a 2-field "position +
-        // side" string returned 422 from /chat/stream and any other
-        // FEN-taking endpoint, surfacing as the silent "Coach is offline"
-        // fallback on the client.  This view does not track castling
-        // rights, en-passant target, or move counters, so we emit
-        // conservative defaults: no castling possible, no en-passant
-        // square, halfmove 0, fullmove 1.  Engine-side analysis on the
-        // server may slightly under-represent castling availability for
-        // mid-game positions, which is acceptable for chat coaching
-        // (the conversation is high-level strategy, not exact tactical
-        // depth — that path uses Stockfish via /engine-eval, which has
-        // its own position-tracking).
-        return "$rows $side - - 0 1"
+        // Server's _validate_fen_field (llm/server.py:518) requires all 6 FEN
+        // fields and parses with python-chess; a malformed string surfaces as
+        // the silent "Coach is offline" fallback.  We now emit the REAL
+        // castling rights, en-passant square, and move counters (the board
+        // already tracks the king/rook-moved flags and the en-passant target)
+        // so the coach's position grounding and the engine's analysis reflect
+        // the true game state instead of the old "- - 0 1" placeholder, which
+        // told the engine neither side could castle.
+        //
+        // Castling: a flag stays false until that king/rook first moves, but a
+        // rook can be CAPTURED without moving, so also require the king and
+        // rook to still stand on their home squares.  board[7] is rank 1
+        // (White back rank), board[0] is rank 8; files a..h are columns 0..7.
+        val castling = buildString {
+            if (!whiteKingMoved && !whiteRookHMoved && board[7][4] == 'K' && board[7][7] == 'R') append('K')
+            if (!whiteKingMoved && !whiteRookAMoved && board[7][4] == 'K' && board[7][0] == 'R') append('Q')
+            if (!blackKingMoved && !blackRookHMoved && board[0][4] == 'k' && board[0][7] == 'r') append('k')
+            if (!blackKingMoved && !blackRookAMoved && board[0][4] == 'k' && board[0][0] == 'r') append('q')
+        }.ifEmpty { "-" }
+        // En-passant target = the square a pawn just skipped over (set in
+        // executeMove on a two-square pawn advance), in algebraic form.
+        val enPassant = enPassantTarget?.let { "${'a' + it.second}${8 - it.first}" } ?: "-"
+        // Halfmove clock: plies since the last capture or pawn move (50-move rule).
+        var halfmove = 0
+        for (rec in history.asReversed()) {
+            if (rec.piece.lowercaseChar() == 'p' || rec.captured != '.') break
+            halfmove++
+        }
+        // Fullmove number: starts at 1, increments after each Black move.
+        val fullmove = history.size / 2 + 1
+        return "$rows $side $castling $enPassant $halfmove $fullmove"
     }
 
     fun promotePawn(r: Int, c: Int, to: Char) {
