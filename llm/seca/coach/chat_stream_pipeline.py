@@ -135,6 +135,7 @@ def stream_chat_reply(
     move_count: int | None = None,  # accepted for route symmetry; unused in the LLM prompt
     coach_voice: str | None = None,
     last_move: str | None = None,
+    stockfish_json: dict | None = None,
 ) -> Iterator[StreamEvent]:
     """Yield validated coaching reply chunks as DeepSeek generates them.
 
@@ -142,7 +143,7 @@ def stream_chat_reply(
     ``StreamAbort`` (the route then serves the deterministic fallback).
     Never raises to the caller — every failure path becomes a ``StreamAbort``.
     """
-    engine_signal = _chat_engine_signal(fen)
+    engine_signal = _chat_engine_signal(fen, stockfish_json)
 
     if should_compact(messages):
         messages = compact_history(messages)

@@ -1558,6 +1558,26 @@ def _last_user_message(messages) -> str:
     return ""
 
 
+async def _chat_stockfish_json(fen: str) -> dict | None:
+    """Best-effort Stockfish eval for a chat turn — true eval band + mate, so the
+    coach isn't limited to a material count.  Returns None on any failure (no
+    pool, queue exhausted, engine crashed) so chat degrades to the heuristic
+    engine signal; mirrors the /live/move wiring.  The pool's 50 ms queue
+    timeout means a busy pool falls back instantly rather than blocking the reply.
+    """
+    if engine_pool is None:
+        return None
+    try:
+        return await asyncio.to_thread(engine_pool.evaluate_position, fen=fen, movetime_ms=150)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Stockfish eval failed for chat (%s: %s); using heuristic engine signal",
+            type(exc).__name__,
+            exc,
+        )
+        return None
+
+
 @app.post("/chat")
 @limiter.limit("10/minute")
 async def chat(
@@ -1588,6 +1608,7 @@ async def chat(
     # clients still send them); they are ignored at this layer.
     derived_profile = _derive_player_profile(player)
     derived_past_mistakes = _derive_past_mistakes(player)
+    stockfish_json = await _chat_stockfish_json(req.fen)
 
     turns = [_ChatPipelineTurn(role=t.role, content=t.content) for t in req.messages]
     result = await asyncio.to_thread(
@@ -1599,6 +1620,7 @@ async def chat(
         req.move_count,
         req.coach_voice,
         req.last_move,
+        stockfish_json,
     )
     response = {
         "reply": result.reply,
@@ -1629,6 +1651,7 @@ async def chat(
             req.move_count,
             req.coach_voice,
             req.last_move,
+            stockfish_json,
             True,  # force_deterministic — skip LLM, emit hand-tuned fallback
         )
         response = {
@@ -1708,6 +1731,7 @@ async def chat_stream(
     """
     derived_profile = _derive_player_profile(player)
     derived_past_mistakes = _derive_past_mistakes(player)
+    stockfish_json = await _chat_stockfish_json(req.fen)
     turns = [_ChatPipelineTurn(role=t.role, content=t.content) for t in req.messages]
     user_msg = _last_user_message(req.messages)
     player_id = str(player.id)
@@ -1790,6 +1814,7 @@ async def chat_stream(
             req.move_count,
             req.coach_voice,
             req.last_move,
+            stockfish_json,
             True,  # force_deterministic
         )
 
@@ -1804,6 +1829,7 @@ async def chat_stream(
             req.move_count,
             req.coach_voice,
             req.last_move,
+            stockfish_json,
         ):
             if isinstance(event, _StreamChunk):
                 yield _sse({"type": "chunk", "text": event.text})

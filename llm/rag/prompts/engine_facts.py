@@ -54,14 +54,53 @@ _FLAG_FACT: dict[str, str] = {
 }
 
 
-def render_engine_facts(engine_signal: dict) -> list[str]:
-    """Plain-English, player-perspective facts from the engine signal's flags.
+def _eval_fact(evaluation: dict) -> str:
+    """Player-perspective sentence for the eval band / mate, or "" if unknown.
 
-    Order-stable and de-duplicated.  Unknown labels are skipped (the closed
-    vocabulary should never produce one).
+    With a real Stockfish signal this is the TRUE evaluation (so an even-material
+    but winning position reads as winning, not "equal"); with the material-only
+    fallback it's the material band.  Band/mate vocabulary only — validator-safe.
+    """
+    if not isinstance(evaluation, dict):
+        return ""
+    side = evaluation.get("side")
+    if evaluation.get("type") == "mate":
+        if side == "white":
+            return "The engine sees a forced checkmate in your favour."
+        if side == "black":
+            return "The engine sees a forced checkmate for your opponent."
+        return "The engine sees a forced checkmate on the board."
+    band = evaluation.get("band")
+    if band == "equal":
+        return "The engine evaluates the position as roughly equal."
+    if side not in ("white", "black"):
+        return ""
+    subject = "you" if side == "white" else "your opponent"
+    degree = {
+        "small_advantage": "a slight edge",
+        "clear_advantage": "a clear advantage",
+        "decisive_advantage": "a decisive, likely winning advantage",
+    }.get(band)
+    if degree is None:
+        return ""
+    return f"The engine gives {subject} {degree}."
+
+
+def render_engine_facts(engine_signal: dict) -> list[str]:
+    """Plain-English, player-perspective facts from the engine signal.
+
+    Leads with the eval band / mate (the headline), then the tactical/position
+    flags.  Order-stable and de-duplicated.  Unknown labels are skipped (the
+    closed vocabulary should never produce one).
     """
     facts: list[str] = []
     seen: set[str] = set()
+
+    eval_fact = _eval_fact(engine_signal.get("evaluation") or {})
+    if eval_fact:
+        seen.add(eval_fact)
+        facts.append(eval_fact)
+
     flags = list(engine_signal.get("tactical_flags") or []) + list(
         engine_signal.get("position_flags") or []
     )
