@@ -118,6 +118,43 @@
 
         </FrameLayout>
 
+        <!-- Review-mode move navigation. Hidden during play; shown when a
+             past game is opened from history for replay + live coaching. -->
+        <LinearLayout
+            android:id="@+id/reviewNavBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingTop="@dimen/atrium_space_8"
+            android:paddingBottom="@dimen/atrium_space_8">
+
+            <Button
+                android:id="@+id/btnReviewPrev"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="◀" />
+
+            <TextView
+                android:id="@+id/txtReviewMove"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:textAppearance="@style/Atrium.Kicker"
+                android:text="" />
+
+            <Button
+                android:id="@+id/btnReviewNext"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="▶" />
+
+        </LinearLayout>
+
         <!-- Player rail. -->
         <LinearLayout
             android:layout_width="match_parent"

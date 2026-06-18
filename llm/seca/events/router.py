@@ -1,3 +1,8 @@
+# pylint: disable=too-many-lines
+# This module hosts the full game-events HTTP surface (start / finish /
+# checkpoint / active / history / positions / coach-feedback). It is a
+# split candidate, but carving it up is a dedicated refactor out of scope
+# for any single feature change.
 import io
 import json
 import logging
@@ -898,6 +903,57 @@ def game_finish_status(
         )
 
 
+def _last_move_san(pgn_text: str) -> str | None:
+    """Return the SAN of the final mainline move in ``pgn_text``, or None.
+
+    Lets GET /game/history preview how each game ended without the client
+    opening it. Parse failures (malformed / legacy PGN) and moveless games
+    return None rather than raising.
+    """
+    try:
+        game = chess.pgn.read_game(io.StringIO(pgn_text))
+        if game is None:
+            return None
+        board = game.board()
+        last_san: str | None = None
+        for move in game.mainline_moves():
+            last_san = board.san(move)
+            board.push(move)
+        return last_san
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _winner_last_move_san(pgn_text: str) -> str | None:
+    """Return the SAN of the winning side's final mainline move, or None.
+
+    The winner is taken from the PGN ``Result`` header (``1-0`` = White,
+    ``0-1`` = Black). Draws (``1/2-1/2``), ongoing / unknown results (``*``),
+    moveless games, and unparseable PGN all return None. Lets GET
+    /game/history preview the winner's last move next to the final move —
+    they differ when the loser made the last move on the board.
+    """
+    try:
+        game = chess.pgn.read_game(io.StringIO(pgn_text))
+        if game is None:
+            return None
+        result = game.headers.get("Result", "*")
+        if result not in ("1-0", "0-1"):
+            return None  # draw / ongoing / unknown -> no winner
+        winner_white = result == "1-0"
+        board = game.board()
+        winner_san: str | None = None
+        for move in game.mainline_moves():
+            mover_white = board.turn == chess.WHITE
+            san = board.san(move)
+            board.push(move)
+            if mover_white == winner_white:
+                winner_san = san
+        return winner_san
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @router.get("/history")
 def game_history(
     player=Depends(get_current_player),
@@ -921,6 +977,13 @@ def game_history(
                 # GET /chat/history?game_id=...  None for legacy / imported /
                 # pre-game_id rows (no per-game chat to show).
                 "game_id": ev.app_game_id,
+                # Final mainline move (SAN) so the history list previews how the
+                # game ended without opening it; None for moveless / legacy rows.
+                "last_move": _last_move_san(ev.pgn),
+                # Winning side's final move (SAN), per the PGN Result header;
+                # None for draws / ongoing / moveless. Differs from last_move
+                # when the loser made the last move on the board.
+                "winner_move": _winner_last_move_san(ev.pgn),
                 "result": ev.result,
                 "accuracy": ev.accuracy,
                 "created_at": ev.created_at.isoformat() if ev.created_at else None,

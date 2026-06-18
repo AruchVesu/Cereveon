@@ -31,6 +31,8 @@ import org.junit.Test
  *  3.  PGN_AFTER_FULL_ROUND:       exportPGN contains both human and AI UCI moves.
  *  4.  PGN_MOVE_NUMBERING:         exportPGN move section starts with "1. ".
  *  4b. PGN_HAS_EVENT_HEADER:      exportPGN output starts with [Event PGN header.
+ *  4c. PGN_DEFAULT_RESULT_UNKNOWN: exportPGN's default Result header is "*".
+ *  4d. PGN_RESULT_HEADER_WRITTEN:  exportPGN(resultTag) writes that Result header.
  *  5.  PGN_RESET_CLEARS:           exportPGN returns "(no moves)" after reset().
  *  6.  PGN_HUMAN_FAILED_NOT_ADDED: exportPGN unchanged when human move returns FAILED.
  *  7.  PGN_UCI_E2E4:               Human move (row 6,col 4)→(row 4,col 4) encodes as "e2e4".
@@ -118,6 +120,26 @@ class ChessViewModelPgnTest {
     fun `exportPGN move section starts with move number prefix`() {
         playRound()
         assertTrue("Expected '1. ' in PGN move section", viewModel.exportPGN().contains("1. "))
+    }
+
+    @Test
+    fun `exportPGN defaults to an unknown Result header`() {
+        playRound()
+        assertTrue(
+            "Default Result must be * (unknown, for in-progress snapshots)",
+            viewModel.exportPGN().contains("""[Result "*"]"""),
+        )
+    }
+
+    @Test
+    fun `exportPGN writes the supplied Result header for a finished game`() {
+        playRound()
+        val pgn = viewModel.exportPGN("1-0")
+        assertTrue(
+            "Finished game must carry its real result so the server can derive the winner",
+            pgn.contains("""[Result "1-0"]"""),
+        )
+        assertTrue("Must not fall back to the unknown result", !pgn.contains("""[Result "*"]"""))
     }
 
     @Test

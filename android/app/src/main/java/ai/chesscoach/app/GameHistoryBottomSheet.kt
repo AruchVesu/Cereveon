@@ -1,6 +1,5 @@
 package ai.chesscoach.app
 
-import android.graphics.Color
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -20,10 +19,10 @@ import java.time.format.DateTimeFormatter
  * (when ≥2 rated games exist), result, accuracy, rating-after, and date for each
  * game. Falls back to an empty-state message on network error or no games.
  *
- * Tapping a game expands it inline to reveal that game's coaching chat, loaded
- * lazily from GET /chat/history?game_id= via [coachApiClient]. Rows with no
- * linked game_id (legacy / imported games, or finishes from pre-#230 clients)
- * have no expand affordance.
+ * Tapping a game loads it onto the main board for replay + live coaching (see
+ * [MainActivity.openFinishedGameReview]) and dismisses this sheet. Replay works
+ * for every game (positions are replayed server-side from the stored PGN), so
+ * every row with an event id is tappable.
  */
 class GameHistoryBottomSheet : BottomSheetDialogFragment() {
 
@@ -44,13 +43,6 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
 
     /** Injected by [MainActivity] before [show] is called. */
     var gameApiClient: GameApiClient? = null
-
-    /**
-     * Injected by [MainActivity] before [show]. Used to lazily load a past
-     * game's coaching chat (GET /chat/history?game_id=) when its row is tapped
-     * to expand. Null disables the expand affordance.
-     */
-    var coachApiClient: CoachApiClient? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -98,54 +90,33 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
     }
 
     /**
-     * One history entry: a tappable header (result · accuracy · rating · date)
-     * that expands inline to reveal that game's coaching chat. The chat is
-     * fetched lazily on first expand (and kept for the row's lifetime) from
-     * GET /chat/history?game_id=. Rows with no linked game_id or no
-     * [coachApiClient] render as before, with no expand affordance.
+     * One history entry: a tappable row (result · accuracy · rating · date).
+     * Tapping opens [GameReviewBottomSheet] — the full "game mode" review:
+     * step through the game's board (◀/▶) with its coaching chat below.
+     * Replay works for every game (positions are replayed from the stored
+     * PGN); the chat section appears only for games with a linked thread.
      */
     private fun buildGameRow(game: GameHistoryItem): View {
         val ctx = requireContext()
-        // Non-blank linked game id (if any) gates the chat-expand affordance.
-        val gid = game.gameId?.takeIf { it.isNotBlank() }
-        val expandable = gid != null && coachApiClient != null
-
-        val header = TextView(ctx).apply {
-            text = headerText(game, expanded = false, expandable = expandable)
+        return TextView(ctx).apply {
+            text = headerText(game)
             setTextColor(resultColor(game))
             textSize = 13f
             typeface = android.graphics.Typeface.MONOSPACE
             setPadding(0, 14, 0, 14)
-        }
-
-        val chatContainer = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
-            setPadding(dp(12), 0, 0, dp(10))
-        }
-
-        if (gid != null && coachApiClient != null) {
-            var loaded = false
-            header.setOnClickListener {
-                val expanding = chatContainer.visibility == View.GONE
-                chatContainer.visibility = if (expanding) View.VISIBLE else View.GONE
-                header.text = headerText(game, expanded = expanding, expandable = true)
-                if (expanding && !loaded) {
-                    loaded = true
-                    loadChatInto(chatContainer, gid) { loaded = false }
-                }
+            // Every finished game has a replayable position list (keyed by its
+            // event id), so every row opens the review.
+            if (game.id.isNotBlank() && gameApiClient != null) {
+                setOnClickListener { openReview(game) }
             }
         }
+    }
 
-        return LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            )
-            addView(header)
-            addView(chatContainer)
-        }
+    private fun openReview(game: GameHistoryItem) {
+        // Load the finished game onto the main board for replay + live coaching,
+        // then close this sheet so the user lands on the board.
+        (activity as? MainActivity)?.openFinishedGameReview(game.id, game.gameId)
+        dismiss()
     }
 
     // Atrium two-tone signal — cyan for wins, amber for losses (warning
@@ -159,113 +130,16 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
         }
     }
 
-    private fun headerText(
-        game: GameHistoryItem,
-        expanded: Boolean,
-        expandable: Boolean,
-    ): String {
+    private fun headerText(game: GameHistoryItem): String {
         val resultLabel = game.result.uppercase()
         val accuracy = "${(game.accuracy * 100).toInt()}% acc"
         val rating = game.ratingAfter?.let { "  ·  %.0f pts".format(it) } ?: ""
+        val lastMove = game.lastMove?.takeIf { it.isNotBlank() }?.let { "  ·  last $it" } ?: ""
+        val winnerMove = game.winnerMove?.takeIf { it.isNotBlank() }?.let { "  ·  won $it" } ?: ""
         val date = formatDate(game.createdAt)
-        // ▾ when open, ▸ when closed; nothing when there's no chat to show.
-        val chevron = when {
-            !expandable -> ""
-            expanded    -> "  ▾"
-            else        -> "  ▸"
-        }
-        return "$resultLabel  ·  $accuracy$rating$chevron\n$date"
+        // ▸ signals the row is tappable (opens the full game review).
+        return "$resultLabel  ·  $accuracy$rating$lastMove$winnerMove  ▸\n$date"
     }
-
-    /**
-     * Fetch the game's chat thread and append it under [container]. Shows a
-     * transient "Loading…" note, then the turns (read-only) or a muted
-     * empty/error note. Runs on [lifecycleScope] so it's cancelled if the
-     * sheet is dismissed mid-flight.
-     */
-    private fun loadChatInto(
-        container: LinearLayout,
-        gameId: String,
-        onFailure: () -> Unit,
-    ) {
-        val coach = coachApiClient ?: return
-        // Clear any prior content (e.g. a stale error note from a failed
-        // attempt) so each load starts from a clean "Loading…" state.
-        container.removeAllViews()
-        container.addView(mutedNote("Loading chat…"))
-        lifecycleScope.launch {
-            val result = coach.getHistory(limit = 50, gameId = gameId)
-            container.removeAllViews()
-            when (result) {
-                is ApiResult.Success -> {
-                    val turns = result.data.turns
-                    if (turns.isEmpty()) {
-                        container.addView(mutedNote("No coaching chat for this game."))
-                    } else {
-                        // Show the board from this game's last coaching moment,
-                        // mirroring the live chat's mini-board so the past
-                        // conversation carries the same visual context it had
-                        // in-game.  Each turn persists the FEN it was sent at.
-                        turns.lastOrNull { !it.fen.isNullOrBlank() }?.fen?.let { fen ->
-                            container.addView(buildMiniBoard(fen))
-                        }
-                        turns.forEach { container.addView(buildChatTurn(it)) }
-                    }
-                }
-                else -> {
-                    container.addView(mutedNote("Could not load this game's chat."))
-                    // Reset the load guard so re-expanding retries a transient
-                    // failure (otherwise the row stays stuck on the error until
-                    // the sheet is reopened).
-                    onFailure()
-                }
-            }
-        }
-    }
-
-    /** Non-interactive mini-board of the game's last coaching position. */
-    private fun buildMiniBoard(fen: String): View {
-        val board = ChessBoardView(requireContext()).apply {
-            isInteractive = false
-            setFEN(fen)
-        }
-        val side = dp(200)
-        board.layoutParams = LinearLayout.LayoutParams(side, side).apply {
-            bottomMargin = dp(10)
-        }
-        return board
-    }
-
-    private fun buildChatTurn(turn: ChatHistoryTurnDto): TextView {
-        val ctx = requireContext()
-        val isUser = turn.role == "user"
-        val speaker = if (isUser) "You" else "Coach"
-        // Coach replies in accent cyan (the coaching voice); the player's own
-        // questions in muted grey — same hierarchy as the live chat sheet.
-        val color = androidx.core.content.ContextCompat.getColor(
-            ctx,
-            if (isUser) R.color.atrium_muted else R.color.atrium_accent_cyan,
-        )
-        return TextView(ctx).apply {
-            text = "$speaker:  ${turn.content}"
-            setTextColor(color)
-            textSize = 12f
-            setPadding(0, dp(4), 0, dp(4))
-        }
-    }
-
-    private fun mutedNote(message: String): TextView {
-        val ctx = requireContext()
-        return TextView(ctx).apply {
-            text = message
-            setTextColor(androidx.core.content.ContextCompat.getColor(ctx, R.color.atrium_muted))
-            textSize = 12f
-            setPadding(0, dp(4), 0, dp(4))
-        }
-    }
-
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density).toInt()
 
     private fun buildDivider(): View = View(requireContext()).apply {
         layoutParams = LinearLayout.LayoutParams(
