@@ -49,8 +49,13 @@ class ChessBoardView @JvmOverloads constructor(
     var promotionListener: ((Int, Int) -> Unit)? = null
     /** Emits a structured [QuickCoachUpdate] after each AI move. */
     var quickCoachListener: ((QuickCoachUpdate) -> Unit)? = null
-    /** Fires when checkmate or stalemate is detected. */
-    var onGameOver: ((GameResult) -> Unit)? = null
+    /**
+     * Set (not invoked) when checkmate or stalemate is detected, so the caller
+     * records the game-ending move BEFORE acting on game-over.  Drained via
+     * [consumePendingGameOver] after the move is appended to the ViewModel's
+     * move history, so the exported PGN includes the final (mating) move.
+     */
+    private var pendingGameResult: GameResult? = null
 
     private data class MoveRecord(
         val sr: Int, val sc: Int, val tr: Int, val tc: Int,
@@ -277,7 +282,7 @@ class ChessBoardView @JvmOverloads constructor(
         performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         return if (isPromotion) MoveResult.PROMOTION else {
             whiteToMove = !whiteToMove
-            checkAndNotifyGameOver()
+            checkAndRecordGameOver()
             invalidate()
             MoveResult.SUCCESS
         }
@@ -305,7 +310,7 @@ class ChessBoardView @JvmOverloads constructor(
         val capturedPiece = board[tr][tc]
         executeMove(fr, fc, tr, tc)
         whiteToMove = !whiteToMove
-        checkAndNotifyGameOver()
+        checkAndRecordGameOver()
         invalidate()
         return capturedPiece
     }
@@ -385,16 +390,27 @@ class ChessBoardView @JvmOverloads constructor(
         return false
     }
 
-    private fun checkAndNotifyGameOver() {
+    private fun checkAndRecordGameOver() {
         if (hasAnyLegalMove()) return
         gameOver = true
         val inCheck = isInCheck(whiteToMove)
-        val result = when {
+        pendingGameResult = when {
             inCheck && whiteToMove -> GameResult.BLACK_WINS
             inCheck && !whiteToMove -> GameResult.WHITE_WINS
             else -> GameResult.DRAW
         }
-        onGameOver?.invoke(result)
+    }
+
+    /**
+     * Returns and clears the result recorded by the last move, or null if the
+     * game is still live.  The caller invokes its game-over hook only after
+     * appending that move to history, so [ChessViewModel.exportPGN] includes
+     * the final (mating) move.
+     */
+    fun consumePendingGameOver(): GameResult? {
+        val r = pendingGameResult
+        pendingGameResult = null
+        return r
     }
 
     private fun isLegal(sr: Int, sc: Int, tr: Int, tc: Int): Boolean {

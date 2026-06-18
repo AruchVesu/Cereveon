@@ -75,6 +75,13 @@ class ChessViewModel(
      */
     var onQuickCoachUpdate: ((QuickCoachUpdate) -> Unit)? = null
 
+    /**
+     * Fires when a move ends the game (checkmate / stalemate).  Invoked by the
+     * move handlers AFTER the move is appended to [moveHistory], so a listener
+     * calling [exportPGN] sees the final (mating) move.  Wired by [MainActivity].
+     */
+    var onGameOver: ((GameResult) -> Unit)? = null
+
     /** Number of half-moves played so far (human + AI combined). */
     val moveCount: Int get() = moveHistory.size
 
@@ -143,6 +150,7 @@ $moves"""
         applyHumanMove: () -> MoveResult,
         exportFEN: () -> String,
         applyAIMove: (Int, Int, Int, Int) -> Char,
+        consumeGameOver: () -> GameResult? = { null },
     ) {
         if (turn != Turn.HUMAN) return
 
@@ -158,10 +166,18 @@ $moves"""
                     MoveResult.SUCCESS -> {
                         val humanUci = uciFromCoords(fr, fc, tr, tc)
                         moveHistory.add(humanUci)
-                        turn = Turn.AI
-                        val fenAfterHuman = exportFEN()
-                        dispatchHumanMoveCoach(fenAfterHuman, humanUci, requestId)
-                        requestAIMove(exportFEN, applyAIMove)
+                        // Fire game-over only AFTER recording the move, so
+                        // exportPGN() includes the mating move; skip the AI
+                        // reply since the game is over.
+                        val over = consumeGameOver()
+                        if (over != null) {
+                            onGameOver?.invoke(over)
+                        } else {
+                            turn = Turn.AI
+                            val fenAfterHuman = exportFEN()
+                            dispatchHumanMoveCoach(fenAfterHuman, humanUci, requestId)
+                            requestAIMove(exportFEN, applyAIMove, consumeGameOver)
+                        }
                     }
                     MoveResult.PROMOTION -> {
                         Log.d("TURN", "Human promotion pending...")
@@ -175,15 +191,17 @@ $moves"""
     fun onPromotionFinished(
         exportFEN: () -> String,
         applyAIMove: (Int, Int, Int, Int) -> Char,
+        consumeGameOver: () -> GameResult? = { null },
     ) {
         if (turn != Turn.HUMAN) return
         turn = Turn.AI
-        requestAIMove(exportFEN, applyAIMove)
+        requestAIMove(exportFEN, applyAIMove, consumeGameOver)
     }
 
     private fun requestAIMove(
         exportFEN: () -> String,
         applyAIMove: (Int, Int, Int, Int) -> Char,
+        consumeGameOver: () -> GameResult?,
     ) {
         if (aiThinking || turn != Turn.AI) return
         aiThinking = true
@@ -238,7 +256,7 @@ $moves"""
 
                 withContext(Dispatchers.Main) {
                     if (stateId == requestId) {
-                        val captured = processAIMoveResult(move, applyAIMove)
+                        val captured = processAIMoveResult(move, applyAIMove, consumeGameOver)
                         if (captured != null) {
                             // uci is only valid after isValid() passes — compute here
                             val uci = move?.let { uciFromCoords(it.fr, it.fc, it.tr, it.tc) } ?: ""
@@ -374,6 +392,7 @@ $moves"""
     private fun processAIMoveResult(
         move: AIMove?,
         applyAIMove: (Int, Int, Int, Int) -> Char,
+        consumeGameOver: () -> GameResult?,
     ): Char? {
         if (turn != Turn.AI) return null
 
@@ -386,6 +405,9 @@ $moves"""
         turn = Turn.HUMAN
         val captured = applyAIMove(move.fr, move.fc, move.tr, move.tc)
         moveHistory.add(uciFromCoords(move.fr, move.fc, move.tr, move.tc))
+        // AI's move recorded — surface a game-ending AI move now that
+        // exportPGN() would include it.
+        consumeGameOver()?.let { onGameOver?.invoke(it) }
         return captured
     }
 
