@@ -45,7 +45,9 @@ def _fake_stream(tokens):
 def _drain(fen, tokens, monkeypatch, *, esv=None):
     monkeypatch.setattr(csp, "_call_llm_stream", _fake_stream(tokens))
     if esv is not None:
-        monkeypatch.setattr(csp, "extract_engine_signal", lambda *a, **k: esv)
+        # The stream now sources its signal via _chat_engine_signal (material
+        # eval + board-feature flags); patch that to inject a synthetic ESV.
+        monkeypatch.setattr(csp, "_chat_engine_signal", lambda *a, **k: esv)
     chunks, terminal = [], None
     for ev in stream_chat_reply(fen, [ChatTurn(role="user", content="What should I do?")]):
         if isinstance(ev, StreamChunk):

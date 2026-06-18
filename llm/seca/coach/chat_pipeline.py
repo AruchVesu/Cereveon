@@ -39,9 +39,16 @@ import logging
 import time
 from dataclasses import dataclass
 
+import chess
+
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
+from llm.rag.prompts.engine_facts import describe_threats, render_engine_facts
 from llm.rag.prompts.move_phrase import describe_move_plain
 from llm.seca.coach.context_compact import compact_history, should_compact
+from llm.seca.engines.stockfish.board_features import (
+    compute_position_flags,
+    compute_tactical_flags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -335,6 +342,25 @@ _COACH_VOICE_INSTRUCTIONS = {
 }
 
 
+def _chat_engine_signal(fen: str) -> dict:
+    """Engine signal for a chat turn: material-based eval (chat does not run
+    Stockfish) PLUS the deterministic board-feature flags — hanging pieces,
+    checks, king safety, material band, pawn structure — so the coach grounds
+    tactics in real facts instead of guessing.  Unparseable FEN degrades to the
+    hollow material-only signal.
+    """
+    stockfish_json: dict = {}
+    try:
+        board = chess.Board() if fen.strip() == "startpos" else chess.Board(fen)
+        stockfish_json = {
+            "tactical_flags": compute_tactical_flags(board),
+            "position_flags": compute_position_flags(board),
+        }
+    except Exception:  # noqa: BLE001
+        stockfish_json = {}
+    return extract_engine_signal(stockfish_json, fen=fen)
+
+
 def _build_chat_prompt(
     fen: str,
     messages: list[ChatTurn],
@@ -445,10 +471,26 @@ def _build_chat_prompt(
         )
     perspective_block = "\n\nPLAYER PERSPECTIVE:\n" + "\n".join(perspective_lines)
 
+    # Deterministic engine facts (hanging pieces, checks, king safety, material,
+    # pawn structure) + what the last move attacks, so the coach grounds tactics
+    # in real facts instead of inventing them. All plain-English / coordinate-free.
+    fact_lines = render_engine_facts(engine_signal)
+    threat = describe_threats(fen, last_move) if last_move else ""
+    if threat:
+        fact_lines.append(threat[0].upper() + threat[1:])
+    facts_block = ""
+    if fact_lines:
+        facts_block = (
+            "\n\nENGINE FACTS (authoritative — base every tactical or evaluative "
+            "claim ONLY on these and the move above; do NOT invent threats, pins, "
+            "forks, or mates that aren't listed):\n- " + "\n- ".join(fact_lines)
+        )
+
     system = (
         _SYSTEM_PROMPT
         + voice_block
         + perspective_block
+        + facts_block
         + "\n\n"
         + style_block
         + history_block
@@ -742,7 +784,7 @@ def generate_chat_reply(
         engine_signal — from extract_engine_signal(); never from LLM.
         mode          — always "CHAT_V1".
     """
-    engine_signal = extract_engine_signal({}, fen=fen)
+    engine_signal = _chat_engine_signal(fen)
 
     # Auto-compact long histories before any processing to reduce token usage.
     if should_compact(messages):
