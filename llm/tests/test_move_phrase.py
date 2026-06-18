@@ -32,12 +32,20 @@ _ALL_PHRASES = [
 
 
 def test_pawn_single_advance_names_the_file_pawn():
-    # The exact in-app bug: f2-f3 must be "the f-pawn", not the king's pawn.
-    assert describe_move_plain(_F3, "f2f3") == "advanced the f-pawn one square"
+    # The exact in-app bug: f2-f3 is the king's BISHOP pawn (the f-pawn), not
+    # the king's pawn (the e-pawn). The grounding names it descriptively so the
+    # LLM echoes it instead of mis-translating the file letter.
+    assert (
+        describe_move_plain(_F3, "f2f3")
+        == "advanced your king's bishop pawn (the f-pawn) one square"
+    )
 
 
 def test_pawn_double_advance():
-    assert describe_move_plain(_F4, "f2f4") == "advanced the f-pawn two squares"
+    assert (
+        describe_move_plain(_F4, "f2f4")
+        == "advanced your king's bishop pawn (the f-pawn) two squares"
+    )
 
 
 def test_piece_move_names_the_piece_type():
@@ -45,7 +53,10 @@ def test_piece_move_names_the_piece_type():
 
 
 def test_pawn_capture_uses_origin_file():
-    assert describe_move_plain(_EXD5, "e4d5") == "captured with the e-pawn"
+    assert (
+        describe_move_plain(_EXD5, "e4d5")
+        == "captured with your king's pawn (the e-pawn), which now stands on the d-file"
+    )
 
 
 def test_castling_kingside():

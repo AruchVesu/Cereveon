@@ -438,9 +438,10 @@ def _build_chat_prompt(
     move_phrase = describe_move_plain(fen, last_move) if last_move else ""
     if move_phrase:
         perspective_lines.append(
-            f"The player's most recent move: they {move_phrase}.  Describe it in "
-            'plain words ("your f-pawn", "the kingside"), never in coordinate or '
-            "move notation."
+            f"The player's most recent move (authoritative — describe it exactly "
+            f"this way; do NOT re-derive the move from the board): they {move_phrase}. "
+            'Refer to it in plain words ("your f-pawn", "the kingside"), never in '
+            "coordinate or move notation."
         )
     perspective_block = "\n\nPLAYER PERSPECTIVE:\n" + "\n".join(perspective_lines)
 
