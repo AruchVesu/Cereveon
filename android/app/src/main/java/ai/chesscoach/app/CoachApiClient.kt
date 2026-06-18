@@ -52,6 +52,9 @@ interface CoachApiClient {
          * Mode-2 tone.
          */
         coachVoice: String? = null,
+        // The player's last move (UCI) so the coach can name it in plain
+        // English; null → no move line in the prompt.
+        lastMove: String? = null,
     ): ApiResult<ChatResponseBody>
 
     /**
@@ -76,8 +79,12 @@ interface CoachApiClient {
         // Per-game chat thread key. Only the real streaming override
         // (HttpCoachApiClient) forwards it; this non-stream fallback drops it.
         gameId: String? = null,
+        lastMove: String? = null,
     ): Flow<StreamChunk> = flow {
-        when (val result = chat(fen, messages, playerProfile, pastMistakes, moveCount, coachVoice)) {
+        when (
+            val result =
+                chat(fen, messages, playerProfile, pastMistakes, moveCount, coachVoice, lastMove)
+        ) {
             is ApiResult.Success -> {
                 emit(StreamChunk.Chunk(result.data.reply))
                 emit(StreamChunk.Done(result.data.engineSignal, "CHAT_V1"))
@@ -191,12 +198,16 @@ class HttpCoachApiClient(
         pastMistakes: List<String>?,
         moveCount: Int?,
         coachVoice: String?,
+        lastMove: String?,
     ): ApiResult<ChatResponseBody> = withRetry(maxAttempts = 2) {
         http.request(
             path = CHAT_PATH,
             method = "POST",
             headers = authHeaders(),
-            body = buildJson(fen, messages, playerProfile, pastMistakes, moveCount, coachVoice),
+            body = buildJson(
+                fen, messages, playerProfile, pastMistakes, moveCount, coachVoice,
+                lastMove = lastMove,
+            ),
             onResponse = refreshOnSuccess(),
             parse = ::parseResponse,
         )
@@ -210,6 +221,7 @@ class HttpCoachApiClient(
         moveCount: Int?,
         coachVoice: String?,
         gameId: String?,
+        lastMove: String?,
     ): Flow<StreamChunk> = channelFlow {
         withContext(Dispatchers.IO) {
             // Declared outside the body try so the finally block can
@@ -245,7 +257,8 @@ class HttpCoachApiClient(
                 conn.outputStream.bufferedWriter(Charsets.UTF_8).use {
                     it.write(
                         buildJson(
-                            fen, messages, playerProfile, pastMistakes, moveCount, coachVoice, gameId,
+                            fen, messages, playerProfile, pastMistakes, moveCount, coachVoice,
+                            gameId, lastMove,
                         ),
                     )
                 }
@@ -406,6 +419,7 @@ class HttpCoachApiClient(
         moveCount: Int?,
         coachVoice: String?,
         gameId: String? = null,
+        lastMove: String? = null,
     ): String = ApiJson.encodeToString(
         ChatRequestBody(
             fen = fen,
@@ -415,6 +429,7 @@ class HttpCoachApiClient(
             moveCount = moveCount,
             coachVoice = coachVoice?.takeIf { it.isNotBlank() },
             gameId = gameId?.takeIf { it.isNotBlank() },
+            lastMove = lastMove?.takeIf { it.isNotBlank() },
         )
     )
 

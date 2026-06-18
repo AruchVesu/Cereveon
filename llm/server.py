@@ -1598,6 +1598,7 @@ async def chat(
         derived_past_mistakes,
         req.move_count,
         req.coach_voice,
+        req.last_move,
     )
     response = {
         "reply": result.reply,
@@ -1627,6 +1628,7 @@ async def chat(
             derived_past_mistakes,
             req.move_count,
             req.coach_voice,
+            req.last_move,
             True,  # force_deterministic — skip LLM, emit hand-tuned fallback
         )
         response = {
@@ -1787,6 +1789,7 @@ async def chat_stream(
             derived_past_mistakes,
             req.move_count,
             req.coach_voice,
+            req.last_move,
             True,  # force_deterministic
         )
 
@@ -1800,6 +1803,7 @@ async def chat_stream(
             derived_past_mistakes,
             req.move_count,
             req.coach_voice,
+            req.last_move,
         ):
             if isinstance(event, _StreamChunk):
                 yield _sse({"type": "chunk", "text": event.text})

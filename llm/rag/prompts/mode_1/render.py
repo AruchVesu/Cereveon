@@ -33,6 +33,7 @@ def render_mode_1_prompt(
     explanation_style: str | None,
     rag_docs: list[dict] | None = None,
     player_color: str = "unknown",
+    last_move_phrase: str = "",
 ) -> str:
     """Build the Mode-1 LLM prompt.
 
@@ -93,6 +94,9 @@ def render_mode_1_prompt(
         rag_block = "\n\nREFERENCE CONTEXT:\n" + "\n".join(f"• {s}" for s in snippets)
 
     safe_fen = "".join(c if c >= "\x20" else " " for c in fen)
+    move_line = (
+        f"\nLast move played by the player: {last_move_phrase}." if last_move_phrase else ""
+    )
 
     prompt = f"""{system_prompt}
 
@@ -101,7 +105,7 @@ POSITION CONTEXT
 ────────────────────────────
 FEN: {safe_fen}
 Player level: {level}
-Player colour: {player_color}
+Player colour: {player_color}{move_line}
 Move quality: {move_quality}
 Engine evaluation (neutral): {eval_desc}
 After the player's move: {player_perspective}

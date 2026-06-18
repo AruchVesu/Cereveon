@@ -65,6 +65,9 @@ data class ChatRequestBody(
     // Current server game id, so the server scopes this exchange to its game
     // thread (per-game chat history). Null when no active game → player-global.
     @SerialName("game_id") val gameId: String? = null,
+    // The player's last move (UCI), so the coach can describe it in plain
+    // English ("your f-pawn") instead of misreading the raw FEN. Null → omitted.
+    @SerialName("last_move") val lastMove: String? = null,
 )
 
 /**

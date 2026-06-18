@@ -945,6 +945,12 @@ class MainActivity : AppCompatActivity() {
         if (::chessBoard.isInitialized) viewModel.moveCount else 0
 
     /**
+     * The player's most recent move (UCI) so the chat coach can describe it in
+     * plain English ("your f-pawn"); null before the human's first move.
+     */
+    fun currentLastMove(): String? = viewModel.lastHumanMoveUci()
+
+    /**
      * Current server game id (from /game/start, or restored on resume), so the
      * coach chat can scope its history per game. Null when no active server
      * game (e.g. offline, or before /game/start) → chat stays player-global.

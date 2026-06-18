@@ -51,6 +51,7 @@ try:
     from llm.seca.coach.explain_pipeline import call_llm as _call_llm  # type: ignore[import]
     from llm.rag.prompts.system_mode_1 import SYSTEM_PROMPT_MODE_1  # type: ignore[import]
     from llm.rag.prompts.mode_1.render import render_mode_1_prompt  # type: ignore[import]
+    from llm.rag.prompts.move_phrase import describe_move_plain  # type: ignore[import]
     from llm.rag.retriever.retriever import retrieve as _retrieve  # type: ignore[import]
     from llm.rag.documents import ALL_RAG_DOCUMENTS as _DOCS  # type: ignore[import]
     # Mode-1 hints must satisfy the same in-pipeline safety contract as
@@ -311,6 +312,7 @@ def _build_hint_llm(
     engine_signal: dict,
     explanation_style: str | None,
     fen: str,
+    uci: str,
 ) -> str:
     """Generate a coaching hint via the LLM (Mode-1 system prompt).
 
@@ -325,6 +327,7 @@ def _build_hint_llm(
         explanation_style=explanation_style,
         rag_docs=rag_docs,
         player_color=player_color,
+        last_move_phrase=describe_move_plain(fen, uci),
     )
     response = _call_llm(prompt).strip()
     if not response:
@@ -398,7 +401,7 @@ def generate_live_reply(
             if attempt > 0:
                 time.sleep(_LIVE_RETRY_DELAY_SECONDS)
             try:
-                hint = _build_hint_llm(engine_signal, explanation_style, fen)
+                hint = _build_hint_llm(engine_signal, explanation_style, fen, uci)
                 if not hint.strip():
                     raise ValueError("Empty hint from LLM")
                 return LiveMoveReply(
