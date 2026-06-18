@@ -421,32 +421,7 @@ def _build_chat_prompt(
     if coach_voice and coach_voice in _COACH_VOICE_INSTRUCTIONS:
         voice_block = "\n\nCOACH VOICE: " + _COACH_VOICE_INSTRUCTIONS[coach_voice]
 
-    # The Android client only lets the human play White (local games), but the
-    # Mode-2 prompt never said so.  Right after the player's move the FEN's
-    # side-to-move is Black (the opponent), and with no perspective anchor the
-    # coach concluded "you are playing Black" and misattributed pieces (the
-    # in-app report: it called the player's f-pawn the "king's pawn").  State
-    # the perspective explicitly.  The live Mode-1 prompt already does this via
-    # player_color; chat never got it.  (When Black play is added, thread the
-    # colour from the client instead of assuming White.)
-    perspective_block = (
-        "\n\nPLAYER PERSPECTIVE:\n"
-        "The player you are coaching is playing WHITE — their pieces are the "
-        "White (uppercase) pieces.  The position's side-to-move indicates only "
-        "whose turn it is, NOT the player's colour: immediately after the player "
-        "moves it is the opponent's (Black's) turn.  Always address the player as "
-        "White, and read the engine evaluation from White's point of view."
-    )
-
-    system = (
-        _SYSTEM_PROMPT
-        + voice_block
-        + perspective_block
-        + "\n\n"
-        + style_block
-        + history_block
-        + player_block
-    )
+    system = _SYSTEM_PROMPT + voice_block + "\n\n" + style_block + history_block + player_block
 
     prompt = _render(
         system_prompt=system,
