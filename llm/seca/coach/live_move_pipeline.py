@@ -182,6 +182,7 @@ def _build_hint(
     engine_signal: dict,
     base_explanation: str,
     explanation_style: str | None = None,
+    player_color: str = "unknown",
 ) -> str:
     """Deterministic 1-2 sentence coaching hint (LLM fallback).
 
@@ -194,6 +195,14 @@ def _build_hint(
     explanation_style:
         "simple" → 1 sentence (quality only, or eval if quality unknown).
         None / "intermediate" / "advanced" → 2 sentences (quality + eval).
+    player_color:
+        ``"white"`` / ``"black"`` — the colour the player is playing
+        (derived by the caller from the post-move FEN).  When known, the
+        mate eval sentence is framed in the second person ("you" / "your
+        opponent") to match the LLM path's ``_frame_player_perspective``;
+        a winning player should not be told a detached third-person
+        "white secures the decisive outcome".  Defaults to ``"unknown"``,
+        which preserves the side-named third-person phrasing.
     """
     eval_info = engine_signal.get("evaluation", {})
     band = eval_info.get("band", "equal")
@@ -229,7 +238,31 @@ def _build_hint(
         # because the boundary re-validator at server.py:1357 rejected
         # the fallback and the handler intentionally surfaces that as
         # a "structural bug" (and it was).  Caught on-device 2026-05-15.
-        eval_sentence = f"Mate is inevitable — {side} secures the decisive outcome."
+        #
+        # Frame from the player's perspective when the colour is known:
+        # "you" when the player is the mating side, "your opponent" when
+        # being mated — mirrors the LLM path's _frame_player_perspective so
+        # a winning player isn't told a detached "white secures …".  Only
+        # the subject noun changes; the proven "Mate is inevitable — …
+        # secures the decisive outcome" carrier (single-word "inevitable"
+        # satisfies the semantic require, no "force(d) mate" pair) is kept
+        # verbatim so the gate-safety pins in test_deterministic_mate_
+        # phrasing.py still hold.  Compared case-insensitively because the
+        # render fixtures use "White" while extract_engine_signal emits
+        # lowercase; unknown colour OR side falls back to the third person.
+        side_l = side.lower() if isinstance(side, str) else ""
+        color_l = player_color.lower() if isinstance(player_color, str) else ""
+        if color_l in ("white", "black") and side_l in ("white", "black"):
+            if side_l == color_l:
+                eval_sentence = "Mate is inevitable — you secure the decisive outcome."
+            else:
+                eval_sentence = (
+                    "Mate is inevitable — your opponent secures the decisive outcome."
+                )
+        elif side_l in ("white", "black"):
+            eval_sentence = f"Mate is inevitable — {side} secures the decisive outcome."
+        else:
+            eval_sentence = "Mate is inevitable — the decisive outcome is sealed."
     elif band == "equal":
         # Pre-Sprint-5.A wording read "The engine evaluation is equal." —
         # "engine" is on validate_mode_2_semantic's
@@ -432,7 +465,13 @@ def generate_live_reply(
 
     # --- Deterministic fallback ---
     base_explanation = _safe_explainer.explain(engine_signal)
-    hint = _build_hint(uci, engine_signal, base_explanation, explanation_style=explanation_style)
+    hint = _build_hint(
+        uci,
+        engine_signal,
+        base_explanation,
+        explanation_style=explanation_style,
+        player_color=_derive_player_color(fen),
+    )
     return LiveMoveReply(
         hint=hint,
         engine_signal=engine_signal,

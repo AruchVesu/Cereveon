@@ -162,6 +162,20 @@ class TestLiveMoveReplyInvariants:
             f"Hint does not reference evaluation band '{band}': {result.hint!r}"
         )
 
+    def test_mate_fallback_frames_winning_player_in_second_person(self):
+        """End-to-end wiring: a forced mate FOR the player, LLM unavailable,
+        must reach the deterministic fallback framed as "you" — confirming
+        fen -> _derive_player_color -> _build_hint(player_color=...).
+
+        FEN is black-to-move, so the player (who just moved) is White; the
+        synthetic stockfish_json gives White a forced mate (value > 0)."""
+        fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1"
+        sf = {"evaluation": {"type": "mate", "value": 1}}
+        with _patch_llm_unavailable():
+            result = generate_live_reply(fen, _UCI_NORMAL, stockfish_json=sf)
+        assert result.engine_signal["evaluation"]["side"] == "white"
+        assert "you secure the decisive outcome" in result.hint.lower(), result.hint
+
     def test_move_quality_is_string(self):
         with _patch_llm_unavailable():
             result = generate_live_reply(_STARTING_FEN, _UCI_NORMAL)
@@ -262,6 +276,24 @@ class TestBuildHintFormatting:
         signal = _make_signal(eval_type="mate", band="decisive_advantage", side="white")
         hint = _build_hint(_UCI_NORMAL, signal, "")
         assert "mate" in hint.lower(), f"Expected 'mate' in hint: {hint!r}"
+
+    def test_mate_hint_second_person_when_player_color_known(self):
+        """With the player's colour known, the mate sentence is framed as
+        "you" (mating side) or "your opponent" (mated side), not the
+        third-person side name.  Gate-safety is pinned separately in
+        test_deterministic_mate_phrasing.py."""
+        signal = _make_signal(eval_type="mate", band="decisive_advantage", side="white")
+        winning = _build_hint(_UCI_NORMAL, signal, "", player_color="white")
+        losing = _build_hint(_UCI_NORMAL, signal, "", player_color="black")
+        assert "you secure the decisive outcome" in winning.lower(), winning
+        assert "white secures" not in winning.lower(), winning
+        assert "your opponent secures the decisive outcome" in losing.lower(), losing
+
+    def test_mate_hint_third_person_when_player_color_unknown(self):
+        """No player colour → unchanged third-person side phrasing."""
+        signal = _make_signal(eval_type="mate", band="decisive_advantage", side="white")
+        hint = _build_hint(_UCI_NORMAL, signal, "")
+        assert "white secures the decisive outcome" in hint.lower(), hint
 
     def test_cp_equal_produces_equal_in_hint(self):
         signal = _make_signal(eval_type="cp", band="equal", side="black")
