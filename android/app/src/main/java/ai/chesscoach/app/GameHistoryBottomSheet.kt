@@ -134,10 +134,11 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
         val resultLabel = game.result.uppercase()
         val accuracy = "${(game.accuracy * 100).toInt()}% acc"
         val rating = game.ratingAfter?.let { "  ·  %.0f pts".format(it) } ?: ""
-        val lastMove = game.lastMove?.takeIf { it.isNotBlank() }?.let { "  ·  $it" } ?: ""
+        val lastMove = game.lastMove?.takeIf { it.isNotBlank() }?.let { "  ·  last $it" } ?: ""
+        val winnerMove = game.winnerMove?.takeIf { it.isNotBlank() }?.let { "  ·  won $it" } ?: ""
         val date = formatDate(game.createdAt)
         // ▸ signals the row is tappable (opens the full game review).
-        return "$resultLabel  ·  $accuracy$rating$lastMove  ▸\n$date"
+        return "$resultLabel  ·  $accuracy$rating$lastMove$winnerMove  ▸\n$date"
     }
 
     private fun buildDivider(): View = View(requireContext()).apply {

@@ -131,6 +131,10 @@ data class GameHistoryItem(
     // SAN of the game's final move (e.g. "Qh7#"), for a history-row preview.
     // Null for moveless / legacy rows.  Server: GET /game/history.
     @SerialName("last_move") val lastMove: String? = null,
+    // SAN of the winning side's final move, per the PGN Result header.
+    // Differs from lastMove when the loser moved last.  Null for draws /
+    // ongoing / moveless rows.  Server: GET /game/history.
+    @SerialName("winner_move") val winnerMove: String? = null,
     val result: String = "",
     val accuracy: Float = 0f,
     @SerialName("rating_after") val ratingAfter: Float? = null,

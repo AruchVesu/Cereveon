@@ -25,6 +25,9 @@ Pinned invariants
                           ``game_id`` key (null, never a missing field).
 14. GAME_HISTORY_LAST_MOVE: GET /game/history projects the final mainline SAN
                           under ``last_move`` (null for moveless / legacy PGN).
+15. GAME_HISTORY_WINNER_MOVE: GET /game/history projects the winning side's
+                          final SAN under ``winner_move`` (per PGN Result;
+                          null for draws / ongoing).
 """
 
 from __future__ import annotations
@@ -434,3 +437,75 @@ def test_game_history_projects_last_move_san(db_session):
     by_game = {g["game_id"]: g["last_move"] for g in games}
     assert by_game["live-game-1"] == "a6"
     assert by_game[None] is None
+
+
+# ---------------------------------------------------------------------------
+# 15. GAME_HISTORY_WINNER_MOVE
+# ---------------------------------------------------------------------------
+
+
+def test_game_history_projects_winner_move_san(db_session):
+    """GET /game/history previews the WINNING side's final move under
+    ``winner_move`` (White if Result 1-0, Black if 0-1) — distinct from
+    last_move when the loser moved last.  Read from the PGN Result header,
+    independent of the app-perspective ``result`` field.  Draws project null."""
+    from types import SimpleNamespace
+
+    from llm.seca.events.router import game_history
+
+    # Black delivers fool's mate and moves last -> winner == last move.
+    black_win_pgn = (
+        '[Event "Test"]\n'
+        '[White "Player1"]\n'
+        '[Black "Player2"]\n'
+        '[Result "0-1"]\n'
+        "\n"
+        "1. f3 e5 2. g4 Qh4# 0-1"
+    )
+    drawn_pgn = (
+        '[Event "Test"]\n'
+        '[White "Player1"]\n'
+        '[Black "Player2"]\n'
+        '[Result "1/2-1/2"]\n'
+        "\n"
+        "1. e4 e5 1/2-1/2"
+    )
+
+    storage = EventStorage(db_session)
+    storage.store_game(
+        player_id="p1",
+        pgn=_VALID_PGN,  # 1-0, White won; last move a6 (Black), winner Bb5 (White)
+        result="win",
+        accuracy=0.8,
+        weaknesses={},
+        app_game_id="white-win",
+    )
+    storage.store_game(
+        player_id="p1",
+        pgn=black_win_pgn,  # 0-1; Black both won and moved last -> coincide
+        result="loss",  # app-perspective loss, yet PGN says Black won
+        accuracy=0.4,
+        weaknesses={},
+        app_game_id="black-win",
+    )
+    storage.store_game(
+        player_id="p1",
+        pgn=drawn_pgn,  # draw -> no winner
+        result="draw",
+        accuracy=0.6,
+        weaknesses={},
+        app_game_id="drawn",
+    )
+
+    resp = game_history(player=SimpleNamespace(id="p1"), db=db_session)
+    games = resp["games"]
+
+    assert len(games) == 3
+    assert all("winner_move" in g for g in games), f"missing winner_move key: {games}"
+    by_game = {g["game_id"]: (g["last_move"], g["winner_move"]) for g in games}
+    # White won (1-0): Black made the last move (a6); winner's last was Bb5.
+    assert by_game["white-win"] == ("a6", "Bb5")
+    # Black won (0-1) and moved last: last_move and winner_move coincide.
+    assert by_game["black-win"] == ("Qh4#", "Qh4#")
+    # Draw: a final move exists, but there is no winner.
+    assert by_game["drawn"][1] is None
