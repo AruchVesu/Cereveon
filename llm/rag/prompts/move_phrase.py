@@ -27,6 +27,21 @@ _PIECE_NAME = {
     chess.KING: "king",
 }
 
+# Descriptive pawn names by file.  The grounding gives BOTH the descriptive
+# name and the file letter so the model echoes the descriptive form directly
+# instead of (mis)translating "e-pawn" itself — it had called an e-pawn
+# capture the "king's bishop pawn".  All validator-safe (no file+rank token).
+_PAWN_DESC = {
+    "a": "queen's rook pawn",
+    "b": "queen's knight pawn",
+    "c": "queen's bishop pawn",
+    "d": "queen's pawn",
+    "e": "king's pawn",
+    "f": "king's bishop pawn",
+    "g": "king's knight pawn",
+    "h": "king's rook pawn",
+}
+
 
 def describe_move_plain(fen_after: str, uci: str) -> str:
     """Return a coordinate-free phrase for the move ``uci`` that produced
@@ -65,11 +80,14 @@ def describe_move_plain(fen_after: str, uci: str) -> str:
         return f"castled {side}"
 
     if piece.piece_type == chess.PAWN:
+        pawn = f"{_PAWN_DESC[from_file]} (the {from_file}-pawn)"
         if from_file != to_file:
-            # A pawn only changes file on a capture (incl. en passant).
-            return f"captured with the {from_file}-pawn"
+            # A pawn only changes file on a capture; name the capturing pawn AND
+            # the file it landed on, so the model doesn't read the destination
+            # square as a different pawn ("the d-pawn / no capture" off the FEN).
+            return f"captured with your {pawn}, which now stands on the {to_file}-file"
         squares = abs(chess.square_rank(move.to_square) - chess.square_rank(move.from_square))
         distance = "two squares" if squares == 2 else "one square"
-        return f"advanced the {from_file}-pawn {distance}"
+        return f"advanced your {pawn} {distance}"
 
     return f"moved a {_PIECE_NAME.get(piece.piece_type, 'piece')}"
