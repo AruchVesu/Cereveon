@@ -66,6 +66,11 @@ class ChessViewModel(
     // ── Move history for PGN export ──────────────────────────────────────────
     private val moveHistory = mutableListOf<String>()
 
+    // The player's (White's) most recent move in UCI, sent to the chat coach so
+    // it can describe "your last move" in plain English instead of misreading
+    // the raw FEN.  Null until the human has moved this game.
+    private var lastHumanUci: String? = null
+
     /**
      * Called on the Main thread after each AI move with a [QuickCoachUpdate].
      * When [engineEvalClient] is set, the update contains the real Stockfish
@@ -93,6 +98,9 @@ class ChessViewModel(
      * played; [restoreMoveHistory] accepts the inverse.
      */
     fun exportUciHistory(): String = moveHistory.joinToString(",")
+
+    /** The player's most recent move (UCI), or null if they haven't moved yet. */
+    fun lastHumanMoveUci(): String? = lastHumanUci
 
     /**
      * Returns the game moves as a well-formed PGN string including the four
@@ -139,6 +147,7 @@ $moves"""
         aiThinking = false
         turn = Turn.HUMAN
         moveHistory.clear()
+        lastHumanUci = null
         lastHumanMoveHint = null
         lastHumanMoveClassification = null
         lastHumanMoveEngineSignal = null
@@ -166,6 +175,7 @@ $moves"""
                     MoveResult.SUCCESS -> {
                         val humanUci = uciFromCoords(fr, fc, tr, tc)
                         moveHistory.add(humanUci)
+                        lastHumanUci = humanUci
                         // Fire game-over only AFTER recording the move, so
                         // exportPGN() includes the mating move; skip the AI
                         // reply since the game is over.

@@ -40,6 +40,7 @@ import time
 from dataclasses import dataclass
 
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
+from llm.rag.prompts.move_phrase import describe_move_plain
 from llm.seca.coach.context_compact import compact_history, should_compact
 
 logger = logging.getLogger(__name__)
@@ -342,6 +343,7 @@ def _build_chat_prompt(
     past_mistakes: list[str] | None = None,
     retry_hint: str = "",
     coach_voice: str | None = None,
+    last_move: str | None = None,
 ) -> str:
     """Assemble the fully-rendered Mode-2 prompt (system + voice + style +
     history + player context + RAG + FEN + sanitized user query).
@@ -421,7 +423,36 @@ def _build_chat_prompt(
     if coach_voice and coach_voice in _COACH_VOICE_INSTRUCTIONS:
         voice_block = "\n\nCOACH VOICE: " + _COACH_VOICE_INSTRUCTIONS[coach_voice]
 
-    system = _SYSTEM_PROMPT + voice_block + "\n\n" + style_block + history_block + player_block
+    # The Android client only lets the human play White (local games); without a
+    # colour anchor the coach reads the FEN side-to-move (the opponent, right
+    # after the player moves) as the player and says "you are Black".  Anchor
+    # White, and — when the client sends it — describe the player's last move in
+    # PLAIN ENGLISH (never a square: the no-notation output rule strips "f3" and
+    # forces the canned fallback — the #247/#248 regression).
+    perspective_lines = [
+        "The player you are coaching is playing WHITE — their pieces are the "
+        "White (uppercase) pieces.  The side-to-move shown below is only whose "
+        "turn it is, not the player's colour; read the engine evaluation from "
+        "White's point of view."
+    ]
+    move_phrase = describe_move_plain(fen, last_move) if last_move else ""
+    if move_phrase:
+        perspective_lines.append(
+            f"The player's most recent move: they {move_phrase}.  Describe it in "
+            'plain words ("your f-pawn", "the kingside"), never in coordinate or '
+            "move notation."
+        )
+    perspective_block = "\n\nPLAYER PERSPECTIVE:\n" + "\n".join(perspective_lines)
+
+    system = (
+        _SYSTEM_PROMPT
+        + voice_block
+        + perspective_block
+        + "\n\n"
+        + style_block
+        + history_block
+        + player_block
+    )
 
     prompt = _render(
         system_prompt=system,
@@ -442,6 +473,7 @@ def _build_chat_llm(
     past_mistakes: list[str] | None = None,
     retry_hint: str = "",
     coach_voice: str | None = None,
+    last_move: str | None = None,
 ) -> str:
     """Call the LLM with the Mode-2 prompt (non-streaming) and validate.
 
@@ -455,6 +487,7 @@ def _build_chat_llm(
         past_mistakes=past_mistakes,
         retry_hint=retry_hint,
         coach_voice=coach_voice,
+        last_move=last_move,
     )
 
     response = _call_llm(prompt).strip()
@@ -671,6 +704,7 @@ def generate_chat_reply(
     past_mistakes: list[str] | None = None,
     move_count: int | None = None,
     coach_voice: str | None = None,
+    last_move: str | None = None,
     force_deterministic: bool = False,
 ) -> ChatReply:
     """Generate a coaching reply for the current chat turn.
@@ -737,6 +771,7 @@ def generate_chat_reply(
                     fen, messages, player_profile, engine_signal, past_mistakes,
                     retry_hint=retry_hint,
                     coach_voice=coach_voice,
+                    last_move=last_move,
                 )
                 # ESV structural integrity check (programming-error guard; never from LLM).
                 _EngineSignalSchema.model_validate(engine_signal)

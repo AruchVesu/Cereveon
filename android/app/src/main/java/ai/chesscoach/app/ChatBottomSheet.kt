@@ -76,6 +76,10 @@ class ChatBottomSheet : DialogFragment() {
 
     private var currentFen: String? = null
 
+    // The player's most recent move (UCI), refreshed from [MainActivity] at
+    // send time so the coach can name it in plain English. Null → no move line.
+    private var currentLastMove: String? = null
+
     /**
      * Current server game id, refreshed from [MainActivity] at send/load time
      * so chat saves + history are scoped to this game. Null → player-global.
@@ -739,6 +743,7 @@ class ChatBottomSheet : DialogFragment() {
         (activity as? MainActivity)?.let { act ->
             act.currentBoardFen()?.let { currentFen = it }
             moveCount = act.currentMoveCount()
+            currentLastMove = act.currentLastMove()
             gameId = act.currentGameId()
         }
 
@@ -812,6 +817,8 @@ class ChatBottomSheet : DialogFragment() {
                     coachVoice = SettingsBottomSheet.readCoachVoice(requireContext()),
                     // Scope this exchange to the current game's chat thread.
                     gameId = gameId,
+                    // The player's last move, so the coach names it in words.
+                    lastMove = currentLastMove,
                 ).collect { chunk ->
                     when (chunk) {
                         is StreamChunk.Chunk -> accumulated += chunk.text

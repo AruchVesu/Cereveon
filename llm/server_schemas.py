@@ -243,11 +243,24 @@ class ChatRequest(BaseModel):
         return v
 
     move_count: int | None = None
+    # The player's last move (UCI), so the coach can describe it in plain
+    # English ("you advanced your f-pawn") instead of misreading the raw FEN.
+    # Optional: older clients omit it; the prompt simply skips the move line.
+    last_move: str | None = None
 
     @field_validator("fen")
     @classmethod
     def validate_fen(cls, v: str) -> str:
         return _validate_fen_field(v)
+
+    @field_validator("last_move")
+    @classmethod
+    def validate_last_move(cls, v: str | None) -> str | None:
+        if v is not None and not re.fullmatch(r"[a-h][1-8][a-h][1-8][qrbnQRBN]?", v):
+            raise ValueError(
+                "last_move must be UCI [a-h][1-8][a-h][1-8] with optional promotion [qrbnQRBN]"
+            )
+        return v
 
     @field_validator("messages")
     @classmethod
