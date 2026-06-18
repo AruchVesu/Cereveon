@@ -93,8 +93,14 @@ class ChessViewModel(
      *
      * Without headers the backend raises a 422 "invalid PGN: no PGN headers
      * found" error, silently failing every /game/finish call.
+     *
+     * [resultTag] is the PGN `Result` header. White is always "Player" and
+     * Black "Engine", so a finished game passes "1-0" (player won), "0-1"
+     * (engine won) or "1/2-1/2" (draw). The default "*" (unknown) suits
+     * in-progress snapshots. The server reads this header to surface the
+     * winner's last move in game history — "*" yields no winner move.
      */
-    fun exportPGN(): String {
+    fun exportPGN(resultTag: String = "*"): String {
         if (moveHistory.isEmpty()) return "(no moves)"
         val moves = moveHistory
             .mapIndexed { index, uci ->
@@ -104,7 +110,7 @@ class ChessViewModel(
         return """[Event "Chess Coach Game"]
 [White "Player"]
 [Black "Engine"]
-[Result "*"]
+[Result "$resultTag"]
 
 $moves"""
     }

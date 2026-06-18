@@ -477,7 +477,16 @@ class MainActivity : AppCompatActivity() {
         chessBoard.promotionListener = { r, c -> showPromotionDialog(r, c) }
 
         chessBoard.onGameOver = { result ->
-            val pgn = viewModel.exportPGN()
+            // PGN Result header (White="Player", Black="Engine") so the server
+            // can derive the winner's last move for the history list. Without
+            // it the PGN carried "*" and every game's winner move was blank.
+            val pgnResult =
+                when (result) {
+                    GameResult.WHITE_WINS -> "1-0"
+                    GameResult.BLACK_WINS -> "0-1"
+                    GameResult.DRAW -> "1/2-1/2"
+                }
+            val pgn = viewModel.exportPGN(pgnResult)
             val resultStr =
                 when (result) {
                     GameResult.WHITE_WINS -> "win"
