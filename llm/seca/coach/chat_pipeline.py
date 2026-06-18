@@ -342,22 +342,26 @@ _COACH_VOICE_INSTRUCTIONS = {
 }
 
 
-def _chat_engine_signal(fen: str) -> dict:
-    """Engine signal for a chat turn: material-based eval (chat does not run
-    Stockfish) PLUS the deterministic board-feature flags — hanging pieces,
-    checks, king safety, material band, pawn structure — so the coach grounds
-    tactics in real facts instead of guessing.  Unparseable FEN degrades to the
-    hollow material-only signal.
+def _chat_engine_signal(fen: str, stockfish_json: dict | None = None) -> dict:
+    """Engine signal for a chat turn.
+
+    When the caller supplies a real Stockfish analysis (``stockfish_json`` from
+    ``StockfishEnginePool.evaluate_position``) it carries the TRUE eval band +
+    mate + flags.  Otherwise the signal is material-based eval PLUS the
+    deterministic board-feature flags (hanging pieces, checks, king safety,
+    material band, pawn structure), so the coach still grounds tactics in real
+    facts.  Unparseable FEN degrades to the hollow material-only signal.
     """
-    stockfish_json: dict = {}
-    try:
-        board = chess.Board() if fen.strip() == "startpos" else chess.Board(fen)
-        stockfish_json = {
-            "tactical_flags": compute_tactical_flags(board),
-            "position_flags": compute_position_flags(board),
-        }
-    except Exception:  # noqa: BLE001
+    if stockfish_json is None:
         stockfish_json = {}
+        try:
+            board = chess.Board() if fen.strip() == "startpos" else chess.Board(fen)
+            stockfish_json = {
+                "tactical_flags": compute_tactical_flags(board),
+                "position_flags": compute_position_flags(board),
+            }
+        except Exception:  # noqa: BLE001
+            stockfish_json = {}
     return extract_engine_signal(stockfish_json, fen=fen)
 
 
@@ -748,6 +752,7 @@ def generate_chat_reply(
     move_count: int | None = None,
     coach_voice: str | None = None,
     last_move: str | None = None,
+    stockfish_json: dict | None = None,
     force_deterministic: bool = False,
 ) -> ChatReply:
     """Generate a coaching reply for the current chat turn.
@@ -784,7 +789,7 @@ def generate_chat_reply(
         engine_signal — from extract_engine_signal(); never from LLM.
         mode          — always "CHAT_V1".
     """
-    engine_signal = _chat_engine_signal(fen)
+    engine_signal = _chat_engine_signal(fen, stockfish_json)
 
     # Auto-compact long histories before any processing to reduce token usage.
     if should_compact(messages):

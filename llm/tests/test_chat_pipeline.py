@@ -925,3 +925,27 @@ class TestPipelineBoundaryParity:
         )
         assert result.mode == "CHAT_V1"
         assert result.reply.strip()
+
+
+class TestStockfishSignal:
+    """_chat_engine_signal uses a supplied Stockfish analysis for the TRUE eval,
+    and falls back to material + deterministic flags when none is given."""
+
+    def test_stockfish_json_drives_eval(self):
+        from llm.seca.coach.chat_pipeline import _chat_engine_signal
+
+        sf = {
+            "evaluation": {"type": "mate", "value": 1},
+            "tactical_flags": [],
+            "position_flags": [],
+        }
+        sig = _chat_engine_signal(_STARTING_FEN, sf)
+        assert sig["evaluation"]["type"] == "mate"
+        assert sig["evaluation"]["side"] == "white"
+
+    def test_no_stockfish_falls_back_to_material_and_flags(self):
+        from llm.seca.coach.chat_pipeline import _chat_engine_signal
+
+        sig = _chat_engine_signal(_STARTING_FEN, None)
+        assert sig["evaluation"]["type"] == "cp"
+        assert any(f.startswith("material:") for f in sig["position_flags"])
