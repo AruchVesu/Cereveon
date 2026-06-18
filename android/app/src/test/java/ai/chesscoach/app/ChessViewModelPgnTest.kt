@@ -33,6 +33,9 @@ import org.junit.Test
  *  4b. PGN_HAS_EVENT_HEADER:      exportPGN output starts with [Event PGN header.
  *  4c. PGN_DEFAULT_RESULT_UNKNOWN: exportPGN's default Result header is "*".
  *  4d. PGN_RESULT_HEADER_WRITTEN:  exportPGN(resultTag) writes that Result header.
+ *  4e. PGN_GAMEOVER_HAS_FINAL_MOVE: onGameOver fires with the final move already
+ *                                  in the PGN (no off-by-one drop).
+ *  4f. PGN_NO_AI_MOVE_AFTER_GAMEOVER: no AI move is requested after a game-ending move.
  *  5.  PGN_RESET_CLEARS:           exportPGN returns "(no moves)" after reset().
  *  6.  PGN_HUMAN_FAILED_NOT_ADDED: exportPGN unchanged when human move returns FAILED.
  *  7.  PGN_UCI_E2E4:               Human move (row 6,col 4)→(row 4,col 4) encodes as "e2e4".
@@ -140,6 +143,41 @@ class ChessViewModelPgnTest {
             pgn.contains("""[Result "1-0"]"""),
         )
         assertTrue("Must not fall back to the unknown result", !pgn.contains("""[Result "*"]"""))
+    }
+
+    @Test
+    fun `exportPGN at game-over includes the final move`() {
+        // Regression: onGameOver used to fire BEFORE the move was appended to
+        // moveHistory, so the exported PGN dropped the game-ending move and the
+        // server surfaced the pre-final move as last_move / winner_move.
+        var capturedPgn: String? = null
+        viewModel.onGameOver = { capturedPgn = viewModel.exportPGN() }
+        viewModel.onHumanMove(
+            fr = 6, fc = 4, tr = 4, tc = 4, // e2e4
+            applyHumanMove = { MoveResult.SUCCESS },
+            exportFEN = { "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b" },
+            applyAIMove = { _, _, _, _ -> '.' },
+            consumeGameOver = { GameResult.WHITE_WINS }, // this move ends the game
+        )
+        advanceUntilIdle()
+        assertTrue(
+            "onGameOver must fire with the final move (e2e4) already in the PGN",
+            capturedPgn?.contains("e2e4") == true,
+        )
+    }
+
+    @Test
+    fun `no AI move is requested after a game-over human move`() {
+        var aiMoveApplied = false
+        viewModel.onHumanMove(
+            fr = 6, fc = 4, tr = 4, tc = 4,
+            applyHumanMove = { MoveResult.SUCCESS },
+            exportFEN = { "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b" },
+            applyAIMove = { _, _, _, _ -> aiMoveApplied = true; '.' },
+            consumeGameOver = { GameResult.WHITE_WINS },
+        )
+        advanceUntilIdle()
+        assertTrue("AI must not move after a game-ending human move", !aiMoveApplied)
     }
 
     @Test

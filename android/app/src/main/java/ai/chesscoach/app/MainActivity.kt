@@ -265,7 +265,8 @@ class MainActivity : AppCompatActivity() {
                             updateChapterHeader()
                             persistInProgressSnapshot()
                         }
-                    }
+                    },
+                    consumeGameOver = { chessBoard.consumePendingGameOver() },
                 )
             } else {
                 Toast.makeText(this, "Engine not available", Toast.LENGTH_SHORT).show()
@@ -476,7 +477,7 @@ class MainActivity : AppCompatActivity() {
         chessBoard.coachListener = { comment -> coachText.text = comment }
         chessBoard.promotionListener = { r, c -> showPromotionDialog(r, c) }
 
-        chessBoard.onGameOver = { result ->
+        viewModel.onGameOver = { result ->
             // PGN Result header (White="Player", Black="Engine") so the server
             // can derive the winner's last move for the history list. Without
             // it the PGN carried "*" and every game's winner move was blank.
@@ -1340,7 +1341,8 @@ class MainActivity : AppCompatActivity() {
             chessBoard.promotePawn(r, c, piece)
             viewModel.onPromotionFinished(
                 exportFEN = { chessBoard.exportFEN() },
-                applyAIMove = { afr, afc, atr, atc -> chessBoard.applyAIMove(afr, afc, atr, atc) }
+                applyAIMove = { afr, afc, atr, atc -> chessBoard.applyAIMove(afr, afc, atr, atc) },
+                consumeGameOver = { chessBoard.consumePendingGameOver() },
             )
             dialog.dismiss()
         }
