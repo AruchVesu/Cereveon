@@ -36,9 +36,8 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
 from llm.seca.coach.context_compact import compact_history, should_compact
-from llm.seca.coach.chat_pipeline import ChatTurn, _build_chat_prompt
+from llm.seca.coach.chat_pipeline import ChatTurn, _build_chat_prompt, _chat_engine_signal
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +142,7 @@ def stream_chat_reply(
     ``StreamAbort`` (the route then serves the deterministic fallback).
     Never raises to the caller — every failure path becomes a ``StreamAbort``.
     """
-    engine_signal = extract_engine_signal({}, fen=fen)
+    engine_signal = _chat_engine_signal(fen)
 
     if should_compact(messages):
         messages = compact_history(messages)
