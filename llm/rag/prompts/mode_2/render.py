@@ -1,8 +1,6 @@
 import json
 from pathlib import Path
 
-from llm.rag.prompts.board_summary import describe_position
-
 
 def load_text(path: Path) -> str:
     return path.read_text(encoding="utf-8").strip()
@@ -26,17 +24,6 @@ def render_mode_2_prompt(
     rag_text = "\n\n".join(rag_blocks) if rag_blocks else "(no retrieved context)"
 
     safe_fen = "".join(c if c >= "\x20" else " " for c in fen)
-    board_desc = describe_position(fen)
-    position_lines = [f"FEN: {safe_fen}"]
-    if board_desc:
-        position_lines.append(board_desc)
-        position_lines.append(
-            '\nUse the piece list above as the source of truth for what is on '
-            'the board. In your reply, name pieces and squares in plain language '
-            '(e.g. "your f-pawn", "the kingside") — never in coordinate or move '
-            "notation."
-        )
-    position_block = "\n".join(position_lines)
 
     prompt = f"""{system_prompt}
 
@@ -53,7 +40,7 @@ RETRIEVED CONTEXT (REFERENCE)
 ────────────────────────────
 POSITION
 ────────────────────────────
-{position_block}
+FEN: {safe_fen}
 
 ────────────────────────────
 USER REQUEST

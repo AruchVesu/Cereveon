@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import json
 
-from llm.rag.prompts.board_summary import describe_position
-
 
 _BAND_LABEL: dict[str, str] = {
     "equal": "equal",
@@ -95,20 +93,13 @@ def render_mode_1_prompt(
         rag_block = "\n\nREFERENCE CONTEXT:\n" + "\n".join(f"• {s}" for s in snippets)
 
     safe_fen = "".join(c if c >= "\x20" else " " for c in fen)
-    board_desc = describe_position(fen)
-    board_block = (
-        f"\n{board_desc}\n(The piece list is the source of truth; describe "
-        "pieces in plain language, not coordinate or move notation.)"
-        if board_desc
-        else ""
-    )
 
     prompt = f"""{system_prompt}
 
 ────────────────────────────
 POSITION CONTEXT
 ────────────────────────────
-FEN: {safe_fen}{board_block}
+FEN: {safe_fen}
 Player level: {level}
 Player colour: {player_color}
 Move quality: {move_quality}
