@@ -361,6 +361,7 @@ def _build_hint_llm(
         rag_docs=rag_docs,
         player_color=player_color,
         last_move_phrase=describe_move_plain(fen, uci),
+        last_move_uci=uci,
     )
     response = _call_llm(prompt).strip()
     if not response:
