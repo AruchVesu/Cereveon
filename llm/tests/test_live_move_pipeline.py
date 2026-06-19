@@ -176,6 +176,20 @@ class TestLiveMoveReplyInvariants:
         assert result.engine_signal["evaluation"]["side"] == "white"
         assert "you secure the decisive outcome" in result.hint.lower(), result.hint
 
+    def test_advanced_mate_fallback_uses_safeexplainer_second_person(self):
+        """Advanced style consumes the SafeExplainer base explanation instead
+        of the _build_hint eval sentence, so the mate phrasing on that path
+        must ALSO read in the second person for a winning player — confirms
+        SafeExplainer.explain receives the derived player colour."""
+        fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1"
+        sf = {"evaluation": {"type": "mate", "value": 1}}
+        with _patch_llm_unavailable():
+            result = generate_live_reply(
+                fen, _UCI_NORMAL, explanation_style="advanced", stockfish_json=sf
+            )
+        assert "you are winning" in result.hint.lower(), result.hint
+        assert "white is winning" not in result.hint.lower(), result.hint
+
     def test_move_quality_is_string(self):
         with _patch_llm_unavailable():
             result = generate_live_reply(_STARTING_FEN, _UCI_NORMAL)

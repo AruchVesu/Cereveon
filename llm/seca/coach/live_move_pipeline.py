@@ -464,13 +464,19 @@ def generate_live_reply(
                     )
 
     # --- Deterministic fallback ---
-    base_explanation = _safe_explainer.explain(engine_signal)
+    # Derive the player's colour once and thread it through both the
+    # SafeExplainer base explanation (surfaced in advanced style) and the
+    # hint builder, so the mate phrasing reads in the second person across
+    # every style — advanced consumes base_explanation instead of the
+    # _build_hint eval sentence, so it needs the colour too.
+    player_color = _derive_player_color(fen)
+    base_explanation = _safe_explainer.explain(engine_signal, player_color=player_color)
     hint = _build_hint(
         uci,
         engine_signal,
         base_explanation,
         explanation_style=explanation_style,
-        player_color=_derive_player_color(fen),
+        player_color=player_color,
     )
     return LiveMoveReply(
         hint=hint,
