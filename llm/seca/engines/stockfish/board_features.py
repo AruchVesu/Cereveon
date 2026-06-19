@@ -42,15 +42,28 @@ _PIECE_VALUES: dict[int, int] = {
 def _hanging_sides(board: chess.Board) -> set[chess.Color]:
     """Return the set of colors whose pieces include at least one hanger.
 
-    A piece is considered hanging if it is attacked by at least one
-    enemy piece and defended by zero friendly pieces.  Kings are
-    excluded — kings have their own check semantics.  This is a coarse
-    flag, not a tactical solver; deeper threats (overloaded defender,
-    pin-and-fork, x-ray) are out of scope.
+    A non-pawn piece (knight, bishop, rook, or queen) is considered
+    hanging if it is attacked by at least one enemy piece and defended
+    by zero friendly pieces.
+
+    Kings are excluded (own check semantics) and so are PAWNS: pawn
+    tension — a pawn attacked by an enemy pawn or piece it isn't
+    defended against — is normal play, not a hanging "piece", and was
+    the dominant false-positive source.  A thematic Grünfeld ``c5`` (a
+    pawn under the standard ``d4`` tension) and a just-pushed ``h5``
+    both read as ``hanging_piece`` at a near-equal engine evaluation,
+    and the coach then told the player a "valuable piece" was hanging
+    "for free" (Mode-1 complex-position probe, 2026-06-19).  The flag's
+    name and the coach phrasing both mean a real piece; pawn grabs are
+    already conveyed by the evaluation band.
+
+    This is a coarse flag, not a tactical solver; deeper subtleties (a
+    pinned attacker that cannot actually capture, an overloaded
+    defender, an x-ray) remain out of scope.
     """
     hanging: set[chess.Color] = set()
     for square, piece in board.piece_map().items():
-        if piece.piece_type == chess.KING:
+        if piece.piece_type in (chess.KING, chess.PAWN):
             continue
         attackers = board.attackers(not piece.color, square)
         if not attackers:
