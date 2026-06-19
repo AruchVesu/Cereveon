@@ -22,6 +22,8 @@ Stable test IDs (do NOT rename):
   BF_TACT_01   no hanging pieces on the starting position
   BF_TACT_02   black queen on b4 attacked by white pawn → black hangs
   BF_TACT_03   side-to-move in check produces the matching check flag
+  BF_TACT_04   pawn tension (pawn attacked & undefended) is NOT a hanging piece
+  BF_TACT_05   a real piece still hangs after the pawn exclusion
   BF_KS_01     starting position king-safety is loose for both sides
   BF_KS_02     post-O-O king on g1 with pawn shield is safe
   BF_PAWN_01   doubled pawns on c-file flagged
@@ -114,7 +116,7 @@ class TestDeterminism(unittest.TestCase):
 
 
 class TestTacticalFlags(unittest.TestCase):
-    """BF_TACT_01..03 — hanging pieces and check detection."""
+    """BF_TACT_01..05 — hanging pieces and check detection."""
 
     def test_starting_position_has_no_hanging_pieces(self):
         """BF_TACT_01."""
@@ -129,6 +131,25 @@ class TestTacticalFlags(unittest.TestCase):
         board = chess.Board(
             "rnbqkb1r/pppppppp/8/8/1n6/2P5/PP1PPPPP/RNBQKBNR w KQkq - 0 1"
         )
+        flags = compute_tactical_flags(board)
+        self.assertIn("hanging_piece:black", flags)
+
+    def test_pawn_tension_is_not_a_hanging_piece(self):
+        """BF_TACT_04.  A pawn attacked-and-undefended (normal pawn tension)
+        must NOT raise ``hanging_piece`` — the flag means a real piece, not a
+        pawn.  Here White's d4 and Black's c5 attack each other and neither is
+        defended; the old code flagged BOTH sides (the Grünfeld-c5 / h5-push
+        false-positive class, Mode-1 probe 2026-06-19)."""
+        board = chess.Board("4k3/8/8/2p5/3P4/8/8/4K3 w - - 0 1")
+        flags = compute_tactical_flags(board)
+        self.assertNotIn("hanging_piece:white", flags)
+        self.assertNotIn("hanging_piece:black", flags)
+
+    def test_real_piece_still_hangs_after_pawn_exclusion(self):
+        """BF_TACT_05.  Excluding pawns must not suppress a genuinely hanging
+        PIECE: a black queen attacked by a white knight and undefended is still
+        ``hanging_piece:black``."""
+        board = chess.Board("4k3/8/8/8/3q4/5N2/8/4K3 w - - 0 1")
         flags = compute_tactical_flags(board)
         self.assertIn("hanging_piece:black", flags)
 
