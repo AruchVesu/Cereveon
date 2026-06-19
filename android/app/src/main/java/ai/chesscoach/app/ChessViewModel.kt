@@ -166,7 +166,12 @@ $moves"""
         val requestId = stateId
 
         viewModelScope.launch(ioDispatcher) {
-            val result = withContext(Dispatchers.Main) { applyHumanMove() }
+            // Capture the pre-move FEN in the same Main hop, BEFORE applying the
+            // move (exportFEN() is evaluated first), so the coach can grade move
+            // quality from the eval swing fen_before -> post-move fen.
+            val (fenBeforeHuman, result) = withContext(Dispatchers.Main) {
+                exportFEN() to applyHumanMove()
+            }
 
             withContext(Dispatchers.Main) {
                 if (stateId != requestId) return@withContext
@@ -185,7 +190,7 @@ $moves"""
                         } else {
                             turn = Turn.AI
                             val fenAfterHuman = exportFEN()
-                            dispatchHumanMoveCoach(fenAfterHuman, humanUci, requestId)
+                            dispatchHumanMoveCoach(fenAfterHuman, humanUci, fenBeforeHuman, requestId)
                             requestAIMove(exportFEN, applyAIMove, consumeGameOver)
                         }
                     }
@@ -292,6 +297,7 @@ $moves"""
     private fun dispatchHumanMoveCoach(
         fen: String,
         uci: String,
+        fenBefore: String,
         requestId: Long,
     ) {
         val liveClient = liveCoachClient ?: return
@@ -308,7 +314,12 @@ $moves"""
             return
         }
         viewModelScope.launch(ioDispatcher) {
-            val liveResult = if (uci.length in 4..5) liveClient.getLiveCoaching(fen, uci) else null
+            val liveResult =
+                if (uci.length in 4..5) {
+                    liveClient.getLiveCoaching(fen, uci, fenBefore = fenBefore)
+                } else {
+                    null
+                }
             withContext(Dispatchers.Main) {
                 if (stateId != requestId) return@withContext
                 val liveSuccess = liveResult as? ApiResult.Success

@@ -49,6 +49,7 @@ class ChessViewModelSecaGateTest {
             fen: String,
             uci: String,
             playerId: String,
+            fenBefore: String?,
         ): ApiResult<LiveMoveResponse> {
             callCount++
             return ApiResult.Success(
@@ -86,7 +87,9 @@ class ChessViewModelSecaGateTest {
             applyHumanMove = { MoveResult.SUCCESS },
             exportFEN = {
                 fenCallCount++
-                if (fenCallCount <= 2) {
+                // <= 3 (was 2): onHumanMove now also calls exportFEN once before
+                // applyHumanMove to capture the pre-move FEN for move quality.
+                if (fenCallCount <= 3) {
                     "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
                 } else {
                     "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"

@@ -42,6 +42,8 @@ import org.junit.Test
  *  5. INT_LIVE_FEN_IN_BODY      fen field present in request JSON.
  *  6. INT_LIVE_UCI_IN_BODY      uci field present in request JSON.
  *  7. INT_LIVE_PLAYER_ID_BODY   player_id field present in request JSON.
+ *  7b.INT_LIVE_FEN_BEFORE_IN_BODY   fen_before present when supplied (move-quality input).
+ *  7c.INT_LIVE_FEN_BEFORE_ABSENT    fen_before omitted (not null) when not supplied.
  *  8. INT_LIVE_HINT_PARSED      hint field deserialised correctly.
  *  9. INT_LIVE_MODE_PARSED      mode field deserialised correctly.
  * 10. INT_LIVE_QUALITY_PARSED   move_quality field deserialised correctly.
@@ -225,6 +227,30 @@ class LiveMoveApiClientIntegrationTest {
         client().getLiveCoaching(startingFen, testUci, playerId = "test-player")
         val body = JSONObject(server.takeRequest(10, TimeUnit.SECONDS)!!.body.readUtf8())
         assertEquals("test-player", body.getString("player_id"))
+    }
+
+    @Test
+    fun `INT_LIVE_FEN_BEFORE_IN_BODY - fen_before present when supplied`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(LIVE_OK_BODY))
+        val before = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        client().getLiveCoaching(startingFen, testUci, fenBefore = before)
+        val body = JSONObject(server.takeRequest(10, TimeUnit.SECONDS)!!.body.readUtf8())
+        assertEquals(
+            "fen_before must carry the pre-move FEN so the server can grade move quality",
+            before,
+            body.getString("fen_before"),
+        )
+    }
+
+    @Test
+    fun `INT_LIVE_FEN_BEFORE_ABSENT - fen_before omitted when not supplied`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(LIVE_OK_BODY))
+        client().getLiveCoaching(startingFen, testUci)
+        val body = JSONObject(server.takeRequest(10, TimeUnit.SECONDS)!!.body.readUtf8())
+        assertTrue(
+            "fen_before must be omitted (not null) when not supplied — encodeDefaults=false",
+            !body.has("fen_before"),
+        )
     }
 
     // ---------------------------------------------------------------------------

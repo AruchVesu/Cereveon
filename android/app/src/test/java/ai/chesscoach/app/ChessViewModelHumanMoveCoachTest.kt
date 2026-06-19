@@ -47,15 +47,18 @@ class ChessViewModelHumanMoveCoachTest {
         var callCount = 0
         var lastFen: String? = null
         var lastUci: String? = null
+        var lastFenBefore: String? = null
 
         override suspend fun getLiveCoaching(
             fen: String,
             uci: String,
             playerId: String,
+            fenBefore: String?,
         ): ApiResult<LiveMoveResponse> {
             callCount++
             lastFen = fen
             lastUci = uci
+            lastFenBefore = fenBefore
             return result
         }
     }
@@ -83,14 +86,23 @@ class ChessViewModelHumanMoveCoachTest {
         capturedPiece: Char = '.',
         humanFen: String = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
         aiAfterFen: String = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+        preFen: String = humanFen,
     ) {
+        // exportFEN call order in onHumanMove + requestAIMove:
+        //   #1 pre-move capture (fenBefore), #2 fenAfterHuman, #3 AI-input,
+        //   #4+ post-AI.  Calls 1-3 are the "before AI" position; only call 4+
+        //   is the post-AI position (was <= 2 before the pre-move capture).
         var fenCallCount = 0
         vm.onHumanMove(
             fr = 6, fc = 4, tr = 4, tc = 4,
             applyHumanMove = { MoveResult.SUCCESS },
             exportFEN = {
                 fenCallCount++
-                if (fenCallCount <= 2) humanFen else aiAfterFen
+                when {
+                    fenCallCount == 1 -> preFen
+                    fenCallCount <= 3 -> humanFen
+                    else -> aiAfterFen
+                }
             },
             applyAIMove = { _, _, _, _ -> capturedPiece },
         )
@@ -132,6 +144,34 @@ class ChessViewModelHumanMoveCoachTest {
 
         assertEquals(
             "getLiveCoaching must use the FEN after human's move, not after AI's move",
+            humanFen,
+            liveClient.lastFen,
+        )
+    }
+
+    // ------------------------------------------------------------------
+    // 2b. fenBefore passed to getLiveCoaching is the PRE-move FEN (so the
+    //     server can grade move quality from the eval swing).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `getLiveCoaching receives the pre-move FEN as fenBefore`() {
+        val preFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        val humanFen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+        val liveClient = RecordingLiveClient(liveSuccess())
+        val vm = ChessViewModel(FakeEngine(), testDispatcher, NeutralEvalClient())
+        vm.liveCoachClient = liveClient
+
+        playMove(vm, humanFen = humanFen, preFen = preFen)
+        vm.viewModelScope.cancel(); scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "fenBefore must be the position BEFORE the human move (captured pre-applyHumanMove)",
+            preFen,
+            liveClient.lastFenBefore,
+        )
+        assertEquals(
+            "fen must still be the position AFTER the human move",
             humanFen,
             liveClient.lastFen,
         )

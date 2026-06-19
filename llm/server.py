@@ -51,6 +51,7 @@ from llm.seca.engines.stockfish.pool import (
     StockfishEnginePool,
 )
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
+from llm.rag.engine_signal.move_quality import classify_move_quality, eval_to_player_cp
 
 # NOTE (PR 10): ``generate_validated_explanation`` was previously
 # imported here as a "leave it ready for future wiring" placeholder.
@@ -1185,6 +1186,18 @@ async def live_move(
                 exc,
             )
 
+    # Move quality from the before->after eval swing.  Only when the client
+    # sent the pre-move FEN and we have a post-move eval to compare against;
+    # otherwise last_move_quality stays "unknown" (the pre-feature behaviour),
+    # so the coach won't blame a good move for a position that was already
+    # difficult.  Injected into the signal; extract_engine_signal reads it.
+    if stockfish_json is not None and req.fen_before:
+        quality = await _live_move_quality(
+            req.fen_before, req.fen, req.uci, stockfish_json
+        )
+        if quality:
+            stockfish_json.setdefault("errors", {})["last_move_quality"] = quality
+
     result = await asyncio.to_thread(
         generate_live_reply,
         req.fen,
@@ -1576,6 +1589,50 @@ async def _chat_stockfish_json(fen: str) -> dict | None:
             exc,
         )
         return None
+
+
+async def _live_move_quality(
+    fen_before: str, fen_after: str, uci: str, post_eval: dict
+) -> str | None:
+    """Grade the player's move from the eval swing fen_before -> fen_after.
+
+    Runs a second best-effort Stockfish eval on the PRE-move position (the
+    post-move eval is reused from ``post_eval``), converts both to the mover's
+    perspective, and classifies the centipawn loss.  Returns ``None`` — leaving
+    ``last_move_quality`` as "unknown" — when the pool is absent, the engine
+    fails, or ``fen_before`` + ``uci`` does not actually reach ``fen_after``
+    (an integrity check against a stale or spoofed pre-move FEN).  See
+    ``llm.rag.engine_signal.move_quality``.
+    """
+    if engine_pool is None:
+        return None
+    try:
+        before_board = chess.Board(fen_before)
+        mover_is_white = before_board.turn == chess.WHITE
+        before_board.push(chess.Move.from_uci(uci))
+        # EPD ignores the half/full-move counters, so a benign counter drift in
+        # the client's two FENs doesn't reject an otherwise-matching position.
+        if before_board.epd() != chess.Board(fen_after).epd():
+            return None
+    except (ValueError, IndexError):
+        return None
+
+    try:
+        before_eval = await asyncio.to_thread(
+            engine_pool.evaluate_position, fen=fen_before, movetime_ms=200
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Stockfish pre-move eval failed for /live/move quality (%s: %s); "
+            "leaving move quality unknown",
+            type(exc).__name__,
+            exc,
+        )
+        return None
+
+    cp_before = eval_to_player_cp(before_eval.get("evaluation", {}), mover_is_white)
+    cp_after = eval_to_player_cp(post_eval.get("evaluation", {}), mover_is_white)
+    return classify_move_quality(cp_before, cp_after)
 
 
 @app.post("/chat")

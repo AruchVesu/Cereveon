@@ -97,7 +97,9 @@ class ChessViewModelEngineEvalTest {
             applyHumanMove = { MoveResult.SUCCESS },
             exportFEN = {
                 fenCallCount++
-                if (fenCallCount <= 2) fenBeforeAI else fenAfterAI
+                // <= 3 (was 2): onHumanMove now calls exportFEN once before
+                // applyHumanMove to capture the pre-move FEN for move quality.
+                if (fenCallCount <= 3) fenBeforeAI else fenAfterAI
             },
             applyAIMove = { _, _, _, _ -> capturedPiece },
         )

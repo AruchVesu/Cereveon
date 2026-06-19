@@ -252,5 +252,47 @@ class TestRenderMode1EngineFacts(unittest.TestCase):
         self.assertNotIn("ENGINE FACTS", prompt)
 
 
+class TestRenderMode1MoveQualityGuidance(unittest.TestCase):
+    """When move quality is known (the handler graded the eval swing), the
+    prompt tells the LLM to judge the MOVE by that grade rather than by who is
+    currently ahead — the move-blame fix.  Dormant when quality is 'unknown'."""
+
+    # FEN side-to-move "b" => player just moved => player is White.  Engine
+    # side=black means the OPPONENT is ahead — the move-blame scenario.
+    _FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+
+    @staticmethod
+    def _signal(quality: str) -> dict:
+        return {
+            "evaluation": {"type": "cp", "band": "small_advantage", "side": "black"},
+            "eval_delta": "stable",
+            "last_move_quality": quality,
+            "tactical_flags": [],
+            "position_flags": [],
+            "phase": "opening",
+        }
+
+    def test_known_quality_adds_judge_by_move_guidance(self):
+        prompt = render_mode_1_prompt(
+            system_prompt="<SYS>",
+            engine_signal=self._signal("good"),
+            fen=self._FEN,
+            explanation_style="intermediate",
+            player_color="white",
+        )
+        self.assertIn("Move quality: good", prompt)
+        self.assertIn("Judge the move by THAT", prompt)
+
+    def test_unknown_quality_omits_guidance(self):
+        prompt = render_mode_1_prompt(
+            system_prompt="<SYS>",
+            engine_signal=self._signal("unknown"),
+            fen=self._FEN,
+            explanation_style="intermediate",
+            player_color="white",
+        )
+        self.assertNotIn("Judge the move by THAT", prompt)
+
+
 if __name__ == "__main__":  # pragma: no cover - manual runner
     unittest.main()
