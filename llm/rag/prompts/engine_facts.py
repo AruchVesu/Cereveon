@@ -5,8 +5,10 @@ The chat coach used to hallucinate tactics because its engine signal carried no
 board facts (the chat path passes an empty ``stockfish_json``).  These helpers
 turn the closed-vocabulary flags from ``board_features`` / ``flag_vocabulary``
 into sentences the coach can ground on, and describe what the player's last move
-attacks — all from the player's (White's) perspective and all coordinate-free
-(no ``<file><rank>`` token), so they never trip the no-notation output rule.
+attacks — framed from the player's perspective (White by default, since chat
+always coaches White; Mode-1 passes the player's actual colour) and all
+coordinate-free (no ``<file><rank>`` token), so they never trip the no-notation
+output rule.
 """
 
 from __future__ import annotations
@@ -15,8 +17,10 @@ import chess
 
 from llm.rag.prompts.move_phrase import _PAWN_DESC, _PIECE_NAME
 
-# Closed-vocab flag -> player-perspective sentence (player is always White, so
-# white == "you", black == "your opponent").  Mirrors flag_vocabulary exactly.
+# Closed-vocab flag -> sentence, keyed WHITE-RELATIVE (white == "you", black ==
+# "your opponent").  Mirrors flag_vocabulary exactly.  For a Black player the
+# flag's colour token is swapped (``_flip_color``) before lookup, which reuses
+# these same entries with the correct "you" / "your opponent" phrasing.
 _FLAG_FACT: dict[str, str] = {
     "hanging_piece:white": "You have an undefended piece under attack.",
     "hanging_piece:black": "Your opponent has an undefended piece under attack.",
@@ -54,20 +58,25 @@ _FLAG_FACT: dict[str, str] = {
 }
 
 
-def _eval_fact(evaluation: dict) -> str:
+def _eval_fact(evaluation: dict, player_color: str = "white") -> str:
     """Player-perspective sentence for the eval band / mate, or "" if unknown.
 
-    With a real Stockfish signal this is the TRUE evaluation (so an even-material
-    but winning position reads as winning, not "equal"); with the material-only
-    fallback it's the material band.  Band/mate vocabulary only — validator-safe.
+    ``player_color`` is whose seat "you" refers to (chat is always White, the
+    default; Mode-1 may be Black).  The engine ``side`` field is board-absolute,
+    so the subject is "you" when ``side == player_color`` and "your opponent"
+    otherwise.  With a real Stockfish signal this is the TRUE evaluation (so an
+    even-material but winning position reads as winning, not "equal"); with the
+    material-only fallback it's the material band.  Band/mate vocabulary only —
+    validator-safe.
     """
     if not isinstance(evaluation, dict):
         return ""
+    you = player_color if player_color in ("white", "black") else "white"
     side = evaluation.get("side")
     if evaluation.get("type") == "mate":
-        if side == "white":
+        if side == you:
             return "The engine sees a forced checkmate in your favour."
-        if side == "black":
+        if side in ("white", "black"):
             return "The engine sees a forced checkmate for your opponent."
         return "The engine sees a forced checkmate on the board."
     band = evaluation.get("band")
@@ -75,7 +84,7 @@ def _eval_fact(evaluation: dict) -> str:
         return "The engine evaluates the position as roughly equal."
     if side not in ("white", "black"):
         return ""
-    subject = "you" if side == "white" else "your opponent"
+    subject = "you" if side == you else "your opponent"
     degree = {
         "small_advantage": "a slight edge",
         "clear_advantage": "a clear advantage",
@@ -86,26 +95,53 @@ def _eval_fact(evaluation: dict) -> str:
     return f"The engine gives {subject} {degree}."
 
 
-def render_engine_facts(engine_signal: dict) -> list[str]:
+def _flip_color(flag: str) -> str:
+    """Swap white<->black in a flag string for the black-player perspective.
+
+    ``_FLAG_FACT`` is keyed white-relative (white == "you").  When the player is
+    Black, ``hanging_piece:white`` describes the OPPONENT — which is exactly what
+    ``hanging_piece:black`` already says — so flipping the colour token and
+    reusing the existing entry yields the correct "you" / "your opponent"
+    phrasing with no duplicated table.  The simultaneous swap uses a NUL
+    placeholder (the closed-vocab flags never contain one).
+    """
+    return flag.replace("white", "\x00").replace("black", "white").replace("\x00", "black")
+
+
+def render_engine_facts(
+    engine_signal: dict,
+    *,
+    player_color: str = "white",
+    include_eval: bool = True,
+) -> list[str]:
     """Plain-English, player-perspective facts from the engine signal.
 
-    Leads with the eval band / mate (the headline), then the tactical/position
-    flags.  Order-stable and de-duplicated.  Unknown labels are skipped (the
-    closed vocabulary should never produce one).
+    Leads with the eval band / mate (the headline) unless ``include_eval`` is
+    False, then the tactical/position flags.  Order-stable and de-duplicated.
+    Unknown labels are skipped (the closed vocabulary should never produce one).
+
+    ``player_color`` is whose seat "you" refers to.  Chat is always White (the
+    default); Mode-1 derives it from the post-move FEN and may be Black, in which
+    case the white-relative ``_FLAG_FACT`` entries are colour-flipped so
+    "you" / "your opponent" stay correct.  ``include_eval=False`` omits the
+    leading eval-band fact — Mode-1 already frames the evaluation in its POSITION
+    CONTEXT and only needs the tactical / positional flag facts.
     """
     facts: list[str] = []
     seen: set[str] = set()
 
-    eval_fact = _eval_fact(engine_signal.get("evaluation") or {})
-    if eval_fact:
-        seen.add(eval_fact)
-        facts.append(eval_fact)
+    if include_eval:
+        eval_fact = _eval_fact(engine_signal.get("evaluation") or {}, player_color)
+        if eval_fact:
+            seen.add(eval_fact)
+            facts.append(eval_fact)
 
+    flip = player_color == "black"
     flags = list(engine_signal.get("tactical_flags") or []) + list(
         engine_signal.get("position_flags") or []
     )
     for flag in flags:
-        sentence = _FLAG_FACT.get(flag)
+        sentence = _FLAG_FACT.get(_flip_color(flag) if flip else flag)
         if sentence and sentence not in seen:
             seen.add(sentence)
             facts.append(sentence)

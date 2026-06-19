@@ -96,6 +96,74 @@ def test_describe_threats_unparseable_returns_empty(fen, uci):
     assert describe_threats(fen, uci) == ""
 
 
+class TestPlayerColorPerspective:
+    """render_engine_facts / _eval_fact frame "you" from the PLAYER's seat.
+
+    Chat is always White (the default).  Mode-1 may coach Black, in which case
+    the white-relative ``_FLAG_FACT`` table is colour-flipped so "you" / "your
+    opponent" stay correct.  This is the grounding parity added so Mode-1 stops
+    hallucinating tactics on complex positions.
+    """
+
+    _SIGNAL = {
+        "evaluation": {"type": "cp", "band": "clear_advantage", "side": "white"},
+        "tactical_flags": ["hanging_piece:white"],
+        "position_flags": ["king_safety:black_exposed", "material:white_up_piece"],
+    }
+
+    def test_white_player_default_is_white_relative(self):
+        facts = render_engine_facts(self._SIGNAL)  # default player_color="white"
+        assert "The engine gives you a clear advantage." in facts
+        assert "You have an undefended piece under attack." in facts
+        assert "Your opponent's king is exposed." in facts
+        assert "You are up a piece." in facts
+
+    def test_black_player_flips_every_fact(self):
+        facts = render_engine_facts(self._SIGNAL, player_color="black")
+        # eval: engine side=white, player=black -> opponent
+        assert "The engine gives your opponent a clear advantage." in facts
+        # hanging_piece:white now describes the OPPONENT (White)
+        assert "Your opponent has an undefended piece under attack." in facts
+        # king_safety:black_exposed now describes YOU (Black)
+        assert "Your king is exposed." in facts
+        # material:white_up_piece -> opponent is up a piece
+        assert "Your opponent is up a piece." in facts
+        # the white-relative phrasings must NOT leak through
+        assert "You have an undefended piece under attack." not in facts
+        assert "You are up a piece." not in facts
+
+    def test_include_eval_false_drops_only_the_eval_fact(self):
+        facts = render_engine_facts(self._SIGNAL, include_eval=False)
+        assert all(not f.startswith("The engine") for f in facts)
+        # flag facts are still present
+        assert "You have an undefended piece under attack." in facts
+        assert "You are up a piece." in facts
+
+    def test_eval_fact_black_player_perspective(self):
+        # White delivers mate, player is Black -> "for your opponent".
+        assert (
+            _eval_fact({"type": "mate", "side": "white"}, "black")
+            == "The engine sees a forced checkmate for your opponent."
+        )
+        # Black delivers mate, player is Black -> "in your favour".
+        assert (
+            _eval_fact({"type": "mate", "side": "black"}, "black")
+            == "The engine sees a forced checkmate in your favour."
+        )
+        # cp band, engine side=white, player black -> opponent.
+        assert (
+            _eval_fact({"type": "cp", "band": "decisive_advantage", "side": "white"}, "black")
+            == "The engine gives your opponent a decisive, likely winning advantage."
+        )
+
+    def test_eval_fact_default_player_color_is_white(self):
+        # Back-compat: omitting player_color keeps the white-relative phrasing.
+        assert (
+            _eval_fact({"type": "cp", "band": "clear_advantage", "side": "white"})
+            == "The engine gives you a clear advantage."
+        )
+
+
 def test_no_fact_or_threat_contains_chess_notation():
     eval_samples = [
         _eval_fact({"type": "mate", "side": "white"}),

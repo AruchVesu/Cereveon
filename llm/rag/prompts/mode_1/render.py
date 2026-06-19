@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 
+from llm.rag.prompts.engine_facts import describe_threats, render_engine_facts
+
 
 _BAND_LABEL: dict[str, str] = {
     "equal": "equal",
@@ -34,6 +36,7 @@ def render_mode_1_prompt(
     rag_docs: list[dict] | None = None,
     player_color: str = "unknown",
     last_move_phrase: str = "",
+    last_move_uci: str = "",
 ) -> str:
     """Build the Mode-1 LLM prompt.
 
@@ -60,6 +63,10 @@ def render_mode_1_prompt(
         player was losing (production probe 2026-05-10).  Defaults to
         ``"unknown"`` for backwards compatibility, which falls back to
         the side-neutral phrasing.
+    last_move_uci:
+        The player's move in UCI (e.g. ``"f3g5"``).  Used to describe what
+        the move attacks (``describe_threats``) in the ENGINE FACTS block.
+        Empty → no threat line (back-compat for callers that don't supply it).
     """
     level = _STYLE_TO_LEVEL.get(explanation_style or "intermediate", "intermediate")
 
@@ -98,6 +105,27 @@ def render_mode_1_prompt(
         f"\nLast move played by the player: {last_move_phrase}." if last_move_phrase else ""
     )
 
+    # Authoritative engine-grounding block — mirrors the Mode-2 chat ENGINE
+    # FACTS block (PRs #253/#254).  The tactical/positional flag facts plus what
+    # the last move attacks anchor the LLM so it can't invent threats / pins /
+    # forks / "hanging" pieces that aren't on the board (the Mode-1 complex-
+    # position hallucination class).  The eval is omitted (include_eval=False):
+    # it's already framed above in POSITION CONTEXT.  ``player_color`` flips the
+    # flag perspective so a Black player isn't handed the opponent's facts.
+    fact_lines = render_engine_facts(
+        engine_signal, player_color=player_color, include_eval=False
+    )
+    threat = describe_threats(fen, last_move_uci) if last_move_uci else ""
+    if threat:
+        fact_lines.append(threat[0].upper() + threat[1:])
+    facts_block = ""
+    if fact_lines:
+        facts_block = (
+            "\n\nENGINE FACTS (authoritative — base every tactical or evaluative "
+            "claim ONLY on these and the move above; do NOT invent threats, pins, "
+            "forks, or mates that aren't listed):\n- " + "\n- ".join(fact_lines)
+        )
+
     prompt = f"""{system_prompt}
 
 ────────────────────────────
@@ -111,7 +139,7 @@ Engine evaluation (neutral): {eval_desc}
 After the player's move: {player_perspective}
 Game phase: {phase}
 Engine signal (structured):
-{json.dumps(engine_signal, indent=2)}{rag_block}
+{json.dumps(engine_signal, indent=2)}{rag_block}{facts_block}
 
 ────────────────────────────
 TASK

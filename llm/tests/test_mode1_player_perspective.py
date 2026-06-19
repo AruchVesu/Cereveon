@@ -164,5 +164,93 @@ class TestRenderMode1Prompt(unittest.TestCase):
         self.assertIn('do NOT re-derive', prompt)
 
 
+class TestRenderMode1EngineFacts(unittest.TestCase):
+    """The Mode-1 prompt carries the same authoritative ENGINE FACTS grounding
+    as Mode-2 chat, so the LLM can't invent tactics on complex positions.  The
+    facts are player-perspective (flipped for a Black player) and the eval is
+    NOT duplicated (POSITION CONTEXT already frames it)."""
+
+    _SIGNAL = {
+        "evaluation": {"type": "cp", "band": "small_advantage", "side": "white"},
+        "eval_delta": "stable",
+        "last_move_quality": "unknown",
+        "tactical_flags": [],
+        "position_flags": ["king_safety:black_exposed", "material:white_up_pawn"],
+        "phase": "middlegame",
+    }
+    # FEN side-to-move "b" => player just moved => player is White.
+    _FEN_PLAYER_WHITE = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+    # FEN side-to-move "w" => player is Black.
+    _FEN_PLAYER_BLACK = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1"
+
+    def test_facts_block_present_and_white_relative(self):
+        prompt = render_mode_1_prompt(
+            system_prompt="<SYS>",
+            engine_signal=self._SIGNAL,
+            fen=self._FEN_PLAYER_WHITE,
+            explanation_style="intermediate",
+            player_color="white",
+        )
+        self.assertIn("ENGINE FACTS", prompt)
+        self.assertIn("do NOT invent", prompt)
+        self.assertIn("Your opponent's king is exposed.", prompt)  # black_exposed -> opponent
+        self.assertIn("You are up a pawn.", prompt)  # white_up_pawn -> you
+
+    def test_facts_block_flips_for_black_player(self):
+        prompt = render_mode_1_prompt(
+            system_prompt="<SYS>",
+            engine_signal=self._SIGNAL,
+            fen=self._FEN_PLAYER_BLACK,
+            explanation_style="intermediate",
+            player_color="black",
+        )
+        # Same board flags, but the player is Black: facts must flip.
+        self.assertIn("Your king is exposed.", prompt)  # black_exposed -> you
+        self.assertIn("Your opponent is up a pawn.", prompt)  # white_up_pawn -> opponent
+        self.assertNotIn("You are up a pawn.", prompt)
+
+    def test_threat_line_from_last_move_uci(self):
+        """describe_threats grounds what the last move attacks (the #253 case:
+        4.Ng5 hits f7 near the Black king)."""
+        import chess
+
+        board = chess.Board()
+        for uci in ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "f3g5"]:
+            board.push(chess.Move.from_uci(uci))
+        prompt = render_mode_1_prompt(
+            system_prompt="<SYS>",
+            engine_signal={
+                "evaluation": {"type": "cp", "band": "equal", "side": "white"},
+                "tactical_flags": [],
+                "position_flags": [],
+                "phase": "opening",
+            },
+            fen=board.fen(),
+            explanation_style="intermediate",
+            player_color="white",
+            last_move_uci="f3g5",
+        )
+        self.assertIn("ENGINE FACTS", prompt)
+        self.assertIn("knight", prompt.lower())
+        self.assertIn("around the opponent's king", prompt)
+
+    def test_no_flags_no_threat_means_no_facts_block(self):
+        """Back-compat: empty flags + no last_move_uci => no ENGINE FACTS block,
+        so existing callers (and prompt snapshots) are unchanged."""
+        prompt = render_mode_1_prompt(
+            system_prompt="<SYS>",
+            engine_signal={
+                "evaluation": {"type": "cp", "band": "equal", "side": "white"},
+                "tactical_flags": [],
+                "position_flags": [],
+                "phase": "opening",
+            },
+            fen=self._FEN_PLAYER_WHITE,
+            explanation_style="intermediate",
+            player_color="white",
+        )
+        self.assertNotIn("ENGINE FACTS", prompt)
+
+
 if __name__ == "__main__":  # pragma: no cover - manual runner
     unittest.main()
