@@ -121,10 +121,23 @@ class LiveMoveRequest(BaseModel):
     fen: str
     uci: str
     player_id: str | None = None
+    # Optional position BEFORE the move (the move quality is graded by the
+    # eval swing fen_before -> fen, which the server can't reconstruct from the
+    # post-move FEN alone — a capture/en-passant/promotion loses the captured
+    # piece).  Absent (older clients) -> move quality stays "unknown", the
+    # pre-feature behaviour.  Validated through the same FEN gate as ``fen``.
+    fen_before: str | None = None
 
     @field_validator("fen")
     @classmethod
     def validate_fen(cls, v: str) -> str:
+        return _validate_fen_field(v)
+
+    @field_validator("fen_before")
+    @classmethod
+    def validate_fen_before(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
         return _validate_fen_field(v)
 
     @field_validator("uci")

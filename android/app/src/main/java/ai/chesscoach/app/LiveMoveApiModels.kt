@@ -16,15 +16,23 @@ import kotlinx.serialization.Serializable
 /**
  * Request body for POST /live/move.
  *
- * [fen]       Board position after the move in FEN notation or "startpos".
- * [uci]       The move just played in UCI notation (e.g. "e2e4", "e7e8q").
- * [playerId]  Player identifier; reserved for future profile enrichment.
+ * [fen]        Board position after the move in FEN notation or "startpos".
+ * [uci]        The move just played in UCI notation (e.g. "e2e4", "e7e8q").
+ * [playerId]   Player identifier; reserved for future profile enrichment.
+ * [fenBefore]  Board position BEFORE the move.  Lets the server grade move
+ *              quality from the eval swing fen_before -> fen (it can't
+ *              reconstruct the pre-move position from the post-move FEN — a
+ *              capture/en-passant/promotion loses the captured piece).  Null
+ *              (the default) is dropped from the wire by ``encodeDefaults=false``
+ *              so the server falls back to move_quality "unknown", the
+ *              pre-feature behaviour.
  */
 @Serializable
 data class LiveMoveRequest(
     val fen: String,
     val uci: String,
     @SerialName("player_id") val playerId: String = "demo",
+    @SerialName("fen_before") val fenBefore: String? = null,
 )
 
 /**

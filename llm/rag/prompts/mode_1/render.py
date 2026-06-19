@@ -126,6 +126,20 @@ def render_mode_1_prompt(
             "forks, or mates that aren't listed):\n- " + "\n- ".join(fact_lines)
         )
 
+    # When move quality is known (the client sent the pre-move FEN, so the
+    # handler graded the before->after eval swing), instruct the LLM to judge
+    # the MOVE by that grade rather than by who is currently ahead — this is the
+    # move-blame fix: a good move played in a worse position is still good.
+    # Dormant when quality is "unknown" (older clients / no pre-move FEN).
+    quality_guidance = ""
+    if move_quality and move_quality != "unknown":
+        quality_guidance = (
+            '\nThe "Move quality" line grades the move the player just made. '
+            "Judge the move by THAT — a good move can be played in a worse "
+            "position. Only call it a mistake or blunder when the move quality "
+            "says so, not because the opponent is ahead."
+        )
+
     prompt = f"""{system_prompt}
 
 ────────────────────────────
@@ -148,7 +162,7 @@ Provide your 1–2 sentence coaching feedback for the move just played.
 When you say "you" or "your", it refers to the player (colour shown
 above).  Use the "After the player's move" line as the authoritative
 framing for whose position improved or worsened — do NOT re-derive
-which colour is ahead from the structured engine_signal.side field."""
+which colour is ahead from the structured engine_signal.side field.{quality_guidance}"""
 
     return prompt.strip()
 

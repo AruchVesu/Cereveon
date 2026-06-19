@@ -22,9 +22,12 @@ interface LiveMoveClient {
     /**
      * Fetch a coaching hint for the move just played.
      *
-     * @param fen       Board position after the move in FEN notation.
-     * @param uci       The move just played in UCI notation (e.g. "e2e4").
-     * @param playerId  Player identifier (reserved for future enrichment).
+     * @param fen        Board position after the move in FEN notation.
+     * @param uci        The move just played in UCI notation (e.g. "e2e4").
+     * @param playerId   Player identifier (reserved for future enrichment).
+     * @param fenBefore  Board position BEFORE the move, so the server can grade
+     *                   move quality from the eval swing.  Null (default) omits
+     *                   it; the server then leaves move quality "unknown".
      * @return [ApiResult.Success] with a [LiveMoveResponse] on HTTP 200;
      *         [ApiResult.HttpError] on non-200; [ApiResult.Timeout] on deadline
      *         exceeded; [ApiResult.NetworkError] for all other failures.
@@ -33,6 +36,7 @@ interface LiveMoveClient {
         fen: String,
         uci: String,
         playerId: String = "demo",
+        fenBefore: String? = null,
     ): ApiResult<LiveMoveResponse>
 }
 
@@ -96,6 +100,7 @@ class HttpLiveMoveClient(
         fen: String,
         uci: String,
         playerId: String,
+        fenBefore: String?,
     ): ApiResult<LiveMoveResponse> = http.request(
         path = LIVE_MOVE_PATH,
         method = "POST",
@@ -104,7 +109,7 @@ class HttpLiveMoveClient(
             tokenProvider.invoke()?.let { put("Authorization", "Bearer $it") }
         },
         body = ApiJson.encodeToString(
-            LiveMoveRequest(fen = fen, uci = uci, playerId = playerId)
+            LiveMoveRequest(fen = fen, uci = uci, playerId = playerId, fenBefore = fenBefore)
         ),
         onResponse = { conn -> consumeRefreshedToken(conn, tokenSink) },
         parse = { body -> ApiJson.decodeFromString<LiveMoveResponse>(body) },

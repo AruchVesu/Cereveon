@@ -166,17 +166,19 @@ invalid Bearer returns 401)
 
 ```json
 {
-  "fen":       <string>,
-  "uci":       <string>,
-  "player_id": <string | null>
+  "fen":        <string>,
+  "uci":        <string>,
+  "player_id":  <string | null>,
+  "fen_before": <string | null>
 }
 ```
 
 | Field | Type | Constraints |
 |-------|------|-------------|
-| `fen` | `string` | Valid FEN string; non-empty |
+| `fen` | `string` | Valid FEN string; non-empty. Position **after** the move. |
 | `uci` | `string` | UCI move (4–5 chars, e.g. `"e2e4"`, `"e7e8q"`) |
 | `player_id` | `string \| null` | Optional player identifier |
+| `fen_before` | `string \| null` | Optional — position **before** the move. When present (and `fen_before` + `uci` actually reaches `fen`, an integrity check), the server runs a second Stockfish eval on it and grades move quality from the centipawn swing `fen_before → fen`, surfaced as `engine_signal.last_move_quality` / `move_quality`. The server can't reconstruct the pre-move position from `fen` alone (a capture / en-passant / promotion loses the captured piece), so the client supplies it. Absent/null → `move_quality` stays `"unknown"` (pre-feature behaviour). Validated through the same FEN gate as `fen`. Additive + backward-compatible (no `X-API-Version` bump). |
 
 ### Response
 
