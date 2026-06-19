@@ -77,6 +77,7 @@ from llm.rag.validators.mode_2_negative import validate_mode_2_negative
 from llm.rag.validators.mode_2_semantic import validate_mode_2_semantic
 from llm.seca.coach.chat_pipeline import _format_engine_context
 from llm.seca.coach.live_move_pipeline import _build_hint
+from llm.seca.explainer.safe_explainer import SafeExplainer
 
 
 # ---------------------------------------------------------------------------
@@ -280,4 +281,69 @@ class TestDeterministicMatePlayerPerspective:
             assert not re.search(pattern, hint, re.IGNORECASE), (
                 f"Perspective mate output (player_color={color}) contains the "
                 f"forbidden MATE_CLAIM pattern `{pattern}`: {hint!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# 8  Chat + SafeExplainer mate phrasings — aligned to the same second person
+# ---------------------------------------------------------------------------
+
+
+class TestChatAndExplainerMatePerspective:
+    """The chat deterministic fallback (``_format_engine_context``) and
+    ``SafeExplainer.explain`` mate phrasings are framed in the second person
+    when the player's colour is known — aligned with the Mode-1 hint — and
+    must still pass both Mode-2 gates.  Unknown colour keeps the third
+    person, so neutral callers (/analyze, the inference pipeline) and the
+    existing gate pins above are unaffected.
+
+    Side comparison is case-insensitive (this fixture uses ``"White"``;
+    production emits lowercase)."""
+
+    def test_chat_mating_side_says_you_and_passes_gates(self):
+        sentence = _format_engine_context(_MATE_ENGINE_SIGNAL, player_color="white")
+        assert "you secure the decisive outcome" in sentence.lower()
+        assert "white secures" not in sentence.lower()
+        validate_mode_2_negative(sentence)
+        validate_mode_2_semantic(sentence, _MATE_ENGINE_SIGNAL)
+
+    def test_chat_mated_side_says_your_opponent_and_passes_gates(self):
+        sentence = _format_engine_context(_MATE_ENGINE_SIGNAL, player_color="black")
+        assert "your opponent secures the decisive outcome" in sentence.lower()
+        validate_mode_2_negative(sentence)
+        validate_mode_2_semantic(sentence, _MATE_ENGINE_SIGNAL)
+
+    def test_chat_unknown_color_keeps_third_person(self):
+        sentence = _format_engine_context(_MATE_ENGINE_SIGNAL)
+        assert "white secures the decisive outcome" in sentence.lower()
+
+    def test_explainer_mating_side_says_you_and_passes_gates(self):
+        out = SafeExplainer().explain(_MATE_ENGINE_SIGNAL, player_color="white")
+        assert "you are winning" in out.lower()
+        assert "white is winning" not in out.lower()
+        validate_mode_2_negative(out)
+        validate_mode_2_semantic(out, _MATE_ENGINE_SIGNAL)
+
+    def test_explainer_mated_side_says_your_opponent_and_passes_gates(self):
+        out = SafeExplainer().explain(_MATE_ENGINE_SIGNAL, player_color="black")
+        assert "your opponent is winning" in out.lower()
+        validate_mode_2_negative(out)
+        validate_mode_2_semantic(out, _MATE_ENGINE_SIGNAL)
+
+    def test_explainer_unknown_color_keeps_third_person(self):
+        out = SafeExplainer().explain(_MATE_ENGINE_SIGNAL)
+        assert "white is winning" in out.lower()
+
+    @pytest.mark.parametrize("pattern", MATE_CLAIM_PATTERNS)
+    def test_chat_and_explainer_perspective_have_no_forbidden_phrase(self, pattern):
+        outputs = [
+            _format_engine_context(_MATE_ENGINE_SIGNAL, player_color="white"),
+            _format_engine_context(_MATE_ENGINE_SIGNAL, player_color="black"),
+            SafeExplainer().explain(_MATE_ENGINE_SIGNAL, player_color="white"),
+            SafeExplainer().explain(_MATE_ENGINE_SIGNAL, player_color="black"),
+        ]
+        for out in outputs:
+            assert not re.search(pattern, out, re.IGNORECASE), (
+                f"Perspective mate output contains the forbidden MATE_CLAIM "
+                f"pattern `{pattern}`: {out!r}"
             )

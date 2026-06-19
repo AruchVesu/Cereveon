@@ -66,7 +66,12 @@ class SafeExplainer:
         },
     }
 
-    def explain(self, engine_signal: Dict, skill_level: str = "intermediate") -> str:
+    def explain(
+        self,
+        engine_signal: Dict,
+        skill_level: str = "intermediate",
+        player_color: str = "unknown",
+    ) -> str:
         level = (
             skill_level
             if skill_level in ("beginner", "intermediate", "advanced")
@@ -89,7 +94,25 @@ class SafeExplainer:
             # two coach pipelines; this is the third call site that PR
             # missed — surfaced via the chat-deterministic-fallback path
             # which routes through SafeExplainer.
-            parts.append(f"Mate is inevitable — {side} is winning.")
+            #
+            # When the caller supplies the player's colour (the Mode-1
+            # advanced-style hint passes it; neutral callers — /analyze,
+            # the inference pipeline — leave it "unknown"), frame the
+            # winner in the second person to match the coach pipelines.
+            # Only the subject noun changes, so the carrier still clears
+            # both gates.  Case-insensitive; unknown colour OR side keeps
+            # the third person.
+            side_l = side.lower() if isinstance(side, str) else ""
+            color_l = player_color.lower() if isinstance(player_color, str) else ""
+            if color_l in ("white", "black") and side_l in ("white", "black"):
+                if side_l == color_l:
+                    parts.append("Mate is inevitable — you are winning.")
+                else:
+                    parts.append("Mate is inevitable — your opponent is winning.")
+            elif side_l in ("white", "black"):
+                parts.append(f"Mate is inevitable — {side} is winning.")
+            else:
+                parts.append("Mate is inevitable — the decisive outcome is sealed.")
         else:
             band_templates = self._BAND_MESSAGES.get(band, self._BAND_MESSAGES["equal"])
             template = band_templates.get(level, band_templates["intermediate"])

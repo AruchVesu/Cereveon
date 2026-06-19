@@ -561,7 +561,7 @@ def _build_chat_llm(
 # ---------------------------------------------------------------------------
 
 
-def _format_engine_context(engine_signal: dict) -> str:
+def _format_engine_context(engine_signal: dict, player_color: str = "unknown") -> str:
     eval_info = engine_signal.get("evaluation", {})
     band = eval_info.get("band", "equal")
     side = eval_info.get("side", "unknown")
@@ -576,7 +576,27 @@ def _format_engine_context(engine_signal: dict) -> str:
         # the lexical MATE_CLAIM_PATTERNS forbid on `\bforce(?:d)? mate\b`.
         # Kept identical to live_move_pipeline so both deterministic
         # paths share the same engine-truth phrasing — see PR #167.
-        eval_sentence = f"Mate is inevitable — {side} secures the decisive outcome."
+        #
+        # When the player's colour is known (chat anchors the human as
+        # White — see _build_chat_prompt; _build_reply_deterministic passes
+        # it through), frame the winner in the second person to match the
+        # Mode-1 deterministic hint.  Only the subject noun changes, so the
+        # proven carrier still passes both gates.  Case-insensitive; unknown
+        # colour OR side keeps the third person (preserves the gate pins and
+        # the prompt-context test surface).
+        side_l = side.lower() if isinstance(side, str) else ""
+        color_l = player_color.lower() if isinstance(player_color, str) else ""
+        if color_l in ("white", "black") and side_l in ("white", "black"):
+            if side_l == color_l:
+                eval_sentence = "Mate is inevitable — you secure the decisive outcome."
+            else:
+                eval_sentence = (
+                    "Mate is inevitable — your opponent secures the decisive outcome."
+                )
+        elif side_l in ("white", "black"):
+            eval_sentence = f"Mate is inevitable — {side} secures the decisive outcome."
+        else:
+            eval_sentence = "Mate is inevitable — the decisive outcome is sealed."
     elif band == "equal":
         # Equal-band: avoid the "{side} has equal" phrasing (awkward) and
         # the "Evaluation:" prefix (reads as engine readout).  The
@@ -707,8 +727,11 @@ def _build_reply_deterministic(
         else:
             parts.append("Following up on your earlier question:")
 
-    # Engine-state framing — single sentence, no internal metadata.
-    parts.append(_format_engine_context(engine_signal))
+    # Engine-state framing — single sentence, no internal metadata.  The
+    # human is always White in chat (Android local-games anchor, see
+    # _build_chat_prompt), so frame the mate winner from White's seat ("you"
+    # / "your opponent") rather than the detached third-person side name.
+    parts.append(_format_engine_context(engine_signal, player_color="white"))
 
     move_quality = engine_signal.get("last_move_quality", "")
     if move_quality and move_quality not in ("unknown", ""):

@@ -926,6 +926,24 @@ class TestPipelineBoundaryParity:
         assert result.mode == "CHAT_V1"
         assert result.reply.strip()
 
+    def test_deterministic_mate_reply_is_second_person(self):
+        """CHAT_MATE_PERSPECTIVE — the deterministic mate fallback frames the
+        winner from the player's seat (always White in chat) as "you", aligned
+        with the Mode-1 hint.  White delivers the mate here (value > 0), so the
+        player is winning and the reply must not read third-person "white
+        secures …"."""
+        turns = _make_turns(("user", "Am I winning?"))
+        sf = {
+            "evaluation": {"type": "mate", "value": 1},
+            "tactical_flags": [],
+            "position_flags": [],
+        }
+        result = generate_chat_reply(
+            _STARTING_FEN, turns, stockfish_json=sf, force_deterministic=True
+        )
+        assert "you secure the decisive outcome" in result.reply.lower(), result.reply
+        assert "white secures" not in result.reply.lower(), result.reply
+
 
 class TestStockfishSignal:
     """_chat_engine_signal uses a supplied Stockfish analysis for the TRUE eval,
