@@ -173,7 +173,8 @@ final class AuthTests: XCTestCase {
             (HTTPURLResponse(url: req.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!,
              Self.loginResponseJSON(token: "tok"))
         }
-        XCTAssertTrue(await makeClient().register(email: "a@b.com", password: "pw").isSuccess)
+        let result = await makeClient().register(email: "a@b.com", password: "pw")
+        XCTAssertTrue(result.isSuccess)
     }
 
     func testMeConsumesAuthTokenRotation() async {
