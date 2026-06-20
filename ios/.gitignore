@@ -1,0 +1,22 @@
+# The Xcode project is generated from project.yml by XcodeGen — never commit it.
+*.xcodeproj/
+
+## Xcode build output
+DerivedData/
+build/
+.build/
+*.xcuserstate
+*.xcscmblueprint
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+TestResults.xcresult/
+
+## SwiftPM
+.swiftpm/
+
+## macOS
+.DS_Store
