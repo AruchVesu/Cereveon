@@ -55,6 +55,7 @@ Domain context (engine pool / JNI / RAG / auth / Android UI) belongs in the prom
 
 - `llm/`: backend coaching, API, RAG, auth, SECA flows, and backend tests
 - `android/`: Android client and Gradle validation surface
+- `ios/`: iOS client (SwiftUI; XcodeGen project, built on macOS CI — see `ios/README.md`)
 - `engine/`: native engine code and engine-side experiments
 - `docs/`: architecture, testing, operations, and release references
 - `design/`: React/Babel design canvas mockups (Atrium screens) — visual prototype only, not part of the build

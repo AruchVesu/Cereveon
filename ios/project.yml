@@ -1,0 +1,62 @@
+# XcodeGen project definition for the Cereveon iOS app.
+#
+# The .xcodeproj is GENERATED from this file (`xcodegen generate` in ios/) and is
+# intentionally git-ignored — this YAML is the source of truth so the project can
+# be authored on non-macOS hosts. The app itself only builds on macOS. See README.
+name: Cereveon
+options:
+  bundleIdPrefix: ai.chesscoach
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    CLANG_CXX_LANGUAGE_STANDARD: "gnu++17"
+    CLANG_CXX_LIBRARY: "libc++"
+    # Simulator build+test needs no code signing.
+    CODE_SIGNING_ALLOWED: "NO"
+targets:
+  Cereveon:
+    type: application
+    platform: iOS
+    sources:
+      - path: Cereveon
+        excludes:
+          - "Info.plist"
+          - "**/*.md"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.chesscoach.app
+        INFOPLIST_FILE: Cereveon/Info.plist
+        GENERATE_INFOPLIST_FILE: "NO"
+        SWIFT_OBJC_BRIDGING_HEADER: Cereveon/Cereveon-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/Cereveon/Engine"
+          - "$(SRCROOT)/Cereveon/Engine/cpp"
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ENABLE_TESTABILITY: "YES"
+  CereveonTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: CereveonTests
+        excludes:
+          - "**/*.md"
+    dependencies:
+      - target: Cereveon
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"
+        PRODUCT_BUNDLE_IDENTIFIER: ai.chesscoach.CereveonTests
+schemes:
+  Cereveon:
+    build:
+      targets:
+        Cereveon: all
+        CereveonTests: [test]
+    test:
+      targets:
+        - CereveonTests
