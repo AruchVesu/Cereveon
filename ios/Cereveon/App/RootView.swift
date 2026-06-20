@@ -1,23 +1,68 @@
 import SwiftUI
 
-/// Phase-0 placeholder root. Real screens (Home, Board, Coach chat) arrive in
-/// later phases; this exists so the app target builds and launches while the
-/// foundation (engine bridge, design system, networking) comes online.
+/// Top-level router. Mirrors the Android launch decision tree
+/// (`LoginActivity.launchPostAuth` → Welcome → Calibration → Complete → Home):
 ///
-/// Intentionally free of design-system / engine dependencies so it compiles
-/// independently of the parallel foundation work.
+///   - unauthenticated                         → LoginView
+///   - authenticated, onboarding incomplete    → onboarding flow
+///   - authenticated, onboarding complete       → HomeStubView
+///
+/// The onboarding flow is a local NavigationStack so Welcome → Calibration →
+/// Complete advance forward only (no Back to Login), matching the Android
+/// "no real Back path" intent. `submitCalibration` / `skipOnboarding` flip
+/// `auth.isOnboardingComplete`, which collapses the stack into HomeStubView.
 struct RootView: View {
+    @EnvironmentObject private var auth: AuthViewModel
+
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
-            VStack(spacing: 8) {
-                Text("Cereveon")
-                    .font(.system(.largeTitle, design: .serif).italic())
-                    .foregroundStyle(.white)
-                Text("iOS foundation")
-                    .font(.system(.footnote, design: .monospaced))
-                    .foregroundStyle(.secondary)
+            AtriumBackground()
+
+            switch auth.authState {
+            case .unauthenticated:
+                LoginView()
+                    .transition(.opacity)
+
+            case .authenticated:
+                if auth.isOnboardingComplete {
+                    HomeStubView()
+                        .transition(.opacity)
+                } else {
+                    OnboardingFlowView()
+                        .transition(.opacity)
+                }
             }
         }
+        .animation(.easeInOut(duration: 0.25), value: auth.authState)
+        .animation(.easeInOut(duration: 0.25), value: auth.isOnboardingComplete)
     }
+}
+
+/// The post-registration onboarding sequence. Step 2/3 (calibration) reports
+/// completion through the view model; steps 1 and 3 are local navigation only.
+private struct OnboardingFlowView: View {
+    @EnvironmentObject private var auth: AuthViewModel
+    @State private var path: [OnboardingStep] = []
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            OnboardingWelcomeView { path.append(.calibration) }
+                .navigationDestination(for: OnboardingStep.self) { step in
+                    switch step {
+                    case .calibration:
+                        CalibrationView { path.append(.complete) }
+                    case .complete:
+                        // "Start" finalises onboarding via the view model,
+                        // which routes the whole tree to HomeStubView.
+                        OnboardingCompleteView()
+                    }
+                }
+        }
+        .tint(AtriumColors.accentCyan)
+    }
+}
+
+private enum OnboardingStep: Hashable {
+    case calibration
+    case complete
 }
