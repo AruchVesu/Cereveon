@@ -17,14 +17,21 @@ concurrency:
 jobs:
   build-test:
     name: Build & test (iOS Simulator)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 15.4
+      # XcodeGen (latest, via brew) emits the Xcode 16 project format
+      # (objectVersion 77), so the Xcode that reads it must be >= 16.
+      - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '15.4'
+          xcode-version: '16.4'
+
+      - name: Toolchain info
+        run: |
+          xcodebuild -version
+          xcrun simctl list devices available | grep -E 'iPhone' || true
 
       - name: Install XcodeGen
         run: brew install xcodegen
