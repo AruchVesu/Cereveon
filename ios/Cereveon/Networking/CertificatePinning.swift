@@ -82,12 +82,14 @@ enum CertificatePinning {
               let keySize = attributes[kSecAttrKeySizeInBits] as? Int else {
             return nil
         }
-        switch (keyType, keySize) {
-        case (kSecAttrKeyTypeRSA as String, 2048): return rsa2048Header
-        case (kSecAttrKeyTypeRSA as String, 4096): return rsa4096Header
-        case (kSecAttrKeyTypeECSECPrimeRandom as String, 256): return ecdsaSecp256r1Header
-        case (kSecAttrKeyTypeECSECPrimeRandom as String, 384): return ecdsaSecp384r1Header
-        default: return nil   // unknown key type → no pin (won't match; chain has covered types)
+        let isRSA = keyType == (kSecAttrKeyTypeRSA as String)
+        let isEC = keyType == (kSecAttrKeyTypeECSECPrimeRandom as String)
+        switch (isRSA, isEC, keySize) {
+        case (true, _, 2048): return rsa2048Header
+        case (true, _, 4096): return rsa4096Header
+        case (_, true, 256): return ecdsaSecp256r1Header
+        case (_, true, 384): return ecdsaSecp384r1Header
+        default: return nil   // unknown key type/size → no pin (chain has covered types)
         }
     }
 
