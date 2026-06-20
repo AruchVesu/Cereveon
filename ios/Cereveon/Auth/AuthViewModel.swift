@@ -25,7 +25,10 @@ final class AuthViewModel: ObservableObject {
     init() {
         let repo = AuthRepository(storage: KeychainTokenStorage())
         // Rotate the stored JWT whenever the backend hands back X-Auth-Token.
-        self.api = HTTPAuthApiClient(tokenSink: { token in repo.saveToken(token) })
+        self.api = HTTPAuthApiClient(
+            delegate: PinningURLSessionDelegate(),
+            tokenSink: { token in repo.saveToken(token) }
+        )
         self.repository = repo
         self.defaults = .standard
         self.authState = repo.authState()

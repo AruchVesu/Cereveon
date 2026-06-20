@@ -29,8 +29,8 @@ enum AppConfig {
     // MARK: TLS certificate pinning (cereveon.com)
     //
     // Captured verbatim from the Android `network_security_config.xml`.
-    // ENFORCEMENT lands in Phase 1b (a `CertificatePinning` URLSessionDelegate);
-    // these constants are the source of truth for that work.
+    // Enforced by `CertificatePinning` + `PinningURLSessionDelegate` (matched
+    // against any cert in the validated chain; system-CA trust still applies).
     //
     // SPKI SHA-256 (base64). Pin semantics: accept if ANY pin matches ANY cert
     // in the validated chain.
