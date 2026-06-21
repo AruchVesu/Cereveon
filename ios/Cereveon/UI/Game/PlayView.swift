@@ -1,19 +1,31 @@
 import SwiftUI
 
-/// The play screen: the human (White) versus the on-device engine (Black).
-/// Hosts `ChessBoardView`, the promotion picker, and a game-over overlay, all
-/// driven by `PlayViewModel`. Phase 2c-i is local play only — `/live/move`
-/// coaching, the eval band, and game persistence are layered on in 2c-ii.
+/// The play screen: the human (White) versus the on-device engine (Black), with
+/// the live coaching layer — the eval band above the board and the hint dock
+/// below it. Built with `init(auth:)` so the coaching clients carry the player's
+/// Bearer token (and TLS pinning).
 struct PlayView: View {
-    @StateObject private var vm = PlayViewModel()
+    @StateObject private var vm: PlayViewModel
     @Environment(\.dismiss) private var dismiss
+
+    init(auth: AuthViewModel) {
+        let pinning = PinningURLSessionDelegate()
+        _vm = StateObject(wrappedValue: PlayViewModel(
+            liveCoach: HTTPLiveMoveClient(delegate: pinning),
+            evalClient: HTTPEngineEvalClient(delegate: pinning),
+            gameClient: HTTPGameClient(delegate: pinning),
+            token: { auth.bearerToken }
+        ))
+    }
 
     var body: some View {
         ZStack {
             AtriumBackground()
 
-            VStack(spacing: AtriumSpacing.space20) {
+            VStack(spacing: AtriumSpacing.space16) {
                 header
+                EvalBandView(band: vm.evalBand)
+                    .padding(.horizontal, AtriumSpacing.space24)
                 ChessBoardView(
                     board: vm.board,
                     whiteToMove: vm.whiteToMove,
@@ -26,6 +38,8 @@ struct PlayView: View {
                 )
                 .padding(.horizontal, AtriumSpacing.space16)
                 statusLine
+                CoachDockView(hint: vm.coachHint, quality: vm.moveQuality)
+                    .padding(.horizontal, AtriumSpacing.space16)
                 Spacer(minLength: 0)
             }
             .padding(.top, AtriumSpacing.space12)

@@ -50,7 +50,7 @@ struct HomeStubView: View {
         .padding(.horizontal, AtriumSpacing.textPaddingHorizontal)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .fullScreenCover(isPresented: $showPlay) {
-            PlayView()
+            PlayView(auth: auth)
         }
     }
 }

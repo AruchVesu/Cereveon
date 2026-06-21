@@ -16,6 +16,13 @@ final class AuthViewModel: ObservableObject {
     @Published private(set) var isOnboardingComplete: Bool
     @Published private(set) var phase: Phase = .idle
 
+    /// The current Bearer JWT, or nil when unauthenticated. Read by the play-loop
+    /// API clients (live coaching / eval / game persistence) for `Authorization`.
+    var bearerToken: String? {
+        if case let .authenticated(token, _) = authState { return token }
+        return nil
+    }
+
     private let api: AuthApiClient
     private let repository: AuthRepository
     private let defaults: UserDefaults
