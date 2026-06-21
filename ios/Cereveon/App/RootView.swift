@@ -5,12 +5,12 @@ import SwiftUI
 ///
 ///   - unauthenticated                         → LoginView
 ///   - authenticated, onboarding incomplete    → onboarding flow
-///   - authenticated, onboarding complete       → HomeStubView
+///   - authenticated, onboarding complete       → HomeView
 ///
 /// The onboarding flow is a local NavigationStack so Welcome → Calibration →
 /// Complete advance forward only (no Back to Login), matching the Android
 /// "no real Back path" intent. `submitCalibration` / `skipOnboarding` flip
-/// `auth.isOnboardingComplete`, which collapses the stack into HomeStubView.
+/// `auth.isOnboardingComplete`, which collapses the stack into HomeView.
 struct RootView: View {
     @EnvironmentObject private var auth: AuthViewModel
 
@@ -25,7 +25,7 @@ struct RootView: View {
 
             case .authenticated:
                 if auth.isOnboardingComplete {
-                    HomeStubView()
+                    HomeView()
                         .transition(.opacity)
                 } else {
                     OnboardingFlowView()
@@ -53,7 +53,7 @@ private struct OnboardingFlowView: View {
                         CalibrationView { path.append(.complete) }
                     case .complete:
                         // "Start" finalises onboarding via the view model,
-                        // which routes the whole tree to HomeStubView.
+                        // which routes the whole tree to HomeView.
                         OnboardingCompleteView()
                     }
                 }
