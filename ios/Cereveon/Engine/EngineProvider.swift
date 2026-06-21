@@ -11,7 +11,7 @@ struct AIMove: Equatable {
     let promotion: Character?
 }
 
-protocol EngineProvider {
+protocol EngineProvider: Sendable {
     func bestMove(fen: String) -> AIMove?
     func bestMove(fen: String, strength: Int) -> AIMove?
     func perft(fen: String, depth: Int) -> UInt64
@@ -24,7 +24,10 @@ protocol EngineProvider {
 /// `EngineProvider.kt`'s `JniMoveBridge` does on Android — is deferred to the
 /// Phase-2 board work. Phase 0 only verifies the engine reproduces Android's
 /// search/perft.
-final class NativeEngineProvider: EngineProvider {
+/// `@unchecked Sendable`: stateless and thread-safe — each call constructs a
+/// fresh `SachmatuLenta` on the stack, so the engine can be invoked off the main
+/// actor (the search is too slow to block the UI).
+final class NativeEngineProvider: EngineProvider, @unchecked Sendable {
     private let engine = CereveonEngine()
 
     func bestMove(fen: String) -> AIMove? {

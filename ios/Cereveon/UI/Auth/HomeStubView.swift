@@ -6,6 +6,7 @@ import SwiftUI
 /// model. Atrium-styled to match the rest of the flow.
 struct HomeStubView: View {
     @EnvironmentObject private var auth: AuthViewModel
+    @State private var showPlay = false
 
     private var isWorking: Bool {
         if case .working = auth.phase { return true }
@@ -28,7 +29,7 @@ struct HomeStubView: View {
                 AtriumOrnamentRule()
                     .padding(.horizontal, AtriumSpacing.space32)
 
-                Text("The board & coach arrive in Phase 2.")
+                Text("Play a game — the coach arrives next.")
                     .atriumStyle(AtriumTypography.bodyItalic)
                     .foregroundStyle(AtriumColors.muted)
                     .multilineTextAlignment(.center)
@@ -37,13 +38,19 @@ struct HomeStubView: View {
 
             Spacer(minLength: 0)
 
-            AtriumPrimaryButton(title: "Log out", isLoading: isWorking) {
-                Task { await auth.logout() }
+            VStack(spacing: AtriumSpacing.space12) {
+                AtriumPrimaryButton(title: "New game") { showPlay = true }
+                AtriumSecondaryButton(title: "Log out") {
+                    Task { await auth.logout() }
+                }
+                .disabled(isWorking)
             }
-            .disabled(isWorking)
             .padding(.bottom, AtriumSpacing.space32)
         }
         .padding(.horizontal, AtriumSpacing.textPaddingHorizontal)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .fullScreenCover(isPresented: $showPlay) {
+            PlayView()
+        }
     }
 }
