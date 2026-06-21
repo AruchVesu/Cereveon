@@ -26,6 +26,11 @@ enum AppConfig {
     /// read timeout bounds the whole exchange (Android: connect 8 s, read 15 s).
     static let readTimeout: TimeInterval = 15
 
+    /// Longer deadline for the coach chat endpoints (`/chat`, `/chat/stream`):
+    /// the LLM reply can take far longer than an engine call. Matches the
+    /// Android `CHAT_READ_TIMEOUT_MS = 60_000`.
+    static let chatReadTimeout: TimeInterval = 60
+
     // MARK: TLS certificate pinning (cereveon.com)
     //
     // Captured verbatim from the Android `network_security_config.xml`.
