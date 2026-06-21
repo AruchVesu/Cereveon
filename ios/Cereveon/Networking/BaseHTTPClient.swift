@@ -1,5 +1,11 @@
 import Foundation
 
+/// Thrown by `BaseHTTPClient.streamingLines` when the stream's response carries a
+/// non-success status code (the non-streaming `request` maps this to
+/// `.httpError(code)` instead; a streaming caller catches this and emits its own
+/// terminal event).
+struct HTTPStatusError: Error { let code: Int }
+
 /// Shared HTTP helper for the production API clients, mirroring the Android
 /// `BaseHttpClient`:
 ///
@@ -75,6 +81,57 @@ struct BaseHTTPClient {
             return .timeout
         } catch {
             return .networkError(error)
+        }
+    }
+
+    /// Open a streaming request and yield the response body line-by-line — used
+    /// for the SSE `/chat/stream` endpoint. Sets the same `X-API-Version` header
+    /// and `Content-Type` (on a body) as `request`, plus `Accept:
+    /// text/event-stream`. The stream finishes normally at end-of-body, throws
+    /// `HTTPStatusError` on a non-success status, or rethrows the transport error
+    /// (`URLError`/`CancellationError`). `onResponse` fires once after a success
+    /// status line and before the first line, so the `X-Auth-Token` rotation is
+    /// consumed even if the user backgrounds mid-stream. Cancelling the consuming
+    /// task cancels the underlying URLSession task (`onTermination`).
+    func streamingLines(
+        path: String,
+        method: String,
+        headers: [String: String] = [:],
+        body: Data? = nil,
+        successCodes: Set<Int> = [200],
+        onResponse: ((HTTPURLResponse) -> Void)? = nil
+    ) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    guard let url = URL(string: baseURL + path) else { throw URLError(.badURL) }
+                    var req = URLRequest(url: url)
+                    req.httpMethod = method
+                    req.setValue(AppConfig.apiVersion, forHTTPHeaderField: AppConfig.apiVersionHeader)
+                    req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                    for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
+                    if let body {
+                        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                        req.httpBody = body
+                    }
+
+                    let (bytes, response) = try await session.bytes(for: req)
+                    guard let http = response as? HTTPURLResponse else {
+                        throw URLError(.badServerResponse)
+                    }
+                    guard successCodes.contains(http.statusCode) else {
+                        throw HTTPStatusError(code: http.statusCode)
+                    }
+                    onResponse?(http)
+                    for try await line in bytes.lines {
+                        continuation.yield(line)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
