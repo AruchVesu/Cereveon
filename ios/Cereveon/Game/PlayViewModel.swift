@@ -63,6 +63,14 @@ final class PlayViewModel: ObservableObject {
 
     var uciHistory: [String] { moveHistory }
 
+    // Live game state read by the coach chat panel (Phase 3b). The chat sends the
+    // board the user currently sees, scoped to the active server game, and names
+    // the last move in plain English.
+    var currentFEN: String { game.exportFEN() }
+    var activeGameId: String? { gameId }
+    var lastMoveUci: String? { moveHistory.last }
+    var halfMoveCount: Int { moveHistory.count }
+
     // MARK: - Intents
 
     func onMove(from: Square, to: Square) {
