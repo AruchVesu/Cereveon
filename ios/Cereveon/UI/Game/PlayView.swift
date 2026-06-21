@@ -6,20 +6,44 @@ import SwiftUI
 /// Bearer token (and TLS pinning).
 struct PlayView: View {
     @StateObject private var vm: PlayViewModel
+    @StateObject private var chat: ChatViewModel
     @Environment(\.dismiss) private var dismiss
+
+    /// Non-modal coach panel visibility. When open, the board above the panel
+    /// stays tappable (no scrim) — "play while chatting".
+    @State private var showChat = false
+    @State private var containerHeight: CGFloat = 0
 
     init(auth: AuthViewModel) {
         let pinning = PinningURLSessionDelegate()
-        _vm = StateObject(wrappedValue: PlayViewModel(
+        let play = PlayViewModel(
             liveCoach: HTTPLiveMoveClient(delegate: pinning),
             evalClient: HTTPEngineEvalClient(delegate: pinning),
             gameClient: HTTPGameClient(delegate: pinning),
             token: { auth.bearerToken }
+        )
+        _vm = StateObject(wrappedValue: play)
+        // The chat reads the live board / game / last-move from the same view
+        // model so every turn carries the position the user currently sees.
+        _chat = StateObject(wrappedValue: ChatViewModel(
+            client: HTTPChatClient(delegate: pinning),
+            fen: { play.currentFEN },
+            gameId: { play.activeGameId },
+            lastMove: { play.lastMoveUci },
+            moveCount: { play.halfMoveCount },
+            token: { auth.bearerToken }
         ))
     }
 
+    /// Bottom panel height — roughly half the screen so the upper board stays
+    /// visible and tappable while chatting.
+    private var panelHeight: CGFloat {
+        guard containerHeight > 0 else { return 360 }
+        return max(300, containerHeight * 0.52)
+    }
+
     var body: some View {
-        ZStack {
+        ZStack(alignment: .bottom) {
             AtriumBackground()
 
             VStack(spacing: AtriumSpacing.space16) {
@@ -44,6 +68,24 @@ struct PlayView: View {
             }
             .padding(.top, AtriumSpacing.space12)
 
+            // Coach affordance — hidden while the panel is open. The play loop
+            // behind the panel stays live, so this only opens the conversation.
+            if !showChat {
+                coachButton
+                    .padding(.trailing, AtriumSpacing.space24)
+                    .padding(.bottom, AtriumSpacing.space24)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+            }
+
+            // Non-modal chat panel: no scrim, so the board above stays tappable.
+            if showChat {
+                ChatPanelView(viewModel: chat, onClose: { showChat = false })
+                    .frame(height: panelHeight)
+                    .transition(.move(edge: .bottom))
+            }
+
+            // Modal overlays sit ABOVE the chat panel (a pending promotion or a
+            // finished game takes precedence over the conversation).
             if vm.pendingPromotion != nil {
                 modalOverlay {
                     // The human always plays White in this phase.
@@ -55,6 +97,31 @@ struct PlayView: View {
                 modalOverlay { gameOverCard(result) }
             }
         }
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { containerHeight = geo.size.height }
+                    .onChange(of: geo.size.height) { containerHeight = $0 }
+            }
+        )
+        .animation(.easeInOut(duration: 0.22), value: showChat)
+    }
+
+    private var coachButton: some View {
+        Button { showChat = true } label: {
+            Text("Coach".uppercased())
+                .atriumStyle(AtriumTypography.kicker)
+                .foregroundStyle(AtriumColors.accentCyan)
+                .padding(.horizontal, AtriumSpacing.space16)
+                .frame(height: AtriumSpacing.tapTarget)
+                .background(AtriumColors.bgSurface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: AtriumSpacing.cornerRadius)
+                        .stroke(AtriumColors.accentCyan55, lineWidth: AtriumSpacing.hairlineThickness)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: AtriumSpacing.cornerRadius))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Chrome
