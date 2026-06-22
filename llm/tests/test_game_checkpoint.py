@@ -214,7 +214,7 @@ class TestCheckpointRepo:
         )
         player_id = _ensure_player()
         game_id = create_game(player_id)
-        finish_game(game_id, "win")
+        finish_game(game_id, "win", player_id)
 
         assert checkpoint_game(game_id, "fen", "uci") is False
 
@@ -230,7 +230,7 @@ class TestCheckpointRepo:
         checkpoint_game(game_id, "fen", "e2e4")
 
         assert get_active_game(player_id) is not None  # before finish
-        finish_game(game_id, "win")
+        finish_game(game_id, "win", player_id)
         assert get_active_game(player_id) is None       # after finish
 
     def test_get_active_filters_by_player(self, temp_db):
@@ -246,6 +246,30 @@ class TestCheckpointRepo:
 
         # B has no games — should still see no active game.
         assert get_active_game(player_b) is None
+
+    def test_finish_game_scoped_to_owner(self, temp_db):
+        """FINISH_SCOPED_TO_OWNER — IDOR guard.  finish_game must NOT
+        finish a game owned by a different player.  Closes the
+        /game/finish cross-tenant write where any authenticated caller
+        could finish/overwrite another player's game by supplying its id."""
+        from llm.seca.storage.repo import (
+            checkpoint_game, create_game, finish_game, get_active_game,
+        )
+        owner = _ensure_player("owner-x")
+        attacker = _ensure_player("attacker-y")
+        game_id = create_game(owner)
+        checkpoint_game(game_id, "fen", "e2e4")  # owner's game is now active
+
+        # Attacker supplies the owner's game_id — must be a no-op.
+        finish_game(game_id, "win", attacker)
+        assert get_active_game(owner) is not None, (
+            "attacker's finish_game leaked across players — the owner's "
+            "in-progress game was finished by someone else (IDOR)"
+        )
+
+        # The legitimate owner can still finish their own game.
+        finish_game(game_id, "win", owner)
+        assert get_active_game(owner) is None
 
     def test_get_active_returns_latest_checkpoint(self, temp_db):
         """When a player has multiple unfinished games, the most-
@@ -362,7 +386,7 @@ class TestCheckpointEndpoint:
 
         player_id = _ensure_player()
         game_id = create_game(player_id)
-        finish_game(game_id, "win")
+        finish_game(game_id, "win", player_id)
         player = _player_namespace(player_id)
 
         limiter = _disable_limiter()

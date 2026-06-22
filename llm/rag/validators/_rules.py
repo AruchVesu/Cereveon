@@ -91,10 +91,38 @@ ENGINE_LEXICAL_PHRASES: tuple[str, ...] = (
 # line") far more often than the engine-analysis sense ("the main line is
 # ..."), which is already covered by ``\bvariation\b`` + ``\bcalculate\b``.
 # Real-model diagnostic showed it vetoing legitimate king-safety answers.
+#
+# ``\bstockfish\b`` / ``\bbest move\b`` / ``\bdepth\s+\d+\b`` added 2026-06-22.
+# All three derive from ENGINE_LEXICAL_PHRASES above but were ONLY enforced
+# by ``validate_output`` — which has no live caller (it runs in run_mode_2's
+# /explain test surface and study_plan/verdict).  The live /chat,
+# /chat/stream, and /live/move boundary runs ``validate_mode_2_negative``
+# (this list) but NOT ``validate_output``, so an LLM reply naming
+# "Stockfish", "best move", or "at depth 18" reached the user — violating the
+# "no engine mentions" invariant (ARCHITECTURE.md; THREAT_MODEL.md T1
+# defence-in-depth layer).  This closes that live-path gap.
+#
+# Two deliberate departures from a literal mirror of the PHRASES set:
+#   * ``depth`` is matched here only in its engine-analysis sense
+#     ``\bdepth\s+\d+\b`` ("at depth 18", "depth 20"), NOT the bare word.
+#     Bare ``\bdepth\b`` would veto ordinary coaching prose ("look at this in
+#     depth", "in-depth understanding") and drop the user to the
+#     deterministic fallback — the over-rejection class this project has
+#     repeatedly retired (cf. the ``\bline\b`` / ``\bshould\b`` history
+#     above).  ``validate_output`` keeps the broader bare-substring "depth"
+#     on the /explain surface, where latency is looser and the cost of a
+#     false positive is lower.
+#   * ``engine`` is NOT mirrored at all: it is already a live FORBID via the
+#     semantic gate (SPECULATIVE_SEMANTIC), and adding it here would only
+#     change which validator fires first on engine-only output (corpus
+#     exception-type churn) for no added coverage.
 ENGINE_LEXICAL_PATTERNS: tuple[str, ...] = (
     r"\bcalculate\b",
     r"\bcalculation\b",
     r"\bvariation\b",
+    r"\bstockfish\b",
+    r"\bbest move\b",
+    r"\bdepth\s+\d+\b",
 )
 
 
