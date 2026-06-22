@@ -82,3 +82,55 @@ jobs:
           path: ios/Cereveon-Simulator.zip
           retention-days: 14
           if-no-files-found: error
+
+      # Push the build straight to a hosted Appetize.io link so it can be run in a
+      # browser without downloading anything. Best-effort:
+      #   * only on a push to main (PRs still produce the downloadable artifact);
+      #   * self-skips when APPETIZE_API_TOKEN isn't configured;
+      #   * updates the app in place when APPETIZE_PUBLIC_KEY is set (stable link),
+      #     otherwise creates a new app and prints the key to copy into that var;
+      #   * continue-on-error so an Appetize hiccup never reds the build signal.
+      - name: Publish to Appetize.io
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        working-directory: ios
+        env:
+          APPETIZE_API_TOKEN: ${{ secrets.APPETIZE_API_TOKEN }}
+          APPETIZE_PUBLIC_KEY: ${{ vars.APPETIZE_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPETIZE_API_TOKEN:-}" ]; then
+            echo "APPETIZE_API_TOKEN not set — skipping Appetize publish (the downloadable artifact is still available)." \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ -n "${APPETIZE_PUBLIC_KEY:-}" ]; then
+            echo "Updating existing Appetize app: $APPETIZE_PUBLIC_KEY"
+            ENDPOINT="https://api.appetize.io/v1/apps/${APPETIZE_PUBLIC_KEY}"
+          else
+            echo "Creating a new Appetize app (set repo var APPETIZE_PUBLIC_KEY for a stable link next time)"
+            ENDPOINT="https://api.appetize.io/v1/apps"
+          fi
+          # Token via HTTP basic auth (-u "<token>:") — Appetize's stable method,
+          # kept out of the URL so it can't leak; GitHub masks the secret anyway.
+          RESPONSE=$(curl -sS -u "${APPETIZE_API_TOKEN}:" -X POST "$ENDPOINT" \
+            -F "file=@Cereveon-Simulator.zip" -F "platform=ios" -w $'\n%{http_code}')
+          HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -n1)
+          BODY=$(printf '%s' "$RESPONSE" | sed '$d')
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Appetize upload failed (HTTP $HTTP_CODE): $BODY"
+            exit 1
+          fi
+          PUBLIC_KEY=$(printf '%s' "$BODY" | jq -r '.publicKey // empty')
+          PUBLIC_URL=$(printf '%s' "$BODY" | jq -r '.publicURL // ("https://appetize.io/app/" + (.publicKey // ""))')
+          {
+            echo "### ▶ Appetize build"
+            echo ""
+            echo "Run it in a browser: ${PUBLIC_URL:-<no url returned>}"
+            if [ -z "${APPETIZE_PUBLIC_KEY:-}" ] && [ -n "$PUBLIC_KEY" ]; then
+              echo ""
+              echo "> First upload created a **new** app. For a stable link that updates in"
+              echo "> place every run, set repo **variable** \`APPETIZE_PUBLIC_KEY\` = \`${PUBLIC_KEY}\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Appetize link: ${PUBLIC_URL}"
