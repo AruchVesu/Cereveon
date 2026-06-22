@@ -213,7 +213,9 @@ class TestFinishGameRepoCall:
     def test_repo_called_when_game_id_provided(self):
         """RESUME_FINISH_CALLS_REPO."""
         _, repo_mock = _call_finish({**_DEFAULT_REQ, "game_id": "test-game-id-123"})
-        repo_mock.assert_called_once_with("test-game-id-123", "win")
+        # player.id is threaded through so the repo scopes the finish to the
+        # authenticated owner (IDOR fix) — see repo.finish_game.
+        repo_mock.assert_called_once_with("test-game-id-123", "win", "player-abc")
 
     def test_repo_not_called_when_game_id_omitted(self):
         """RESUME_FINISH_NO_REPO_WHEN_NULL."""
@@ -247,11 +249,11 @@ class TestFinishGameRepoCall:
         # Result string passes through verbatim so the games row
         # records the same status the events row does.
         _, repo_mock = _call_finish({**_DEFAULT_REQ, "result": "loss", "game_id": "abc"})
-        repo_mock.assert_called_once_with("abc", "loss")
+        repo_mock.assert_called_once_with("abc", "loss", "player-abc")
 
     def test_repo_called_with_draw_result(self):
         _, repo_mock = _call_finish({**_DEFAULT_REQ, "result": "draw", "game_id": "abc"})
-        repo_mock.assert_called_once_with("abc", "draw")
+        repo_mock.assert_called_once_with("abc", "draw", "player-abc")
 
 
 # ---------------------------------------------------------------------------

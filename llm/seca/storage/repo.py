@@ -174,12 +174,23 @@ def create_game(player_id: str) -> str:
     return game_id
 
 
-def finish_game(game_id: str, result: str) -> None:
-    """Mark a game finished, stamping ``finished_at`` to now (UTC)."""
+def finish_game(game_id: str, result: str, player_id: str) -> None:
+    """Mark a game finished, stamping ``finished_at`` to now (UTC).
+
+    Scoped to ``player_id``: a row owned by a different player (or a
+    missing row) is a silent no-op, NOT an error.  This preserves the
+    best-effort contract ``/game/finish`` relies on (the GameEvent + skill
+    update are the load-bearing writes — see
+    ``llm/seca/events/router.py::_finish_game_body``) while closing the
+    cross-tenant write (IDOR) where any authenticated caller could finish
+    or overwrite another player's game by supplying its id.  Mirrors the
+    ownership check the ``/game/{id}/checkpoint`` handler performs via
+    ``get_game_owner_status``.
+    """
     sess = _session()
     try:
         game = sess.get(Game, game_id)
-        if game is None:
+        if game is None or game.player_id != player_id:
             return
         game.result = result
         game.finished_at = datetime.utcnow()

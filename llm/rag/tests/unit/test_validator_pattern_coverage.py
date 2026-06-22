@@ -85,6 +85,14 @@ NEG_SAMPLES: list[tuple[str, str]] = [
     (r"\bcalculate\b",             "we calculate taxes"),
     (r"\bcalculation\b",           "after calculation finished"),
     (r"\bvariation\b",             "the main variation today"),
+    # stockfish / best move / depth-N added 2026-06-22 — mirror the
+    # ENGINE_LEXICAL_PHRASES terms onto the live negative validator so the
+    # /chat·/live·/stream boundary enforces them; depth uses the engine-sense
+    # ``\bdepth\s+\d+\b`` ("depth 20"), not bare "depth" (see
+    # _rules.ENGINE_LEXICAL_PATTERNS).  Samples isolate the target pattern.
+    (r"\bstockfish\b",             "we ran stockfish today"),
+    (r"\bbest move\b",             "the best move today"),
+    (r"\bdepth\s+\d+\b",           "we reached depth 20 today"),
     # ``\bline\b`` retired 2026-06-07 (over-broad — caught "open lines",
     # "hold the line"; engine-analysis sense covered by ``\bvariation\b``
     # / ``\bcalculate\b``).

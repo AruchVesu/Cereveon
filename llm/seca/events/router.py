@@ -499,7 +499,11 @@ def _finish_game_body(
         try:
             from llm.seca.storage.repo import finish_game as _repo_finish_game
 
-            _repo_finish_game(req.game_id, req.result)
+            # Scope the games-row finish to the authenticated player so a
+            # caller can't finish/overwrite another player's game by id
+            # (IDOR).  A non-owned / missing id is a silent no-op, matching
+            # this call's existing best-effort semantics.
+            _repo_finish_game(req.game_id, req.result, str(player.id))
         except Exception:
             logger.exception(
                 "repo.finish_game failed for game_id=%s; GameEvent already stored",

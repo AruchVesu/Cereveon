@@ -29,13 +29,15 @@ def test_compliant_output_passes():
 def test_forbidden_phrase_fails():
     # FakeLLM(mode="forbidden_phrase") emits
     #   "Stockfish shows the best move here leads to mate in 3."
-    # validate_mode_2_negative runs first in the validator chain and matches
-    # the FORBIDDEN_PATTERNS entry ``\bmate in \d+\b`` before validate_output
-    # gets a chance to catch the "stockfish" / "best move" FORBIDDEN_PHRASES
-    # entries.  Pin both the prefix and the specific pattern so a refactor
-    # that swaps which validator catches this case fails loudly here.
+    # As of 2026-06-22 validate_mode_2_negative carries ``\bstockfish\b``
+    # (ENGINE_LEXICAL_PATTERNS now mirrors the phrase set onto the live
+    # boundary), and ENGINE_LEXICAL precedes MATE_CLAIM in FORBIDDEN_PATTERNS,
+    # so "Stockfish" is the first forbidden token the chain hits — ahead of
+    # the ``\bmate in \d+\b`` pattern and the validate_output FORBIDDEN_PHRASES
+    # path.  Pin both the prefix and the specific token so a refactor that
+    # swaps which validator catches this case fails loudly here.
     llm = FakeLLM(mode="forbidden_phrase")
-    with pytest.raises(AssertionError, match=r"Forbidden MODE-2 pattern detected.*mate in"):
+    with pytest.raises(AssertionError, match=r"Forbidden MODE-2 pattern detected.*stockfish"):
         run_mode_2(
             llm=llm,
             prompt=PROMPT,
