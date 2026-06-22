@@ -53,8 +53,29 @@ Developer account:
 
 Limits: it's a **simulator**, not a physical iPhone (high-fidelity, but do a real
 TestFlight pass before any release); Appetize's free tier caps monthly minutes +
-one concurrent session. Optional next step: with an Appetize API token in repo
-secrets, CI can push the build straight to a hosted link on every green run.
+one concurrent session.
+
+### Automated publish to a hosted link (optional)
+
+With an Appetize API token configured, every push to `main` publishes the build
+straight to a hosted Appetize link — no download/upload needed. One-time setup:
+
+1. Create a free [Appetize.io](https://appetize.io) account → **Account → API
+   token**, and add it as a repo secret:
+   ```sh
+   gh secret set APPETIZE_API_TOKEN      # paste the token when prompted
+   ```
+2. Push to `main` (or merge a PR). The **Publish to Appetize.io** step uploads the
+   build and prints the app link + a `publicKey` in the run's **Summary**.
+3. For a **stable link** that updates in place on every run (instead of a new app
+   each time), copy that `publicKey` into a repo variable:
+   ```sh
+   gh variable set APPETIZE_PUBLIC_KEY --body "<publicKey-from-the-summary>"
+   ```
+
+The step is best-effort: it only runs on `main`, self-skips when the token isn't
+set (the downloadable artifact above still works), and never reds the build if
+Appetize is unreachable. The token is sent via HTTP basic auth and masked in logs.
 
 ## Layout
 
