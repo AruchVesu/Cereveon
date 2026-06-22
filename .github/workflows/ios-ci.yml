@@ -59,4 +59,26 @@ jobs:
             -scheme Cereveon \
             -destination "platform=iOS Simulator,id=$DEVICE_ID" \
             -resultBundlePath TestResults.xcresult \
+            -derivedDataPath build \
             clean build test
+
+      # Export the just-built iOS Simulator app so it can be run interactively in
+      # a browser via Appetize.io — the no-Mac/no-iPhone validation path. ditto
+      # preserves the bundle (symlinks + exec bit) and zips it with the
+      # `Cereveon.app` wrapper at the zip root, the shape Appetize expects.
+      - name: Package simulator app for Appetize
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          APP=$(find build/Build/Products/Debug-iphonesimulator -maxdepth 1 -name 'Cereveon.app' -type d | head -1)
+          echo "Built app bundle: ${APP:?Cereveon.app not found under DerivedData}"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" Cereveon-Simulator.zip
+          ls -lh Cereveon-Simulator.zip
+
+      - name: Upload simulator app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cereveon-ios-simulator-app
+          path: ios/Cereveon-Simulator.zip
+          retention-days: 14
+          if-no-files-found: error

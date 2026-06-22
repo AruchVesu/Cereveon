@@ -24,13 +24,37 @@ xcodebuild -scheme Cereveon \
   clean build test
 ```
 
-Requires Xcode 15.4+ (iOS 16 deployment target).
+Requires Xcode 16+ (XcodeGen emits the Xcode-16 project format / objectVersion
+77; iOS 16 deployment target).
 
 ## CI
 
-`.github/workflows/ios-ci.yml` runs XcodeGen + `xcodebuild build test` on a
-`macos-14` runner for every change under `ios/**`. **This is the authoritative
-build/test signal — the app cannot be built on Windows.**
+`.github/workflows/ios-ci.yml` runs XcodeGen + `xcodebuild clean build test` on a
+`macos-15` runner (Xcode 16.4) for every change under `ios/**`. **This is the
+authoritative build/test signal — the app cannot be built on Windows.** Each
+green run also uploads a `cereveon-ios-simulator-app` artifact (see below).
+
+## Run it without a Mac (Appetize.io)
+
+The app can't be built on Windows, but you can **run it interactively in a
+browser** via [Appetize.io](https://appetize.io) — no Mac, no iPhone, no Apple
+Developer account:
+
+1. Open the latest green **iOS CI** run on the
+   [Actions tab](../../actions/workflows/ios-ci.yml).
+2. Download the **`cereveon-ios-simulator-app`** artifact. GitHub wraps artifacts
+   in its own `.zip`, so **unzip it once** to get the inner
+   `Cereveon-Simulator.zip` (a zipped iOS-Simulator build of `Cereveon.app`).
+3. On [appetize.io](https://appetize.io) (free account) → **Upload app** → drop
+   `Cereveon-Simulator.zip`, platform **iOS**.
+4. **Tap to play** in the browser — sign in, start a game, and open the coach.
+   The simulator reaches the live `cereveon.com` backend, so per-move coaching
+   and the **streaming chat** work end-to-end.
+
+Limits: it's a **simulator**, not a physical iPhone (high-fidelity, but do a real
+TestFlight pass before any release); Appetize's free tier caps monthly minutes +
+one concurrent session. Optional next step: with an Appetize API token in repo
+secrets, CI can push the build straight to a hosted link on every green run.
 
 ## Layout
 
