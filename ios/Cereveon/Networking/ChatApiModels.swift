@@ -37,6 +37,15 @@ struct ChatRequest: Encodable {
     var lastMove: String? = nil
 }
 
+/// Fire-and-forget thumbs-up / thumbs-down for the latest coaching reply at a
+/// position. POST /game/coach-feedback. `sessionFen` must be a valid 6-field FEN
+/// (or "startpos") — the server runs a FEN validator on it. APIJSON snake-cases
+/// the fields to `session_fen` / `is_helpful`.
+struct CoachFeedbackRequest: Encodable {
+    let sessionFen: String
+    let isHelpful: Bool
+}
+
 // MARK: - Response (POST /chat)
 
 /// Coarse centipawn band for the context header (never a raw number). Lenient.

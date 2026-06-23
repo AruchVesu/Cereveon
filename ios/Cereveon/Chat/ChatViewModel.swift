@@ -35,6 +35,12 @@ final class ChatViewModel: ObservableObject {
         let id: UUID
         let role: Role
         var text: String
+        /// Position this assistant reply was about — sent as `session_fen` with
+        /// 👍/👎 feedback. nil for user messages and history rows the server
+        /// stored without a FEN.
+        var fen: String? = nil
+        /// nil = unrated; true = 👍; false = 👎.
+        var feedback: Bool? = nil
 
         enum Role { case user, assistant }
     }
@@ -68,6 +74,7 @@ final class ChatViewModel: ObservableObject {
     private static let voiceDefaultsKey = "cereveon.coach_voice"
 
     private var streamTask: Task<Void, Never>?
+    private var feedbackTask: Task<Void, Never>?
 
     init(client: ChatClient,
          fen: @escaping () -> String,
@@ -124,11 +131,14 @@ final class ChatViewModel: ObservableObject {
             ChatMessageDTO(role: $0.role == .user ? "user" : "assistant",
                            content: String($0.text.prefix(Self.maxWireChars)))
         }
+        // Capture the live position once: it's both the request's `fen` and the
+        // assistant bubble's `fen` for later feedback.
+        let positionFen = fen()
         let assistantId = UUID()
-        messages.append(Message(id: assistantId, role: .assistant, text: ""))
+        messages.append(Message(id: assistantId, role: .assistant, text: "", fen: positionFen))
         isStreaming = true
 
-        let stream = client.streamChat(fen: fen(), messages: wire, moveCount: moveCount(),
+        let stream = client.streamChat(fen: positionFen, messages: wire, moveCount: moveCount(),
                                        gameId: gameId(), lastMove: lastMove(),
                                        coachVoice: coachVoice.wireValue, token: token)
         streamTask = Task { [weak self] in
@@ -160,10 +170,27 @@ final class ChatViewModel: ObservableObject {
         isStreaming = false
     }
 
+    /// Record 👍/👎 for an assistant reply: optimistically mark the bubble, then
+    /// fire the best-effort feedback request. No-op for user messages or when
+    /// logged out. Falls back to the live board if the bubble has no stored FEN.
+    func submitFeedback(for message: Message, helpful: Bool) {
+        guard message.role == .assistant, let token = token() else { return }
+        if let index = messages.firstIndex(where: { $0.id == message.id }) {
+            messages[index].feedback = helpful
+        }
+        let sessionFen = message.fen ?? fen()
+        feedbackTask = Task { _ = await client.submitFeedback(sessionFen: sessionFen, isHelpful: helpful, token: token) }
+    }
+
     /// Await the in-flight stream — test seam so a send can be observed
     /// deterministically. No-op when nothing is streaming.
     func awaitStreamCompletion() async {
         await streamTask?.value
+    }
+
+    /// Await the in-flight feedback request — test seam. No-op when none.
+    func awaitFeedbackCompletion() async {
+        await feedbackTask?.value
     }
 
     private func update(_ id: UUID, text: String) {
@@ -181,6 +208,6 @@ final class ChatViewModel: ObservableObject {
         default: return nil
         }
         guard !turn.content.isEmpty else { return nil }
-        return Message(id: UUID(), role: role, text: turn.content)
+        return Message(id: UUID(), role: role, text: turn.content, fen: turn.fen)
     }
 }

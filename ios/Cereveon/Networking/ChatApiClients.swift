@@ -45,6 +45,16 @@ protocol ChatClient {
                     lastMove: String?,
                     coachVoice: String?,
                     token: String) -> AsyncStream<ChatStreamEvent>
+
+    /// Fire-and-forget 👍/👎 for a coaching reply. POST /game/coach-feedback.
+    func submitFeedback(sessionFen: String, isHelpful: Bool, token: String) async -> APIResult<Void>
+}
+
+extension ChatClient {
+    /// Default so a test fake that doesn't exercise feedback need not implement it.
+    func submitFeedback(sessionFen: String, isHelpful: Bool, token: String) async -> APIResult<Void> {
+        .httpError(501)
+    }
 }
 
 /// Production `ChatClient`. Uses the chat-length read timeout (LLM latency) and
@@ -98,6 +108,15 @@ final class HTTPChatClient: ChatClient {
             headers: chatHeaders(token: token),
             onResponse: { [tokenSink] in consumeChatRotation($0, tokenSink) },
             decode: { try APIJSON.decode(ChatHistoryResponse.self, from: $0) }
+        )
+    }
+
+    func submitFeedback(sessionFen: String, isHelpful: Bool, token: String) async -> APIResult<Void> {
+        let body = try? APIJSON.encode(CoachFeedbackRequest(sessionFen: sessionFen, isHelpful: isHelpful))
+        return await http.requestVoid(
+            path: "/game/coach-feedback", method: "POST",
+            headers: chatHeaders(token: token), body: body,
+            onResponse: { [tokenSink] in consumeChatRotation($0, tokenSink) }
         )
     }
 

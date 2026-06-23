@@ -107,7 +107,8 @@ struct ChatPanelView: View {
                         emptyState
                     }
                     ForEach(viewModel.messages) { message in
-                        ChatBubble(message: message).id(message.id)
+                        ChatBubble(message: message, onFeedback: feedbackHandler(for: message))
+                            .id(message.id)
                     }
                     Color.clear.frame(height: 1).id(bottomAnchor)
                 }
@@ -121,6 +122,14 @@ struct ChatPanelView: View {
                 proxy.scrollTo(bottomAnchor, anchor: .bottom)
             }
         }
+    }
+
+    /// Feedback closure for a bubble — nil (no thumbs) for user messages and for
+    /// the assistant bubble that is still streaming.
+    private func feedbackHandler(for message: ChatViewModel.Message) -> ((Bool) -> Void)? {
+        let isStreamingThis = viewModel.isStreaming && message.id == viewModel.messages.last?.id
+        guard message.role == .assistant, !isStreamingThis else { return nil }
+        return { helpful in viewModel.submitFeedback(for: message, helpful: helpful) }
     }
 
     private var emptyState: some View {
@@ -187,6 +196,7 @@ struct ChatPanelView: View {
 /// assistant left on the base surface.
 private struct ChatBubble: View {
     let message: ChatViewModel.Message
+    var onFeedback: ((Bool) -> Void)? = nil
 
     private var isUser: Bool { message.role == .user }
 
@@ -194,23 +204,52 @@ private struct ChatBubble: View {
         HStack(spacing: 0) {
             if isUser { Spacer(minLength: AtriumSpacing.space32) }
 
-            Text(message.text.isEmpty ? "\u{2026}" : message.text) // … while a stream is pending
-                .atriumStyle(isUser ? AtriumTypography.body : AtriumTypography.bodyItalic)
-                .foregroundStyle(AtriumColors.ink)
-                .fixedSize(horizontal: false, vertical: true)
-                .multilineTextAlignment(isUser ? .trailing : .leading)
-                .padding(.horizontal, AtriumSpacing.space12)
-                .padding(.vertical, AtriumSpacing.space8)
-                .background(isUser ? AtriumColors.accentCyan22 : AtriumColors.bgBase)
-                .overlay(
-                    RoundedRectangle(cornerRadius: AtriumSpacing.cornerRadius)
-                        .stroke(isUser ? AtriumColors.accentCyan55 : AtriumColors.hairline,
-                                lineWidth: AtriumSpacing.hairlineThickness)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: AtriumSpacing.cornerRadius))
+            VStack(alignment: .leading, spacing: AtriumSpacing.space4) {
+                bubbleText
+                if let onFeedback, !message.text.isEmpty {
+                    feedbackRow(onFeedback)
+                }
+            }
 
             if !isUser { Spacer(minLength: AtriumSpacing.space32) }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+    }
+
+    private var bubbleText: some View {
+        Text(message.text.isEmpty ? "\u{2026}" : message.text) // … while a stream is pending
+            .atriumStyle(isUser ? AtriumTypography.body : AtriumTypography.bodyItalic)
+            .foregroundStyle(AtriumColors.ink)
+            .fixedSize(horizontal: false, vertical: true)
+            .multilineTextAlignment(isUser ? .trailing : .leading)
+            .padding(.horizontal, AtriumSpacing.space12)
+            .padding(.vertical, AtriumSpacing.space8)
+            .background(isUser ? AtriumColors.accentCyan22 : AtriumColors.bgBase)
+            .overlay(
+                RoundedRectangle(cornerRadius: AtriumSpacing.cornerRadius)
+                    .stroke(isUser ? AtriumColors.accentCyan55 : AtriumColors.hairline,
+                            lineWidth: AtriumSpacing.hairlineThickness)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: AtriumSpacing.cornerRadius))
+    }
+
+    /// 👍/👎 under an assistant reply. The chosen thumb stays cyan once tapped.
+    private func feedbackRow(_ onFeedback: @escaping (Bool) -> Void) -> some View {
+        HStack(spacing: AtriumSpacing.space16) {
+            thumb(up: true, selected: message.feedback == true) { onFeedback(true) }
+            thumb(up: false, selected: message.feedback == false) { onFeedback(false) }
+        }
+        .padding(.leading, AtriumSpacing.space4)
+    }
+
+    private func thumb(up: Bool, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: up ? "hand.thumbsup" : "hand.thumbsdown")
+                .font(.system(size: 12))
+                .foregroundStyle(selected ? AtriumColors.accentCyan : AtriumColors.dim)
+                .frame(width: AtriumSpacing.space24, height: AtriumSpacing.space20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
