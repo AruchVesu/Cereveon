@@ -12,11 +12,17 @@ The pinned set today:
 
 | # | Cert | SPKI sha256 (base64) | Validity horizon |
 |---|------|----------------------|------------------|
-| 1 | Let's Encrypt **E8** ECDSA intermediate | `iFvwVyJSxnQdyaUvUERIf+8qk7gRze3612JMwoO3zdU=` | Rotates periodically (Let's Encrypt schedule) |
+| 1 | Let's Encrypt **YE1** ECDSA intermediate | `brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=` | Rotates periodically (Let's Encrypt schedule) |
 | 2 | **ISRG Root X1** (RSA root) | `C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=` | Valid until 2030-06 |
 | 3 | **ISRG Root X2** (ECDSA root) | `diGVwiVYbubAI3RW4hB9xU8e/CH2GnkuvVFZE8zmgzI=` | Valid until 2035-09 |
 
 Pin-set expiration: **2028-05-20** (brick-recovery floor — see § Brick recovery).
+
+> **2026-06-24** — rotated pin #1 from the retired **E8** to **YE1**. Let's
+> Encrypt migrated cereveon.com's chain to the YE1 → *ISRG Root YE* hierarchy
+> (leaf → YE1 → ISRG Root YE → ISRG Root X2 → X1). The chain still cross-signs up
+> to ISRG Root X1/X2, so the two root pins kept pinning alive across the change —
+> only the intermediate pin needed refreshing.
 
 ## When to rotate
 
@@ -27,7 +33,7 @@ Rotation is triggered by, in order of urgency:
    (`NetworkSecurityCertPinningTest::EXPIRATION_FUTURE`) catches this
    if the expiration has already lapsed; rotate before then.
 2. **Let's Encrypt announces an intermediate rotation that retires
-   E8.** Pin set #1 must be replaced with the new intermediate's
+   YE1.** Pin set #1 must be replaced with the new intermediate's
    SPKI before the rotation takes effect on production.
 3. **The Caddy / Let's Encrypt setup migrates to a different CA**
    (e.g., Sectigo, Google Trust Services). Every pin in the set
@@ -94,8 +100,8 @@ The three-pin design covers four rotation cases without a release:
 
 | Rotation case | Survival |
 |---|---|
-| Leaf cert renews (every ~90 days) | ✅ E8 still matches the new leaf's chain |
-| Let's Encrypt rotates intermediate (E8 → E9) | ✅ ISRG Root X1 still chains the new intermediate |
+| Leaf cert renews (every ~90 days) | ✅ YE1 still matches the new leaf's chain |
+| Let's Encrypt rotates intermediate (YE1 → successor) | ✅ ISRG Root X1/X2 still chain the new intermediate |
 | Let's Encrypt switches chain root (X1 → X2) | ✅ ISRG Root X2 in the pin set matches |
 | Let's Encrypt → entirely different CA | ❌ Release required; brick-recovery floor (expiration) provides graceful fallback to system-CA trust |
 

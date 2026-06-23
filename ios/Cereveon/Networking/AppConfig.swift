@@ -39,13 +39,15 @@ enum AppConfig {
     //
     // SPKI SHA-256 (base64). Pin semantics: accept if ANY pin matches ANY cert
     // in the validated chain.
-    //   - Let's Encrypt E8 ECDSA intermediate (current leaf chains through it)
-    //   - ISRG Root X1 (RSA, valid until 2030)
-    //   - ISRG Root X2 (ECDSA, valid until 2035) — backup
+    //   - Let's Encrypt YE1 ECDSA intermediate (the current leaf's direct issuer)
+    //   - ISRG Root X1 (RSA root, the ultimate anchor)
+    //   - ISRG Root X2 (ECDSA root) — the served chain terminates here, so this
+    //     pin is what matches today: leaf → YE1 → ISRG Root YE → X2 → X1. The
+    //     X1/X2 root pins survive Let's Encrypt intermediate rotations.
     static let pinnedSPKISHA256: Set<String> = [
-        "iFvwVyJSxnQdyaUvUERIf+8qk7gRze3612JMwoO3zdU=",
-        "C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=",
-        "diGVwiVYbubAI3RW4hB9xU8e/CH2GnkuvVFZE8zmgzI=",
+        "brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=",   // LE YE1 (intermediate)
+        "C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=",   // ISRG Root X1
+        "diGVwiVYbubAI3RW4hB9xU8e/CH2GnkuvVFZE8zmgzI=",   // ISRG Root X2
     ]
 
     /// Graceful-fallback floor (matches the Android pin-set `expiration`): after

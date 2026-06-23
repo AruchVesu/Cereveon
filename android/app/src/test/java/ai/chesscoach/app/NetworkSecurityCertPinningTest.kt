@@ -76,9 +76,9 @@ class NetworkSecurityCertPinningTest {
      * procedure in CERT_PIN_ROTATION.md.
      */
     private val EXPECTED_PINS: Set<String> = setOf(
-        // Let's Encrypt E8 ECDSA intermediate.  Matches the current
-        // chain (leaf → E8 → ISRG Root X1).
-        "iFvwVyJSxnQdyaUvUERIf+8qk7gRze3612JMwoO3zdU=",
+        // Let's Encrypt YE1 ECDSA intermediate (the leaf's direct issuer).
+        // Matches the current chain (leaf → YE1 → ISRG Root YE → X2 → X1).
+        "brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=",
         // ISRG Root X1 (RSA root, valid until 2030).  Long-term anchor
         // that survives Let's Encrypt intermediate rotation.
         "C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=",

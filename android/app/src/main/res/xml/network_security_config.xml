@@ -28,14 +28,15 @@
         match one of three SPKI hashes.
 
         Three pins covers the realistic rotation surface:
-          E8       — current Let's Encrypt ECDSA intermediate.  Matches
-                     today's chain (leaf → E8 → ISRG Root X1).
-          ISRG X1  — RSA root, valid until 2030.  Survives E8 rotation
-                     to a sibling LE intermediate (E5/E6/E7/E9/etc.) that
-                     still chains to X1.
-          ISRG X2  — ECDSA root, valid until 2035.  Backup for the
-                     scenario where Let's Encrypt migrates the chain
-                     to terminate at X2 instead of X1.
+          YE1      — current Let's Encrypt ECDSA intermediate (the leaf's
+                     direct issuer).  Matches today's chain
+                     (leaf → YE1 → ISRG Root YE → ISRG Root X2 → X1).
+          ISRG X1  — RSA root, valid until 2030.  Survives YE1 rotation
+                     to a sibling LE intermediate that still chains to X1.
+          ISRG X2  — ECDSA root, valid until 2035.  The served chain
+                     currently terminates here (cross-signed by X1), so
+                     this root pin is what keeps matching as the
+                     intermediate rotates.
 
         ``expiration`` is the graceful-fallback floor: if pins aren't
         rotated by that date and the chain has drifted in some way the
@@ -50,8 +51,8 @@
     <domain-config>
         <domain includeSubdomains="true">cereveon.com</domain>
         <pin-set expiration="2028-05-20">
-            <!-- Let's Encrypt E8 ECDSA intermediate (current). -->
-            <pin digest="SHA-256">iFvwVyJSxnQdyaUvUERIf+8qk7gRze3612JMwoO3zdU=</pin>
+            <!-- Let's Encrypt YE1 ECDSA intermediate (the current leaf's direct issuer). -->
+            <pin digest="SHA-256">brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=</pin>
             <!-- ISRG Root X1 (RSA root, valid until 2030). -->
             <pin digest="SHA-256">C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=</pin>
             <!-- ISRG Root X2 (ECDSA root, valid until 2035) — backup. -->
