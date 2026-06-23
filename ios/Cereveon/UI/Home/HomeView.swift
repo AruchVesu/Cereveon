@@ -29,6 +29,9 @@ struct HomeView: View {
     @State private var showHistory = false
     @State private var showOpenings = false
     @State private var showLessons = false
+    @State private var showDrill = false
+    /// Today's-drill card — loads the due study-plan puzzle, if any.
+    @StateObject private var drill = TodaysDrillViewModel()
     /// Inert tab selection — Home is the only live tab. Stored so the bar can
     /// show a pressed/active accent without yet routing anywhere.
     @State private var selectedTab: Tab = .home
@@ -44,6 +47,13 @@ struct HomeView: View {
 
                         AtriumOrnamentRule()
                             .padding(.top, AtriumSpacing.space12)
+
+                        // Today's drill — the due per-mistake study-plan puzzle,
+                        // shown only when one is actually due (else hidden).
+                        if let puzzle = drill.puzzle {
+                            todaysDrillCard(puzzle)
+                                .padding(.top, AtriumSpacing.space24)
+                        }
 
                         // Follow-ups (deferred): the Resume card and the
                         // XP / "Day N" kicker land once persistence + /auth/me
@@ -75,6 +85,61 @@ struct HomeView: View {
         .fullScreenCover(isPresented: $showLessons) {
             LessonsView(auth: auth)
         }
+        .fullScreenCover(isPresented: $showDrill) {
+            if let fen = drill.puzzle?.fen, !fen.isEmpty {
+                NavigationStack {
+                    MistakeReplayView(positions: [fen], token: { auth.bearerToken })
+                        .toolbar {
+                            ToolbarItem(placement: .navigationBarLeading) {
+                                Button("Close") { showDrill = false }
+                                    .foregroundStyle(AtriumColors.muted)
+                            }
+                        }
+                }
+                .tint(AtriumColors.accentCyan)
+            }
+        }
+        .task { await drill.load(token: auth.bearerToken) }
+    }
+
+    // MARK: - Today's drill
+
+    private func todaysDrillCard(_ puzzle: TodayPuzzle) -> some View {
+        Button { showDrill = true } label: {
+            VStack(alignment: .leading, spacing: AtriumSpacing.space8) {
+                HStack {
+                    Text("Today's drill".uppercased())
+                        .atriumStyle(AtriumTypography.kicker)
+                        .foregroundStyle(AtriumColors.accentCyan)
+                    Spacer()
+                    Text("Day \(puzzle.dayNumber) of \(drill.plan?.totalDays ?? 3)".uppercased())
+                        .atriumStyle(AtriumTypography.kicker)
+                        .foregroundStyle(AtriumColors.dim)
+                }
+                Text(drillHeadline)
+                    .atriumStyle(AtriumTypography.body)
+                    .foregroundStyle(AtriumColors.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Tap to solve \u{2192}")
+                    .atriumStyle(AtriumTypography.inline)
+                    .foregroundStyle(AtriumColors.muted)
+            }
+            .padding(AtriumSpacing.cardPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(AtriumColors.accentCyan22)
+            .overlay(
+                RoundedRectangle(cornerRadius: AtriumSpacing.cornerRadius)
+                    .stroke(AtriumColors.accentCyan55, lineWidth: AtriumSpacing.hairlineThickness)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: AtriumSpacing.cornerRadius))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var drillHeadline: String {
+        let verdict = drill.plan?.verdict ?? ""
+        return verdict.isEmpty ? "A position from your recent mistakes is due." : verdict
     }
 
     // MARK: - Header
