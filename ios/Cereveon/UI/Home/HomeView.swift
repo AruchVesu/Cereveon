@@ -33,7 +33,7 @@ struct HomeView: View {
     /// Today's-drill card — loads the due study-plan puzzle, if any.
     @StateObject private var drill = TodaysDrillViewModel()
     /// Header cosmetics — the Day-N kicker (local first-seen) + the XP kicker.
-    @StateObject private var header = HomeHeaderViewModel()
+    @StateObject private var headerVM = HomeHeaderViewModel()
     /// Inert tab selection — Home is the only live tab. Stored so the bar can
     /// show a pressed/active accent without yet routing anywhere.
     @State private var selectedTab: Tab = .home
@@ -102,7 +102,7 @@ struct HomeView: View {
             }
         }
         .task { await drill.load(token: auth.bearerToken) }
-        .task { await header.loadXP { await auth.trainingXP() } }
+        .task { await headerVM.loadXP { await auth.trainingXP() } }
     }
 
     // MARK: - Today's drill
@@ -159,7 +159,7 @@ struct HomeView: View {
             }
 
             // "<Weekday> · Day NNN" — N from the locally-persisted first-seen date.
-            Text(header.dateKicker().uppercased())
+            Text(headerVM.dateKicker().uppercased())
                 .atriumStyle(AtriumTypography.kicker)
                 .foregroundStyle(AtriumColors.muted)
                 .padding(.top, AtriumSpacing.space16)
@@ -170,7 +170,7 @@ struct HomeView: View {
                 .padding(.top, AtriumSpacing.space4)
 
             // "Level N · X XP" — appears once /auth/me returns the training XP.
-            if let xpKicker = header.xpKicker {
+            if let xpKicker = headerVM.xpKicker {
                 Text(xpKicker.uppercased())
                     .atriumStyle(AtriumTypography.kicker)
                     .foregroundStyle(AtriumColors.accentCyan)
