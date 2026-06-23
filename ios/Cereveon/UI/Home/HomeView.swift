@@ -28,6 +28,7 @@ struct HomeView: View {
     @State private var showSettings = false
     @State private var showHistory = false
     @State private var showOpenings = false
+    @State private var showLessons = false
     /// Inert tab selection — Home is the only live tab. Stored so the bar can
     /// show a pressed/active accent without yet routing anywhere.
     @State private var selectedTab: Tab = .home
@@ -70,6 +71,9 @@ struct HomeView: View {
         }
         .fullScreenCover(isPresented: $showOpenings) {
             OpeningsView(auth: auth)
+        }
+        .fullScreenCover(isPresented: $showLessons) {
+            LessonsView(auth: auth)
         }
     }
 
@@ -132,6 +136,7 @@ struct HomeView: View {
                     case .play: showPlay = true
                     case .pastGames: showHistory = true
                     case .openings: showOpenings = true
+                    case .lessons: showLessons = true
                     case nil: break
                     }
                 }
@@ -170,11 +175,14 @@ struct HomeView: View {
         .background(AtriumColors.bgBase)
     }
 
-    /// Home is the only live tab; Lessons / Coach are inert. "You" opens Settings.
+    /// Home is the active tab; Lessons opens the lesson, Coach is inert (its panel
+    /// lives on the play screen), "You" opens Settings.
     private func handleTab(_ tab: Tab) {
         switch tab {
-        case .home, .lessons, .coach:
+        case .home, .coach:
             selectedTab = tab // visual only; no destination yet
+        case .lessons:
+            showLessons = true
         case .you:
             showSettings = true
         }
@@ -184,7 +192,7 @@ struct HomeView: View {
 // MARK: - Library model
 
 /// Where a library row routes; nil = visual-only placeholder.
-private enum LibraryRoute { case play, pastGames, openings }
+private enum LibraryRoute { case play, pastGames, openings, lessons }
 
 /// A single Home library row. Roman numeral + Cormorant title + italic sub +
 /// chevron, mirroring `Atrium.HomeLibraryRow`.
@@ -200,7 +208,7 @@ private struct LibraryEntry: Identifiable {
         LibraryEntry(numeral: "I",   title: "New game",
                      sub: "Adaptive opponent",         route: .play),
         LibraryEntry(numeral: "II",  title: "Lessons",
-                     sub: "Curriculum coach · soon",   route: nil),
+                     sub: "Curriculum coach",          route: .lessons),
         LibraryEntry(numeral: "III", title: "Openings",
                      sub: "Repertoire trainer",        route: .openings),
         LibraryEntry(numeral: "IV",  title: "Past games",
