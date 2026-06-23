@@ -114,7 +114,7 @@ the Android client via the `<pin-set>` block on the `cereveon.com`
 domain-config in `network_security_config.xml`. Three SPKI hashes
 are pinned:
 
-- Let's Encrypt **E8** ECDSA intermediate — matches today's chain.
+- Let's Encrypt **YE1** ECDSA intermediate — the current leaf's direct issuer.
 - **ISRG Root X1** (RSA, valid until 2030) — long-term anchor that
   survives any Let's Encrypt intermediate rotation (E5/E6/E7/E9/etc.)
   that still chains to X1.
