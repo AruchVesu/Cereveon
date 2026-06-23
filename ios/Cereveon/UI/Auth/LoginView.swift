@@ -28,11 +28,18 @@ struct LoginView: View {
         return nil
     }
 
-    /// Both fields non-empty (email trimmed), matching the Android guard.
+    /// Email valid + password meets the backend's minimum length. Gating both
+    /// actions on the floor keeps the server from bouncing a vague 400 back;
+    /// sign-in is fine to gate too since every account already meets it.
     private var canSubmit: Bool {
         !email.trimmingCharacters(in: .whitespaces).isEmpty
-            && !password.isEmpty
-            && isValidEmail(email)
+            && AuthFieldValidation.isAcceptablePassword(password)
+            && AuthFieldValidation.isValidEmail(email)
+    }
+
+    /// Password present but under the floor — drives the inline hint.
+    private var passwordTooShort: Bool {
+        !password.isEmpty && !AuthFieldValidation.isAcceptablePassword(password)
     }
 
     var body: some View {
@@ -62,7 +69,15 @@ struct LoginView: View {
                     onSubmit: { if canSubmit { signIn() } }
                 )
                 .focused($focusedField, equals: .password)
-                .padding(.bottom, AtriumSpacing.space24)
+                .padding(.bottom, passwordTooShort ? AtriumSpacing.space8 : AtriumSpacing.space24)
+
+                if passwordTooShort {
+                    Text("At least \(AuthFieldValidation.minPasswordLength) characters")
+                        .atriumStyle(AtriumTypography.inline)
+                        .foregroundStyle(AtriumColors.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, AtriumSpacing.space24)
+                }
 
                 if let errorMessage {
                     errorRow(errorMessage)
@@ -121,12 +136,4 @@ struct LoginView: View {
             .clipShape(RoundedRectangle(cornerRadius: AtriumSpacing.cornerRadius))
     }
 
-    /// Lightweight, presentation-only email sanity check (gates the buttons).
-    /// The server remains the authority on whether the address is real.
-    private func isValidEmail(_ raw: String) -> Bool {
-        let value = raw.trimmingCharacters(in: .whitespaces)
-        guard let at = value.firstIndex(of: "@"), at != value.startIndex else { return false }
-        let domain = value[value.index(after: at)...]
-        return domain.contains(".") && !domain.hasPrefix(".") && !domain.hasSuffix(".")
-    }
 }
