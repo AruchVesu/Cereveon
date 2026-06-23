@@ -166,4 +166,19 @@ final class MistakeReplayTests: XCTestCase {
         vm.next()
         XCTAssertEqual(vm.state, .finished(correct: 1, total: 1))
     }
+
+    func testSeedModeUsesGivenPositionsWithoutHistory() async {
+        // A failing history client proves the seed bypasses the fetch.
+        let vm = MistakeReplayViewModel(
+            eventId: "",
+            seedFENs: ["rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2"],
+            historyClient: FakeHistoryClient(.httpError(500)),
+            verifyClient: FakeVerifyClient(.success(verdict(correct: true, best: "g1f3"))),
+            token: { "t" }
+        )
+        await vm.load()
+        XCTAssertEqual(vm.state, .ready, "seed mode skips the history fetch")
+        XCTAssertEqual(vm.total, 1)
+        XCTAssertTrue(vm.whiteToMove)
+    }
 }

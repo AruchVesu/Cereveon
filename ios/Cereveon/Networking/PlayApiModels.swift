@@ -76,15 +76,86 @@ struct GameFinishRequest: Encodable {
     var gameId: String? = nil   // ties back to the /game/start row
 }
 
-/// Response from POST /game/finish. Only the fields the client needs are
-/// modelled; the rest of the (large) payload is ignored.
+/// The coach's post-game action (`coach_action`). `type` is "NONE" when the
+/// controller didn't fire; the summary then shows just the result + content.
+struct CoachAction: Decodable, Equatable {
+    let type: String
+    let weakness: String?
+    let reason: String?
+
+    init(type: String = "NONE", weakness: String? = nil, reason: String? = nil) {
+        self.type = type; self.weakness = weakness; self.reason = reason
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type = (try? c.decode(String.self, forKey: .type)) ?? "NONE"
+        weakness = try? c.decode(String.self, forKey: .weakness)
+        reason = try? c.decode(String.self, forKey: .reason)
+    }
+    private enum CodingKeys: String, CodingKey { case type, weakness, reason }
+
+    static let none = CoachAction()
+    var hasContent: Bool { type.uppercased() != "NONE" && !type.isEmpty }
+}
+
+/// The coach's post-game plan copy (`coach_content`).
+struct CoachContent: Decodable, Equatable {
+    let title: String
+    let description: String
+
+    init(title: String = "", description: String = "") {
+        self.title = title; self.description = description
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = (try? c.decode(String.self, forKey: .title)) ?? ""
+        description = (try? c.decode(String.self, forKey: .description)) ?? ""
+    }
+    private enum CodingKeys: String, CodingKey { case title, description }
+
+    static let empty = CoachContent()
+}
+
+/// The game's worst player move (`biggest_mistake`), for the "Replay your mistake"
+/// CTA. Present only when a move cleared the server's mistake threshold (150cp).
+struct BiggestMistake: Decodable, Equatable {
+    let fen: String          // position BEFORE the bad move (player to move)
+    let playedMove: String   // the UCI the player actually played
+    let moveNumber: Int
+    let evalLossCp: Int
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fen = (try? c.decode(String.self, forKey: .fen)) ?? ""
+        playedMove = (try? c.decode(String.self, forKey: .playedMove)) ?? ""
+        moveNumber = (try? c.decode(Int.self, forKey: .moveNumber)) ?? 0
+        evalLossCp = (try? c.decode(Int.self, forKey: .evalLossCp)) ?? 0
+    }
+    private enum CodingKeys: String, CodingKey { case fen, playedMove, moveNumber, evalLossCp }
+
+    /// A blank/zero payload (or no FEN) means "nothing worth replaying".
+    var isReplayable: Bool { !fen.isEmpty && evalLossCp > 0 }
+}
+
+/// Response from POST /game/finish. Models the post-game-summary fields (the
+/// coach plan + the biggest mistake); the rest of the large payload is ignored.
+/// The rating/confidence numbers are decoded but never shown (Elo is hidden).
 struct GameFinishResponse: Decodable {
     let status: String
     let newRating: Double
-    private enum CodingKeys: String, CodingKey { case status, newRating }
+    let coachAction: CoachAction
+    let coachContent: CoachContent
+    let biggestMistake: BiggestMistake?
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         status = (try? c.decode(String.self, forKey: .status)) ?? "stored"
         newRating = (try? c.decode(Double.self, forKey: .newRating)) ?? 0
+        coachAction = (try? c.decode(CoachAction.self, forKey: .coachAction)) ?? .none
+        coachContent = (try? c.decode(CoachContent.self, forKey: .coachContent)) ?? .empty
+        biggestMistake = try? c.decode(BiggestMistake.self, forKey: .biggestMistake)
+    }
+    private enum CodingKeys: String, CodingKey {
+        case status, newRating, coachAction, coachContent, biggestMistake
     }
 }

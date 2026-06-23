@@ -16,6 +16,18 @@ struct MistakeReplayView: View {
         ))
     }
 
+    /// Drill specific positions directly — used by the post-game "Replay your
+    /// mistake" CTA with the single biggest-mistake FEN.
+    init(positions: [String], token: @escaping () -> String?) {
+        _vm = StateObject(wrappedValue: MistakeReplayViewModel(
+            eventId: "",
+            seedFENs: positions,
+            historyClient: HTTPGameHistoryClient(delegate: PinningURLSessionDelegate()),
+            verifyClient: HTTPVerifyReplayClient(delegate: PinningURLSessionDelegate()),
+            token: token
+        ))
+    }
+
     var body: some View {
         ZStack {
             AtriumBackground()

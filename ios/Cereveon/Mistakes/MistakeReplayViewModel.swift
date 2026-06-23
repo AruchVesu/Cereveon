@@ -30,6 +30,9 @@ final class MistakeReplayViewModel: ObservableObject {
     private var queue: [String] = []
     private let game = ChessGame()
     private let eventId: String
+    /// When set, these FENs are the queue directly (no history fetch, no filter) —
+    /// used by the "Replay your mistake" CTA with the one biggest-mistake position.
+    private let seedFENs: [String]?
     private let historyClient: GameHistoryClient
     private let verifyClient: VerifyReplayClient
     private let token: () -> String?
@@ -39,10 +42,12 @@ final class MistakeReplayViewModel: ObservableObject {
     var isInteractive: Bool { state == .ready && !solved && !verifying }
 
     init(eventId: String,
+         seedFENs: [String]? = nil,
          historyClient: GameHistoryClient,
          verifyClient: VerifyReplayClient,
          token: @escaping () -> String?) {
         self.eventId = eventId
+        self.seedFENs = seedFENs
         self.historyClient = historyClient
         self.verifyClient = verifyClient
         self.token = token
@@ -52,6 +57,14 @@ final class MistakeReplayViewModel: ObservableObject {
     func load() async {
         state = .loading
         guard let token = token() else { state = .error; return }
+        if let seedFENs, !seedFENs.isEmpty {
+            queue = seedFENs
+            index = 0
+            correctCount = 0
+            renderCurrent()
+            state = .ready
+            return
+        }
         switch await historyClient.positions(eventId: eventId, token: token) {
         case let .success(response) where !response.positions.isEmpty:
             queue = Self.buildQueue(response.positions)

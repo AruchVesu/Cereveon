@@ -87,4 +87,32 @@ final class PlayApiClientTests: XCTestCase {
         XCTAssertEqual(resp.newRating, 1234.5)
         XCTAssertEqual(URLProtocolStub.lastRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
     }
+
+    func testGameFinishDecodesCoachSummaryAndMistake() async {
+        URLProtocolStub.handler = ok(#"""
+        {"status":"stored","new_rating":1200,
+         "coach_action":{"type":"DRILL","weakness":"tactics","reason":"missed a fork"},
+         "coach_content":{"title":"Sharpen your tactics","description":"You missed a winning fork on move 12."},
+         "biggest_mistake":{"fen":"r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3","played_move":"f1c4","move_number":12,"eval_loss_cp":210}}
+        """#)
+        let client = HTTPGameClient(baseURL: "https://test.local", configuration: stubConfig())
+        let request = GameFinishRequest(pgn: "x", result: "loss", accuracy: 0.5)
+        guard case let .success(resp) = await client.finishGame(request, token: "tok") else { return XCTFail() }
+        XCTAssertEqual(resp.coachAction.type, "DRILL")
+        XCTAssertTrue(resp.coachAction.hasContent)
+        XCTAssertEqual(resp.coachContent.title, "Sharpen your tactics")
+        XCTAssertEqual(resp.biggestMistake?.playedMove, "f1c4")
+        XCTAssertEqual(resp.biggestMistake?.evalLossCp, 210)
+        XCTAssertTrue(resp.biggestMistake?.isReplayable ?? false)
+    }
+
+    func testGameFinishDefaultsWhenCoachFieldsAbsent() async {
+        URLProtocolStub.handler = ok(#"{"status":"stored","new_rating":1200}"#)
+        let client = HTTPGameClient(baseURL: "https://test.local", configuration: stubConfig())
+        let request = GameFinishRequest(pgn: "x", result: "draw", accuracy: 0.5)
+        guard case let .success(resp) = await client.finishGame(request, token: "tok") else { return XCTFail() }
+        XCTAssertFalse(resp.coachAction.hasContent, "absent coach_action → NONE")
+        XCTAssertEqual(resp.coachContent.title, "")
+        XCTAssertNil(resp.biggestMistake)
+    }
 }
