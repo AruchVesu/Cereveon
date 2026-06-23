@@ -13,10 +13,20 @@ private final class FakeChatClient: ChatClient {
     private(set) var lastGameId: String?
     private(set) var lastMove: String?
     private(set) var lastCoachVoice: String?
+    private(set) var feedbackCallCount = 0
+    private(set) var lastFeedbackFen: String?
+    private(set) var lastFeedbackHelpful: Bool?
 
     func chat(fen: String, messages: [ChatMessageDTO], moveCount: Int?,
               gameId: String?, lastMove: String?, coachVoice: String?, token: String) async -> APIResult<ChatResponse> {
         .httpError(501)
+    }
+
+    func submitFeedback(sessionFen: String, isHelpful: Bool, token: String) async -> APIResult<Void> {
+        feedbackCallCount += 1
+        lastFeedbackFen = sessionFen
+        lastFeedbackHelpful = isHelpful
+        return .success(())
     }
 
     func history(limit: Int, gameId: String?, token: String) async -> APIResult<ChatHistoryResponse> {
@@ -217,5 +227,46 @@ final class ChatViewModelTests: XCTestCase {
         let second = makeVM(FakeChatClient(), userDefaults: defaults)
         XCTAssertEqual(second.coachVoice, .formal)
         XCTAssertEqual(second.coachVoice.wireValue, "formal")
+    }
+
+    // MARK: - Thumbs feedback
+
+    func testSubmitFeedbackSendsReplyPositionAndHelpful() async {
+        let client = FakeChatClient()
+        client.streamEvents = [.chunk("Develop."), .done(engineSignal: nil, mode: "CHAT_V1")]
+        let vm = makeVM(client, fen: "8/8/8/8/8/8/8/8 w - - 0 1")
+        vm.draft = "hi"
+        vm.send()
+        await vm.awaitStreamCompletion()
+
+        let reply = vm.messages.last!
+        XCTAssertEqual(reply.role, .assistant)
+        XCTAssertEqual(reply.fen, "8/8/8/8/8/8/8/8 w - - 0 1", "the reply carries the position it was about")
+
+        vm.submitFeedback(for: reply, helpful: true)
+        await vm.awaitFeedbackCompletion()
+
+        XCTAssertEqual(client.feedbackCallCount, 1)
+        XCTAssertEqual(client.lastFeedbackHelpful, true)
+        XCTAssertEqual(client.lastFeedbackFen, "8/8/8/8/8/8/8/8 w - - 0 1")
+        // The bubble is optimistically marked.
+        XCTAssertEqual(vm.messages.last?.feedback, true)
+    }
+
+    func testFeedbackIgnoredForUserMessageAndWhenLoggedOut() async {
+        let client = FakeChatClient()
+        let vm = makeVM(client)
+        // A synthetic user message is never rated.
+        let userMessage = ChatViewModel.Message(id: UUID(), role: .user, text: "hi")
+        vm.submitFeedback(for: userMessage, helpful: true)
+        await vm.awaitFeedbackCompletion()
+        XCTAssertEqual(client.feedbackCallCount, 0)
+
+        // Logged out → no call even for an assistant message.
+        let loggedOut = makeVM(client, token: nil)
+        let assistant = ChatViewModel.Message(id: UUID(), role: .assistant, text: "ok", fen: "startpos")
+        loggedOut.submitFeedback(for: assistant, helpful: false)
+        await loggedOut.awaitFeedbackCompletion()
+        XCTAssertEqual(client.feedbackCallCount, 0)
     }
 }
