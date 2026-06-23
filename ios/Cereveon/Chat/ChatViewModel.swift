@@ -1,6 +1,27 @@
 import Foundation
 import Combine
 
+/// Coach tone, sent as `coach_voice` (it shapes tone, not content). The raw
+/// values are the backend allow-list verbatim ("conversational" / "formal" /
+/// "terse"); the boundary validator 422s anything else, so these must match.
+enum CoachVoice: String, CaseIterable, Identifiable {
+    case conversational
+    case formal
+    case terse
+
+    var id: String { rawValue }
+    var wireValue: String { rawValue }
+
+    /// Short Atrium label for the picker.
+    var label: String {
+        switch self {
+        case .conversational: return "Warm"
+        case .formal: return "Formal"
+        case .terse: return "Terse"
+        }
+    }
+}
+
 /// Drives the coach chat panel: seeds from the server-authoritative history once
 /// per open, sends a turn, and streams the reply into a growing assistant bubble.
 /// Reads the live board / game / last-move through closures so it always sends
@@ -23,6 +44,11 @@ final class ChatViewModel: ObservableObject {
     @Published private(set) var historyLoaded = false
     @Published var draft = ""
 
+    /// Coach tone; persisted across sessions and sent as `coach_voice` each turn.
+    @Published var coachVoice: CoachVoice {
+        didSet { userDefaults.set(coachVoice.rawValue, forKey: Self.voiceDefaultsKey) }
+    }
+
     /// Shown when a stream produced no content (offline / aborted-empty), so the
     /// panel never leaves an empty assistant bubble.
     static let offlineFallback = "The coach is offline right now — try again in a moment."
@@ -38,6 +64,8 @@ final class ChatViewModel: ObservableObject {
     private let lastMove: () -> String?
     private let moveCount: () -> Int?
     private let token: () -> String?
+    private let userDefaults: UserDefaults
+    private static let voiceDefaultsKey = "cereveon.coach_voice"
 
     private var streamTask: Task<Void, Never>?
 
@@ -46,13 +74,19 @@ final class ChatViewModel: ObservableObject {
          gameId: @escaping () -> String? = { nil },
          lastMove: @escaping () -> String? = { nil },
          moveCount: @escaping () -> Int? = { nil },
-         token: @escaping () -> String?) {
+         token: @escaping () -> String?,
+         userDefaults: UserDefaults = .standard) {
         self.client = client
         self.fen = fen
         self.gameId = gameId
         self.lastMove = lastMove
         self.moveCount = moveCount
         self.token = token
+        self.userDefaults = userDefaults
+        // Restore the persisted voice (didSet doesn't fire during init, so this
+        // read never writes back). Default to conversational.
+        let stored = userDefaults.string(forKey: Self.voiceDefaultsKey)
+        coachVoice = stored.flatMap(CoachVoice.init(rawValue:)) ?? .conversational
     }
 
     var canSend: Bool {
@@ -95,7 +129,8 @@ final class ChatViewModel: ObservableObject {
         isStreaming = true
 
         let stream = client.streamChat(fen: fen(), messages: wire, moveCount: moveCount(),
-                                       gameId: gameId(), lastMove: lastMove(), token: token)
+                                       gameId: gameId(), lastMove: lastMove(),
+                                       coachVoice: coachVoice.wireValue, token: token)
         streamTask = Task { [weak self] in
             var buffer = ""
             for await event in stream {
