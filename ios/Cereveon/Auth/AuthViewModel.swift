@@ -23,6 +23,12 @@ final class AuthViewModel: ObservableObject {
         return nil
     }
 
+    /// The signed-in player's id (from the JWT), or nil when unauthenticated.
+    var playerId: String? {
+        if case let .authenticated(_, pid) = authState { return pid.isEmpty ? nil : pid }
+        return nil
+    }
+
     private let api: AuthApiClient
     private let repository: AuthRepository
     private let defaults: UserDefaults
@@ -130,6 +136,17 @@ final class AuthViewModel: ObservableObject {
         case .networkError:
             return "Couldn't reach the server. Try again."
         }
+    }
+
+    /// Fetch the player's training XP via GET /auth/me (token may rotate). nil on
+    /// failure / logged out. Used by the Home XP kicker.
+    func trainingXP() async -> Int? {
+        guard case let .authenticated(token, _) = authState else { return nil }
+        if case let .success(me) = await api.me(token: token) {
+            authState = repository.authState()
+            return me.trainingXp
+        }
+        return nil
     }
 
     func clearError() {
