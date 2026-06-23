@@ -110,6 +110,28 @@ final class AuthViewModel: ObservableObject {
         phase = .idle
     }
 
+    /// Change the signed-in user's password. Returns `nil` on success, else a
+    /// user-facing error message. The token may rotate on success.
+    func changePassword(current: String, new: String) async -> String? {
+        guard case let .authenticated(token, _) = authState else { return "You're signed out." }
+        switch await api.changePassword(currentPassword: current, newPassword: new, token: token) {
+        case .success:
+            authState = repository.authState()
+            return nil
+        case let .httpError(code):
+            switch code {
+            case 401, 403: return "Your current password is incorrect."
+            case 400, 422: return "Please check your passwords and try again."
+            case 429: return "Too many attempts. Please wait a moment."
+            default: return "Something went wrong (error \(code)). Please try again."
+            }
+        case .timeout:
+            return "The request timed out. Try again."
+        case .networkError:
+            return "Couldn't reach the server. Try again."
+        }
+    }
+
     func clearError() {
         if case .failed = phase { phase = .idle }
     }

@@ -15,6 +15,8 @@ struct PlayView: View {
     @State private var containerHeight: CGFloat = 0
     /// Resizable chat-panel height (0 until first opened); clamped to panelBounds.
     @State private var panelHeight: CGFloat = 0
+    /// Board render chosen in Settings, read once when this screen is presented.
+    @State private var boardStyle = SettingsStore.boardStyle()
 
     init(auth: AuthViewModel) {
         let pinning = PinningURLSessionDelegate()
@@ -63,7 +65,7 @@ struct PlayView: View {
                     lastMoveFrom: vm.lastMoveFrom,
                     lastMoveTo: vm.lastMoveTo,
                     focusSquare: nil,
-                    boardStyle: .flat,
+                    boardStyle: boardStyle,
                     isInteractive: vm.isHumanTurn,
                     onMove: { from, to in vm.onMove(from: from, to: to) }
                 )
