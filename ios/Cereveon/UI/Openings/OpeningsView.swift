@@ -48,21 +48,21 @@ struct OpeningsView: View {
                 Task { await vm.add(eco: eco, name: name, line: line) }
             }
         }
-        .confirmationDialog("How did the drill go?", isPresented: $showDrill, titleVisibility: .visible) {
-            Button("Nailed it") { drill(1.0) }
-            Button("Mostly") { drill(0.6) }
-            Button("Forgot it") { drill(0.2) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
+        .fullScreenCover(isPresented: $showDrill) {
             if let active = vm.activeOpening {
-                Text("Active line: \(active.eco) · \(active.name)")
+                NavigationStack {
+                    OpeningDrillView(opening: active) { outcome in
+                        Task { await vm.recordDrill(active.eco, outcome: outcome) }
+                    }
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button("Close") { showDrill = false }.foregroundStyle(AtriumColors.muted)
+                        }
+                    }
+                }
+                .tint(AtriumColors.accentCyan)
             }
         }
-    }
-
-    private func drill(_ outcome: Double) {
-        guard let eco = vm.activeOpening?.eco else { return }
-        Task { await vm.recordDrill(eco, outcome: outcome) }
     }
 
     private func loaded(_ openings: [RepertoireOpening]) -> some View {
