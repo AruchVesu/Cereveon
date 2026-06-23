@@ -7,9 +7,15 @@ import SwiftUI
 /// scrim-backed bottom sheet). The reply streams into a growing bubble.
 struct ChatPanelView: View {
     @ObservedObject var viewModel: ChatViewModel
+    /// Panel height, owned by the host (PlayView) so the board layout behind it
+    /// stays consistent; the grabber drags it within `heightBounds`.
+    @Binding var height: CGFloat
+    let heightBounds: ClosedRange<CGFloat>
     var onClose: () -> Void
 
     @FocusState private var composerFocused: Bool
+    /// Panel height when the resize drag began (nil = not dragging).
+    @State private var dragStartHeight: CGFloat? = nil
 
     /// Scroll anchor pinned to the bottom of the list so the view follows the
     /// streaming text and new messages.
@@ -35,6 +41,8 @@ struct ChatPanelView: View {
 
     // MARK: - Chrome
 
+    /// Drag handle. Dragging it up grows the panel, down shrinks it — bounded by
+    /// `heightBounds` so the board above always keeps a tappable strip.
     private var grabber: some View {
         Capsule()
             .fill(AtriumColors.hairlineStrong)
@@ -42,6 +50,19 @@ struct ChatPanelView: View {
             .frame(maxWidth: .infinity)
             .padding(.top, AtriumSpacing.space8)
             .padding(.bottom, AtriumSpacing.space4)
+            .contentShape(Rectangle())
+            .gesture(resizeGesture)
+    }
+
+    private var resizeGesture: some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { value in
+                let start = dragStartHeight ?? height
+                if dragStartHeight == nil { dragStartHeight = start }
+                let proposed = start - value.translation.height // up = taller
+                height = min(max(proposed, heightBounds.lowerBound), heightBounds.upperBound)
+            }
+            .onEnded { _ in dragStartHeight = nil }
     }
 
     private var headerBar: some View {
