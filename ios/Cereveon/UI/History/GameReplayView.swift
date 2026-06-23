@@ -5,8 +5,12 @@ import SwiftUI
 /// (Coaching-during-replay, as on Android's main-board review, is a follow-up.)
 struct GameReplayView: View {
     @StateObject private var vm: GameReplayViewModel
+    private let eventId: String
+    private let token: () -> String?
 
     init(eventId: String, token: @escaping () -> String?) {
+        self.eventId = eventId
+        self.token = token
         _vm = StateObject(wrappedValue: GameReplayViewModel(
             eventId: eventId,
             client: HTTPGameHistoryClient(delegate: PinningURLSessionDelegate()),
@@ -50,9 +54,31 @@ struct GameReplayView: View {
             .padding(.horizontal, AtriumSpacing.space16)
 
             controls
+            sharpenLink
             Spacer(minLength: 0)
         }
         .padding(.top, AtriumSpacing.space12)
+    }
+
+    /// Launches the "sharpen" trainer on this game's positions.
+    private var sharpenLink: some View {
+        NavigationLink {
+            MistakeReplayView(eventId: eventId, token: token)
+        } label: {
+            Text("Test yourself".uppercased())
+                .atriumStyle(AtriumTypography.kicker)
+                .foregroundStyle(AtriumColors.accentCyan)
+                .frame(maxWidth: .infinity)
+                .frame(height: AtriumSpacing.tapTarget)
+                .overlay(
+                    RoundedRectangle(cornerRadius: AtriumSpacing.cornerRadius)
+                        .stroke(AtriumColors.accentCyan55, lineWidth: AtriumSpacing.hairlineThickness)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, AtriumSpacing.space24)
+        .padding(.top, AtriumSpacing.space8)
     }
 
     private var controls: some View {
