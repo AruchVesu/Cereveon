@@ -32,6 +32,8 @@ struct SettingsView: View {
                         rule
                         preferencesSection
                         rule
+                        integrationsSection
+                        rule
                         accountSection
                     }
                     .padding(AtriumSpacing.space24)
@@ -101,6 +103,18 @@ struct SettingsView: View {
             sectionHeader("Preferences")
             toggleRow("Sound", isOn: $store.soundEnabled)
             toggleRow("Notifications", isOn: $store.notificationsEnabled)
+        }
+    }
+
+    private var integrationsSection: some View {
+        VStack(alignment: .leading, spacing: AtriumSpacing.space8) {
+            sectionHeader("Integrations")
+            NavigationLink {
+                LichessConnectView(token: { auth.bearerToken })
+            } label: {
+                chevronRowLabel("Lichess")
+            }
+            .buttonStyle(.plain)
         }
     }
 
