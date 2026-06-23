@@ -32,14 +32,19 @@ final class URLProtocolStub: URLProtocol {
 final class FakeAuthApi: AuthApiClient {
     var loginResult: APIResult<LoginResponse> = .httpError(500)
     var updateResult: APIResult<MeResponse> = .httpError(500)
+    var changePasswordResult: APIResult<Void> = .success(())
     var logoutCalled = false
+    private(set) var lastChangePassword: (current: String, new: String)?
 
     func login(email: String, password: String) async -> APIResult<LoginResponse> { loginResult }
     func register(email: String, password: String) async -> APIResult<LoginResponse> { loginResult }
     func logout(token: String) async -> APIResult<Void> { logoutCalled = true; return .success(()) }
     func me(token: String) async -> APIResult<MeResponse> { updateResult }
     func updateMe(token: String, rating: Double?, confidence: Double?) async -> APIResult<MeResponse> { updateResult }
-    func changePassword(currentPassword: String, newPassword: String, token: String) async -> APIResult<Void> { .success(()) }
+    func changePassword(currentPassword: String, newPassword: String, token: String) async -> APIResult<Void> {
+        lastChangePassword = (currentPassword, newPassword)
+        return changePasswordResult
+    }
 }
 
 // MARK: - Tests
@@ -229,6 +234,42 @@ final class AuthTests: XCTestCase {
         await vm.login(email: "a@b.com", password: "bad")
         XCTAssertFalse(vm.authState.isAuthenticated)
         guard case .failed = vm.phase else { return XCTFail("expected failed phase") }
+    }
+
+    @MainActor
+    private func authenticatedViewModel(_ fake: FakeAuthApi) async -> AuthViewModel {
+        let token = Self.makeJWT(exp: Int(Date().timeIntervalSince1970) + 3600)
+        fake.loginResult = .success(try! APIJSON.decode(LoginResponse.self, from: Self.loginResponseJSON(token: token)))
+        let vm = makeViewModel(api: fake)
+        await vm.login(email: "a@b.com", password: "pw")
+        return vm
+    }
+
+    @MainActor
+    func testChangePasswordSuccessReturnsNil() async {
+        let fake = FakeAuthApi()
+        let vm = await authenticatedViewModel(fake)
+        fake.changePasswordResult = .success(())
+        let result = await vm.changePassword(current: "old", new: "newpassword8")
+        XCTAssertNil(result)
+        XCTAssertEqual(fake.lastChangePassword?.current, "old")
+        XCTAssertEqual(fake.lastChangePassword?.new, "newpassword8")
+    }
+
+    @MainActor
+    func testChangePasswordWrongCurrentMapsMessage() async {
+        let fake = FakeAuthApi()
+        let vm = await authenticatedViewModel(fake)
+        fake.changePasswordResult = .httpError(401)
+        let result = await vm.changePassword(current: "wrong", new: "newpassword8")
+        XCTAssertEqual(result, "Your current password is incorrect.")
+    }
+
+    @MainActor
+    func testChangePasswordLoggedOutReturnsMessage() async {
+        let vm = makeViewModel(api: FakeAuthApi())
+        let result = await vm.changePassword(current: "x", new: "y")
+        XCTAssertEqual(result, "You're signed out.")
     }
 
     @MainActor

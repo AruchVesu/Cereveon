@@ -14,8 +14,8 @@ import SwiftUI
 ///   • **Lessons / Openings / Past games** (rows II–IV) — visual-only
 ///     placeholders; their destination screens do not exist yet, so the rows
 ///     render with a muted "soon" sub-line and do not navigate.
-///   • **Tab bar** — Home is active; Lessons / Coach / You are inert visuals.
-///     **Log out** lives in the "You" tab and calls `auth.logout()`.
+///   • **Tab bar** — Home is active; Lessons / Coach are inert visuals. **You**
+///     opens Settings (coach voice, board style, preferences, account/sign out).
 ///
 /// Deliberately deferred (need persistence / `/auth/me` wiring that isn't in
 /// place yet — follow-ups, not part of this screen):
@@ -25,14 +25,10 @@ struct HomeView: View {
     @EnvironmentObject private var auth: AuthViewModel
 
     @State private var showPlay = false
+    @State private var showSettings = false
     /// Inert tab selection — Home is the only live tab. Stored so the bar can
     /// show a pressed/active accent without yet routing anywhere.
     @State private var selectedTab: Tab = .home
-
-    private var isWorking: Bool {
-        if case .working = auth.phase { return true }
-        return false
-    }
 
     var body: some View {
         ZStack {
@@ -63,6 +59,9 @@ struct HomeView: View {
         }
         .fullScreenCover(isPresented: $showPlay) {
             PlayView(auth: auth)
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView().environmentObject(auth)
         }
     }
 
@@ -158,15 +157,13 @@ struct HomeView: View {
         .background(AtriumColors.bgBase)
     }
 
-    /// Home is the only live tab. "You" is repurposed as the logout affordance
-    /// until the profile screen exists; the other tabs are inert.
+    /// Home is the only live tab; Lessons / Coach are inert. "You" opens Settings.
     private func handleTab(_ tab: Tab) {
         switch tab {
         case .home, .lessons, .coach:
             selectedTab = tab // visual only; no destination yet
         case .you:
-            guard !isWorking else { return }
-            Task { await auth.logout() }
+            showSettings = true
         }
     }
 }
