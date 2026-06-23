@@ -24,6 +24,8 @@ struct SettingsView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: AtriumSpacing.space24) {
+                        profileSection
+                        rule
                         voiceSection
                         rule
                         boardSection
@@ -59,6 +61,18 @@ struct SettingsView: View {
     }
 
     // MARK: - Sections
+
+    private var profileSection: some View {
+        VStack(alignment: .leading, spacing: AtriumSpacing.space8) {
+            sectionHeader("Profile")
+            NavigationLink {
+                ProgressDashboardView(token: { auth.bearerToken })
+            } label: {
+                chevronRowLabel("Your progress")
+            }
+            .buttonStyle(.plain)
+        }
+    }
 
     private var voiceSection: some View {
         VStack(alignment: .leading, spacing: AtriumSpacing.space8) {
