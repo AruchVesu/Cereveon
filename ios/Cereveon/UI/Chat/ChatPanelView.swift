@@ -58,6 +58,8 @@ struct ChatPanelView: View {
 
             Spacer()
 
+            voiceMenu
+
             Button(action: onClose) {
                 Text("\u{2715}") // ✕
                     .atriumStyle(AtriumTypography.body)
@@ -69,6 +71,24 @@ struct ChatPanelView: View {
         }
         .padding(.horizontal, AtriumSpacing.space16)
         .padding(.vertical, AtriumSpacing.space8)
+    }
+
+    /// Coach-tone picker. A `Menu` hosting a `Picker` renders the three voices as
+    /// a checkmark radio set; the selection is the persisted `coachVoice`.
+    private var voiceMenu: some View {
+        Menu {
+            Picker("Coach voice", selection: $viewModel.coachVoice) {
+                ForEach(CoachVoice.allCases) { voice in
+                    Text(voice.label).tag(voice)
+                }
+            }
+        } label: {
+            Text("Voice · \(viewModel.coachVoice.label)".uppercased())
+                .atriumStyle(AtriumTypography.kicker)
+                .foregroundStyle(AtriumColors.muted)
+                .contentShape(Rectangle())
+        }
+        .tint(AtriumColors.accentCyan)
     }
 
     private var divider: some View {

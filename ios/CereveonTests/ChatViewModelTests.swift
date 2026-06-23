@@ -12,9 +12,10 @@ private final class FakeChatClient: ChatClient {
     private(set) var lastFen: String?
     private(set) var lastGameId: String?
     private(set) var lastMove: String?
+    private(set) var lastCoachVoice: String?
 
     func chat(fen: String, messages: [ChatMessageDTO], moveCount: Int?,
-              gameId: String?, lastMove: String?, token: String) async -> APIResult<ChatResponse> {
+              gameId: String?, lastMove: String?, coachVoice: String?, token: String) async -> APIResult<ChatResponse> {
         .httpError(501)
     }
 
@@ -24,11 +25,12 @@ private final class FakeChatClient: ChatClient {
     }
 
     func streamChat(fen: String, messages: [ChatMessageDTO], moveCount: Int?,
-                    gameId: String?, lastMove: String?, token: String) -> AsyncStream<ChatStreamEvent> {
+                    gameId: String?, lastMove: String?, coachVoice: String?, token: String) -> AsyncStream<ChatStreamEvent> {
         lastFen = fen
         lastStreamMessages = messages
         lastGameId = gameId
         self.lastMove = lastMove
+        lastCoachVoice = coachVoice
         let events = streamEvents
         return AsyncStream { continuation in
             for event in events { continuation.yield(event) }
@@ -41,6 +43,12 @@ private func decodeHistory(_ json: String) -> ChatHistoryResponse {
     try! APIJSON.decode(ChatHistoryResponse.self, from: Data(json.utf8))
 }
 
+/// A throwaway, isolated `UserDefaults` domain so voice-persistence tests never
+/// pollute (or read) the shared `.standard` suite.
+private func freshDefaults() -> UserDefaults {
+    UserDefaults(suiteName: "ChatViewModelTests-\(UUID().uuidString)")!
+}
+
 @MainActor
 final class ChatViewModelTests: XCTestCase {
 
@@ -48,13 +56,15 @@ final class ChatViewModelTests: XCTestCase {
                         fen: String = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
                         gameId: String? = "g-1",
                         lastMove: String? = "e2e4",
-                        token: String? = "tok") -> ChatViewModel {
+                        token: String? = "tok",
+                        userDefaults: UserDefaults = freshDefaults()) -> ChatViewModel {
         ChatViewModel(client: client,
                       fen: { fen },
                       gameId: { gameId },
                       lastMove: { lastMove },
                       moveCount: { 2 },
-                      token: { token })
+                      token: { token },
+                      userDefaults: userDefaults)
     }
 
     // MARK: - History seeding
@@ -180,5 +190,32 @@ final class ChatViewModelTests: XCTestCase {
         let vm = makeVM(client, token: nil)
         vm.draft = "hello"
         XCTAssertFalse(vm.canSend)
+    }
+
+    // MARK: - Coach voice
+
+    func testSelectedVoiceIsSentWithEachTurn() async {
+        let client = FakeChatClient()
+        client.streamEvents = [.chunk("ok."), .done(engineSignal: nil, mode: "CHAT_V1")]
+        let vm = makeVM(client)
+        vm.coachVoice = .terse
+        vm.draft = "hi"
+
+        vm.send()
+        await vm.awaitStreamCompletion()
+
+        XCTAssertEqual(client.lastCoachVoice, "terse")
+    }
+
+    func testVoiceDefaultsToConversationalAndPersists() {
+        let defaults = freshDefaults()
+        let first = makeVM(FakeChatClient(), userDefaults: defaults)
+        XCTAssertEqual(first.coachVoice, .conversational, "fresh install → conversational")
+
+        first.coachVoice = .formal
+        // A new instance over the same store restores the choice.
+        let second = makeVM(FakeChatClient(), userDefaults: defaults)
+        XCTAssertEqual(second.coachVoice, .formal)
+        XCTAssertEqual(second.coachVoice.wireValue, "formal")
     }
 }

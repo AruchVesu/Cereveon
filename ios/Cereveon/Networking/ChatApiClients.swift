@@ -31,6 +31,7 @@ protocol ChatClient {
               moveCount: Int?,
               gameId: String?,
               lastMove: String?,
+              coachVoice: String?,
               token: String) async -> APIResult<ChatResponse>
 
     func history(limit: Int,
@@ -42,6 +43,7 @@ protocol ChatClient {
                     moveCount: Int?,
                     gameId: String?,
                     lastMove: String?,
+                    coachVoice: String?,
                     token: String) -> AsyncStream<ChatStreamEvent>
 }
 
@@ -67,9 +69,11 @@ final class HTTPChatClient: ChatClient {
               moveCount: Int?,
               gameId: String?,
               lastMove: String?,
+              coachVoice: String? = nil,
               token: String) async -> APIResult<ChatResponse> {
         let request = ChatRequest(fen: fen, messages: messages,
-                                  moveCount: moveCount, gameId: gameId, lastMove: lastMove)
+                                  moveCount: moveCount, coachVoice: coachVoice,
+                                  gameId: gameId, lastMove: lastMove)
         let body = try? APIJSON.encode(request)
         return await http.request(
             path: "/chat", method: "POST",
@@ -102,11 +106,13 @@ final class HTTPChatClient: ChatClient {
                     moveCount: Int?,
                     gameId: String?,
                     lastMove: String?,
+                    coachVoice: String? = nil,
                     token: String) -> AsyncStream<ChatStreamEvent> {
         AsyncStream { continuation in
             let task = Task { [tokenSink] in
                 let request = ChatRequest(fen: fen, messages: messages,
-                                          moveCount: moveCount, gameId: gameId, lastMove: lastMove)
+                                          moveCount: moveCount, coachVoice: coachVoice,
+                                          gameId: gameId, lastMove: lastMove)
                 let body = try? APIJSON.encode(request)
                 let lines = http.streamingLines(
                     path: "/chat/stream", method: "POST",
