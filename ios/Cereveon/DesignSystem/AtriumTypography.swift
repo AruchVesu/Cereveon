@@ -4,10 +4,11 @@ import UIKit
 /// Atrium typography — mirrors the Atrium.* text appearances in
 /// android/app/src/main/res/values/themes.xml.
 ///
-/// The custom fonts (Cormorant Garamond / JetBrains Mono / Inter) are not yet
-/// bundled (see Resources/Fonts/README.md); until they are, each style falls
-/// back to the closest system face so the UI still renders. `tracking` is in
-/// points (Android's em letterSpacing × point size).
+/// The custom fonts (Cormorant Garamond / JetBrains Mono / Inter) are bundled
+/// under Resources/Fonts and registered via Info.plist `UIAppFonts`; `resolve`
+/// still falls back to the closest system face if a face fails to load, so the
+/// UI renders either way. `tracking` is in points (Android's em letterSpacing ×
+/// point size).
 
 enum AtriumFontWeight: Equatable {
     case regular  // 400

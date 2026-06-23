@@ -1,45 +1,45 @@
 # Atrium fonts
 
 The Atrium typography uses three OFL (SIL Open Font License) families. They are
-**not yet bundled** — `AtriumTypography` falls back to system faces until the
-`.ttf` files are added here.
+**bundled** here and registered via `Info.plist` `UIAppFonts`;
+`AtriumTypography.resolve(...)` looks each face up by its PostScript name and
+falls back to the closest system face only if one fails to load.
 
-## Files to add
+## Bundled faces
 
-Drop these exact filenames into this folder. The PostScript name of each font
-must match the lookup name in `AtriumTypography.postScriptName(...)`.
+The PostScript name of each file equals its filename stem — that is the lookup
+key in `AtriumTypography.postScriptName(...)` and the string in `UIAppFonts`.
 
-| File | Family · weight · style | Source |
-|------|------------------------|--------|
-| `CormorantGaramond-Regular.ttf`      | Cormorant Garamond · 400 | https://fonts.google.com/specimen/Cormorant+Garamond |
-| `CormorantGaramond-Medium.ttf`       | Cormorant Garamond · 500 | ″ |
-| `CormorantGaramond-Italic.ttf`       | Cormorant Garamond · 400 italic | ″ |
-| `CormorantGaramond-MediumItalic.ttf` | Cormorant Garamond · 500 italic | ″ |
-| `JetBrainsMono-Regular.ttf`          | JetBrains Mono · 400 | https://fonts.google.com/specimen/JetBrains+Mono |
-| `JetBrainsMono-Medium.ttf`           | JetBrains Mono · 500 | ″ |
-| `Inter-Regular.ttf`                  | Inter · 400 | https://fonts.google.com/specimen/Inter |
-| `Inter-Medium.ttf`                   | Inter · 500 | ″ |
+| File (= PostScript name) | Family · weight · style |
+|--------------------------|-------------------------|
+| `CormorantGaramond-Regular.ttf`      | Cormorant Garamond · 400 |
+| `CormorantGaramond-Medium.ttf`       | Cormorant Garamond · 500 |
+| `CormorantGaramond-Italic.ttf`       | Cormorant Garamond · 400 italic |
+| `CormorantGaramond-MediumItalic.ttf` | Cormorant Garamond · 500 italic |
+| `JetBrainsMono-Regular.ttf`          | JetBrains Mono · 400 |
+| `JetBrainsMono-Medium.ttf`           | JetBrains Mono · 500 |
+| `Inter-Regular.ttf`                  | Inter · 400 |
+| `Inter-Medium.ttf`                   | Inter · 500 |
 
-All three are OFL — redistributable; commit each family's `OFL.txt` alongside.
+`BundledFontsTests` asserts every face is in the app bundle and resolves by its
+PostScript name, and that the typography lookup agrees with those names — so a
+rename or a dropped `UIAppFonts` entry fails CI rather than silently degrading.
 
-## After adding the files
+## Provenance
 
-1. They bundle automatically (the `Cereveon` source group includes `Resources/`).
-2. Register them by adding this to `ios/Cereveon/Info.plist`:
+All three families are OFL — redistributable with the license shipped alongside
+(`OFL-CormorantGaramond.txt`, `OFL-Inter.txt`, `OFL-JetBrainsMono.txt`; kept in
+the repo, excluded from the app bundle in `project.yml`).
 
-```xml
-<key>UIAppFonts</key>
-<array>
-    <string>CormorantGaramond-Regular.ttf</string>
-    <string>CormorantGaramond-Medium.ttf</string>
-    <string>CormorantGaramond-Italic.ttf</string>
-    <string>CormorantGaramond-MediumItalic.ttf</string>
-    <string>JetBrainsMono-Regular.ttf</string>
-    <string>JetBrainsMono-Medium.ttf</string>
-    <string>Inter-Regular.ttf</string>
-    <string>Inter-Medium.ttf</string>
-</array>
-```
+- **JetBrains Mono** — static `JetBrainsMono-{Regular,Medium}.ttf` taken verbatim
+  from [JetBrains/JetBrainsMono](https://github.com/JetBrains/JetBrainsMono)
+  (`fonts/ttf/`).
+- **Cormorant Garamond** and **Inter** — upstream (google/fonts) now ships these
+  as *variable* fonts only, which `UIFont(name:)` can't address per weight. The
+  static faces here were instantiated from the variable sources with
+  `fonttools varLib.instancer` (Cormorant pinned at `wght` 400/500; Inter pinned
+  at `opsz` 14, `wght` 400/500), with the name table set so each file's
+  PostScript name matches its stem.
 
-3. If a font's PostScript name differs from its filename, update the lookup in
-   `AtriumTypography`, not just the filename.
+To regenerate, pin the same axes from the current variable sources and re-set the
+PostScript / family names to the stems above.

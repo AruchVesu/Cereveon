@@ -44,9 +44,10 @@ TestFlight** build, two things the simulator doesn't require:
    it; replace `AppIcon.png` with final 1024×1024 artwork before an App Store
    submission.
 
-Fonts (Cormorant / JetBrains Mono / Inter) are still optional — see
-`Cereveon/Resources/Fonts/README.md`; the UI falls back to system faces until the
-`.ttf` files are added.
+Fonts (Cormorant Garamond / JetBrains Mono / Inter, all OFL) are **bundled**
+under `Cereveon/Resources/Fonts/` and registered via `Info.plist` `UIAppFonts` —
+see the README there. `AtriumTypography` still falls back to system faces if a
+face fails to load.
 
 ## CI
 
