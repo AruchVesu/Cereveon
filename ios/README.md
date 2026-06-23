@@ -39,8 +39,9 @@ TestFlight** build, two things the simulator doesn't require:
    signing automatic; you may need to flip `CODE_SIGNING_ALLOWED` back on for the
    device destination.
 2. **App icon** — `Cereveon/Assets.xcassets/AppIcon` ships a **generated
-   placeholder** (an Atrium-cyan ring). The app builds + runs with it, but replace
-   `AppIcon.png` with real 1024×1024 artwork before an App Store submission.
+   placeholder** (the ♞ chess-knight glyph in Atrium cyan on the dark bg). The
+   app builds + runs with it; replace `AppIcon.png` with final 1024×1024 artwork
+   before an App Store submission.
 
 Fonts (Cormorant / JetBrains Mono / Inter) are still optional — see
 `Cereveon/Resources/Fonts/README.md`; the UI falls back to system faces until the
