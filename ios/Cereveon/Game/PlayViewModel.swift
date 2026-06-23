@@ -24,6 +24,10 @@ final class PlayViewModel: ObservableObject {
     @Published private(set) var moveQuality: MoveQuality?
     @Published private(set) var evalBand: EvalBand = .equal
 
+    /// Post-game coaching summary — set when `/game/finish` returns; nil until the
+    /// game ends and again after a new game.
+    @Published private(set) var gameSummary: GameFinishResponse?
+
     var isHumanTurn: Bool {
         turn == .human && !aiThinking && gameResult == nil && pendingPromotion == nil
     }
@@ -118,6 +122,7 @@ final class PlayViewModel: ObservableObject {
         coachHint = nil
         moveQuality = nil
         evalBand = .equal
+        gameSummary = nil
         gameId = nil
         humanMoveFenBefore = nil
         sync()
@@ -218,7 +223,12 @@ final class PlayViewModel: ObservableObject {
             accuracy: 0.5,            // the server recomputes; this is a fallback
             gameId: gameId
         )
-        Task { _ = await gameClient.finishGame(request, token: token) }
+        let gen = generation
+        Task {
+            let response = await gameClient.finishGame(request, token: token)
+            guard gen == self.generation, case let .success(summary) = response else { return }
+            self.gameSummary = summary
+        }
     }
 
     // MARK: - Helpers

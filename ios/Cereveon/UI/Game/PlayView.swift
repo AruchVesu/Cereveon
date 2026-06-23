@@ -17,6 +17,10 @@ struct PlayView: View {
     @State private var panelHeight: CGFloat = 0
     /// Board render chosen in Settings, read once when this screen is presented.
     @State private var boardStyle = SettingsStore.boardStyle()
+    /// Post-game "Replay your mistake" cover.
+    @State private var showMistakeReplay = false
+    /// Bearer provider, kept for the mistake-replay cover.
+    private let token: () -> String?
 
     init(auth: AuthViewModel) {
         let pinning = PinningURLSessionDelegate()
@@ -37,6 +41,7 @@ struct PlayView: View {
             moveCount: { play.halfMoveCount },
             token: { auth.bearerToken }
         ))
+        token = { auth.bearerToken }
     }
 
     /// Resize bounds: never below ~⅓ or above ~⅞ of the screen, so the upper
@@ -121,6 +126,20 @@ struct PlayView: View {
             guard panelHeight > 0 else { return }
             panelHeight = min(max(panelHeight, panelBounds.lowerBound), panelBounds.upperBound)
         }
+        .fullScreenCover(isPresented: $showMistakeReplay) {
+            if let fen = vm.gameSummary?.biggestMistake?.fen, !fen.isEmpty {
+                NavigationStack {
+                    MistakeReplayView(positions: [fen], token: token)
+                        .toolbar {
+                            ToolbarItem(placement: .navigationBarLeading) {
+                                Button("Close") { showMistakeReplay = false }
+                                    .foregroundStyle(AtriumColors.muted)
+                            }
+                        }
+                }
+                .tint(AtriumColors.accentCyan)
+            }
+        }
     }
 
     /// Open the panel: initialise the height on first open; otherwise keep the
@@ -204,18 +223,71 @@ struct PlayView: View {
                 .atriumStyle(AtriumTypography.display)
                 .foregroundStyle(AtriumColors.ink)
                 .multilineTextAlignment(.center)
+
             AtriumOrnamentRule()
-            AtriumPrimaryButton(title: "New game") { vm.newGame() }
+
+            if let summary = vm.gameSummary, summaryHasContent(summary) {
+                coachSummary(summary)
+            }
+
+            if let mistake = vm.gameSummary?.biggestMistake, mistake.isReplayable {
+                AtriumPrimaryButton(title: "Replay your mistake") { showMistakeReplay = true }
+                AtriumSecondaryButton(title: "New game") { vm.newGame() }
+            } else {
+                AtriumPrimaryButton(title: "New game") { vm.newGame() }
+            }
             AtriumSecondaryButton(title: "Home") { dismiss() }
         }
         .padding(AtriumSpacing.space24)
-        .frame(maxWidth: 320)
+        .frame(maxWidth: 340)
         .background(AtriumColors.bgSurface)
         .overlay(
             RoundedRectangle(cornerRadius: AtriumSpacing.cornerRadius)
                 .stroke(AtriumColors.hairlineStrong, lineWidth: AtriumSpacing.hairlineThickness)
         )
         .clipShape(RoundedRectangle(cornerRadius: AtriumSpacing.cornerRadius))
+    }
+
+    private func summaryHasContent(_ summary: GameFinishResponse) -> Bool {
+        summary.coachAction.hasContent
+            || !summary.coachContent.title.isEmpty
+            || !summary.coachContent.description.isEmpty
+    }
+
+    /// The coach's post-game plan (action badge + title + description), from
+    /// `/game/finish`. Rating/confidence are deliberately not shown (Elo hidden).
+    private func coachSummary(_ summary: GameFinishResponse) -> some View {
+        VStack(alignment: .leading, spacing: AtriumSpacing.space8) {
+            if summary.coachAction.hasContent {
+                Text(actionLabel(summary.coachAction.type).uppercased())
+                    .atriumStyle(AtriumTypography.kicker)
+                    .foregroundStyle(AtriumColors.accentAmber)
+            }
+            if !summary.coachContent.title.isEmpty {
+                Text(summary.coachContent.title)
+                    .atriumStyle(AtriumTypography.body)
+                    .foregroundStyle(AtriumColors.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !summary.coachContent.description.isEmpty {
+                Text(summary.coachContent.description)
+                    .atriumStyle(AtriumTypography.inline)
+                    .foregroundStyle(AtriumColors.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func actionLabel(_ type: String) -> String {
+        switch type.uppercased() {
+        case "DRILL": return "Drill"
+        case "PUZZLE": return "Puzzle"
+        case "REFLECT": return "Reflect"
+        case "PLAN_UPDATE": return "Plan update"
+        case "CELEBRATE": return "Celebrate"
+        default: return "Coach"
+        }
     }
 
     private func resultHeadline(_ result: GameResult) -> String {
