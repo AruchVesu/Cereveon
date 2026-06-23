@@ -3,15 +3,15 @@ import UIKit
 import CoreText
 @testable import Cereveon
 
-/// Verifies the Atrium brand fonts are actually bundled in the app and resolve
-/// by the PostScript names `AtriumTypography.postScriptName(...)` looks up — the
-/// thing that silently breaks if a file is missing, mis-named, or omitted from
-/// `Info.plist`'s `UIAppFonts` (the UI would just fall back to system faces).
+/// Verifies the Atrium brand fonts are actually bundled in the app, resolve by
+/// the PostScript names `AtriumTypography.postScriptName(...)` looks up, and —
+/// after Latin-subsetting — still carry the glyphs the UI renders. These are the
+/// things that silently break (a missing/mis-named file, a dropped `UIAppFonts`
+/// entry, or an over-aggressive subset) and degrade to system faces unnoticed.
 ///
-/// Host-independent: it locates each face in the app bundle and registers it
-/// directly. That register is idempotent — if the test runs hosted and
-/// `UIAppFonts` already registered the face, the redundant call is harmless — so
-/// the assertion holds whether or not the run has the app as a test host.
+/// Host-independent: `setUp` registers each face from the app bundle directly
+/// (idempotent if a hosted run's `UIAppFonts` already did), so the assertions
+/// hold whether or not the run has the app as a test host.
 final class BundledFontsTests: XCTestCase {
 
     /// For every Atrium face the filename stem equals the PostScript name.
@@ -26,21 +26,40 @@ final class BundledFontsTests: XCTestCase {
         "Inter-Medium",
     ]
 
-    func testAllAtriumFacesBundleAndResolveByPostScriptName() {
-        // `NativeEngineProvider` is an app-module class, so this is the app
-        // bundle (Cereveon.app) regardless of test-host configuration.
-        let appBundle = Bundle(for: NativeEngineProvider.self)
+    /// `NativeEngineProvider` is an app-module class, so this is the app bundle
+    /// (Cereveon.app) regardless of test-host configuration.
+    private var appBundle: Bundle { Bundle(for: NativeEngineProvider.self) }
 
+    override func setUp() {
+        super.setUp()
         for face in faces {
-            guard let url = appBundle.url(forResource: face, withExtension: "ttf") else {
-                XCTFail("brand font not bundled: \(face).ttf")
-                continue
+            if let url = appBundle.url(forResource: face, withExtension: "ttf") {
+                CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
             }
-            _ = CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
-            XCTAssertNotNil(
-                UIFont(name: face, size: 12),
-                "bundled but unresolvable by PostScript name '\(face)' — check the font's name table"
-            )
+        }
+    }
+
+    func testAllAtriumFacesBundleAndResolveByPostScriptName() {
+        for face in faces {
+            XCTAssertNotNil(appBundle.url(forResource: face, withExtension: "ttf"),
+                            "brand font not bundled: \(face).ttf")
+            XCTAssertNotNil(UIFont(name: face, size: 12),
+                            "bundled but unresolvable by PostScript name '\(face)' — check the name table")
+        }
+    }
+
+    /// Each face must resolve to *itself* (not a system substitute) and still
+    /// cover the full printable-ASCII range — the floor for any UI text, and the
+    /// tripwire for a subset that drops glyphs the typography needs.
+    func testSubsetFacesResolveAndCoverPrintableAscii() {
+        let ascii: [UniChar] = (0x20...0x7E).map { UniChar($0) }
+        for face in faces {
+            let ctFont = CTFontCreateWithName(face as CFString, 12, nil)
+            XCTAssertEqual(CTFontCopyPostScriptName(ctFont) as String, face,
+                           "\(face) did not resolve to the bundled face (registration/subset issue)")
+            var glyphs = [CGGlyph](repeating: 0, count: ascii.count)
+            XCTAssertTrue(CTFontGetGlyphsForCharacters(ctFont, ascii, &glyphs, ascii.count),
+                          "\(face): missing printable-ASCII glyphs after subsetting")
         }
     }
 
