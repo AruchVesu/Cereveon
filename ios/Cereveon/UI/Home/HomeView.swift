@@ -32,6 +32,8 @@ struct HomeView: View {
     @State private var showDrill = false
     /// Today's-drill card — loads the due study-plan puzzle, if any.
     @StateObject private var drill = TodaysDrillViewModel()
+    /// Header cosmetics — the Day-N kicker (local first-seen) + the XP kicker.
+    @StateObject private var header = HomeHeaderViewModel()
     /// Inert tab selection — Home is the only live tab. Stored so the bar can
     /// show a pressed/active accent without yet routing anywhere.
     @State private var selectedTab: Tab = .home
@@ -100,6 +102,7 @@ struct HomeView: View {
             }
         }
         .task { await drill.load(token: auth.bearerToken) }
+        .task { await header.loadXP { await auth.trainingXP() } }
     }
 
     // MARK: - Today's drill
@@ -155,10 +158,8 @@ struct HomeView: View {
                 avatar
             }
 
-            // The Android date kicker reads "<Weekday> · Day NNN"; the day
-            // counter needs first-seen persistence (deferred), so we ship the
-            // static greeting kicker the design uses as the placeholder copy.
-            Text("Welcome back".uppercased())
+            // "<Weekday> · Day NNN" — N from the locally-persisted first-seen date.
+            Text(header.dateKicker().uppercased())
                 .atriumStyle(AtriumTypography.kicker)
                 .foregroundStyle(AtriumColors.muted)
                 .padding(.top, AtriumSpacing.space16)
@@ -167,14 +168,21 @@ struct HomeView: View {
                 .atriumStyle(AtriumHomeText.displayTitle)
                 .foregroundStyle(AtriumColors.ink)
                 .padding(.top, AtriumSpacing.space4)
+
+            // "Level N · X XP" — appears once /auth/me returns the training XP.
+            if let xpKicker = header.xpKicker {
+                Text(xpKicker.uppercased())
+                    .atriumStyle(AtriumTypography.kicker)
+                    .foregroundStyle(AtriumColors.accentCyan)
+                    .padding(.top, AtriumSpacing.space8)
+            }
         }
     }
 
-    /// 32dp cyan-rimmed circle with Cormorant-italic initials. Identity copy
-    /// isn't surfaced by the iOS auth layer yet, so it renders the neutral "—"
-    /// placeholder the Android avatar shows pre-identity.
+    /// 32dp cyan-rimmed circle with Cormorant-italic initials derived from the
+    /// JWT player id (HomeHeader.initials); "—" when there's no identity yet.
     private var avatar: some View {
-        Text("\u{2014}") // —
+        Text(HomeHeader.initials(auth.playerId))
             .atriumStyle(AtriumHomeText.avatar)
             .foregroundStyle(AtriumColors.accentCyan)
             .frame(width: 32, height: 32)
