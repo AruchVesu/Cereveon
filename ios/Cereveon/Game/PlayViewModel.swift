@@ -47,22 +47,52 @@ final class PlayViewModel: ObservableObject {
     private var moveHistory: [String] = []
     private var gameId: String?
     private var humanMoveFenBefore: String?
+    private var gameNumber = 0
+    private let snapshotDefaults: UserDefaults
 
     init(engine: EngineProvider = NativeEngineProvider(),
          aiStrength: Int = 100,
          liveCoach: LiveMoveClient? = nil,
          evalClient: EngineEvalClient? = nil,
          gameClient: GameClient? = nil,
-         token: @escaping () -> String? = { nil }) {
+         token: @escaping () -> String? = { nil },
+         resume: GameSnapshot? = nil,
+         snapshotDefaults: UserDefaults = .standard) {
         self.engine = engine
         self.aiStrength = aiStrength
         self.liveCoach = liveCoach
         self.evalClient = evalClient
         self.gameClient = gameClient
         self.token = token
+        self.snapshotDefaults = snapshotDefaults
+        if let resume {
+            // Replay the move list from the start so castling rights / en passant
+            // rebuild correctly (loading only the FEN would lose them).
+            for uci in resume.uciHistory { Self.applyUCI(uci, to: game) }
+            moveHistory = resume.uciHistory
+            gameNumber = resume.gameNumber
+            turn = game.whiteToMove ? .human : .ai
+        } else {
+            gameNumber = GameSnapshotStore.nextGameNumber(defaults: snapshotDefaults)
+        }
         board = game.board
         whiteToMove = game.whiteToMove
         startGameOnServer()
+        if turn == .ai { triggerAI() }   // resumed on the engine's move
+    }
+
+    /// Apply one UCI move to `game` — used when replaying a resumed game.
+    private static func applyUCI(_ uci: String, to game: ChessGame) {
+        let chars = Array(uci)
+        guard chars.count >= 4,
+              let from = SANResolver.square(algebraic: String(chars[0...1])),
+              let to = SANResolver.square(algebraic: String(chars[2...3]))
+        else { return }
+        let promotion: Character? = chars.count > 4 ? Character(chars[4].uppercased()) : nil
+        switch game.move(from: from, to: to) {
+        case .promotion: game.promote(at: to, to: promotion ?? "Q")
+        case .success, .failed: break
+        }
     }
 
     var uciHistory: [String] { moveHistory }
@@ -125,6 +155,7 @@ final class PlayViewModel: ObservableObject {
         gameSummary = nil
         gameId = nil
         humanMoveFenBefore = nil
+        gameNumber = GameSnapshotStore.nextGameNumber(defaults: snapshotDefaults)
         sync()
         startGameOnServer()
     }
@@ -179,6 +210,7 @@ final class PlayViewModel: ObservableObject {
         turn = .human
         aiThinking = false
         gameResult = result
+        GameSnapshotStore.clear(defaults: snapshotDefaults)   // game over → nothing to resume
         dispatchGameFinish(result)
     }
 
@@ -238,6 +270,23 @@ final class PlayViewModel: ObservableObject {
         whiteToMove = game.whiteToMove
         lastMoveFrom = game.lastMoveFrom
         lastMoveTo = game.lastMoveTo
+        persistSnapshot()
+    }
+
+    /// Persist the in-progress game (or clear it when there's nothing to resume).
+    private func persistSnapshot() {
+        guard gameResult == nil, !moveHistory.isEmpty else {
+            GameSnapshotStore.clear(defaults: snapshotDefaults)
+            return
+        }
+        GameSnapshotStore.save(
+            GameSnapshot(uciHistory: moveHistory,
+                         fen: game.exportFEN(),
+                         moveCount: moveHistory.count,
+                         gameNumber: gameNumber,
+                         savedAt: Date()),
+            defaults: snapshotDefaults
+        )
     }
 
     private func uci(from: Square, to: Square, promo: Character?) -> String {

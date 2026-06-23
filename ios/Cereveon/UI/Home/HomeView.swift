@@ -34,6 +34,10 @@ struct HomeView: View {
     @StateObject private var drill = TodaysDrillViewModel()
     /// Header cosmetics — the Day-N kicker (local first-seen) + the XP kicker.
     @StateObject private var headerVM = HomeHeaderViewModel()
+    /// In-progress game offered by the Resume card (nil = nothing resumable).
+    @State private var resumable: GameSnapshot?
+    /// Snapshot to restore when launching PlayView (nil = a fresh game).
+    @State private var resumeSnapshot: GameSnapshot?
     /// Inert tab selection — Home is the only live tab. Stored so the bar can
     /// show a pressed/active accent without yet routing anywhere.
     @State private var selectedTab: Tab = .home
@@ -49,6 +53,12 @@ struct HomeView: View {
 
                         AtriumOrnamentRule()
                             .padding(.top, AtriumSpacing.space12)
+
+                        // Resume — the in-progress local game, if one's still fresh.
+                        if let snapshot = resumable {
+                            resumeCard(snapshot)
+                                .padding(.top, AtriumSpacing.space24)
+                        }
 
                         // Today's drill — the due per-mistake study-plan puzzle,
                         // shown only when one is actually due (else hidden).
@@ -73,7 +83,7 @@ struct HomeView: View {
             }
         }
         .fullScreenCover(isPresented: $showPlay) {
-            PlayView(auth: auth)
+            PlayView(auth: auth, resume: resumeSnapshot)
         }
         .sheet(isPresented: $showSettings) {
             SettingsView().environmentObject(auth)
@@ -103,6 +113,47 @@ struct HomeView: View {
         }
         .task { await drill.load(token: auth.bearerToken) }
         .task { await headerVM.loadXP { await auth.trainingXP() } }
+        .onAppear { resumable = GameSnapshotStore.resumable() }
+        .onChange(of: showPlay) { showing in
+            if !showing { resumable = GameSnapshotStore.resumable() }
+        }
+    }
+
+    // MARK: - Resume
+
+    private func resumeCard(_ snapshot: GameSnapshot) -> some View {
+        Button {
+            resumeSnapshot = snapshot
+            showPlay = true
+        } label: {
+            VStack(alignment: .leading, spacing: AtriumSpacing.space8) {
+                HStack {
+                    Text("Resume".uppercased())
+                        .atriumStyle(AtriumTypography.kicker)
+                        .foregroundStyle(AtriumColors.accentCyan)
+                    Spacer()
+                    Text(snapshot.resumeSubtitle.uppercased())
+                        .atriumStyle(AtriumTypography.kicker)
+                        .foregroundStyle(AtriumColors.dim)
+                }
+                Text(snapshot.resumeTitle)
+                    .atriumStyle(AtriumTypography.body)
+                    .foregroundStyle(AtriumColors.ink)
+                Text("Pick up where you left off \u{2192}")
+                    .atriumStyle(AtriumTypography.inline)
+                    .foregroundStyle(AtriumColors.muted)
+            }
+            .padding(AtriumSpacing.cardPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(AtriumColors.bgSurface)
+            .overlay(
+                RoundedRectangle(cornerRadius: AtriumSpacing.cornerRadius)
+                    .stroke(AtriumColors.accentCyan55, lineWidth: AtriumSpacing.hairlineThickness)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: AtriumSpacing.cornerRadius))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Today's drill
@@ -206,7 +257,7 @@ struct HomeView: View {
             ForEach(Array(LibraryEntry.all.enumerated()), id: \.element.id) { index, entry in
                 HomeLibraryRow(entry: entry) {
                     switch entry.route {
-                    case .play: showPlay = true
+                    case .play: resumeSnapshot = nil; showPlay = true
                     case .pastGames: showHistory = true
                     case .openings: showOpenings = true
                     case .lessons: showLessons = true

@@ -22,13 +22,14 @@ struct PlayView: View {
     /// Bearer provider, kept for the mistake-replay cover.
     private let token: () -> String?
 
-    init(auth: AuthViewModel) {
+    init(auth: AuthViewModel, resume: GameSnapshot? = nil) {
         let pinning = PinningURLSessionDelegate()
         let play = PlayViewModel(
             liveCoach: HTTPLiveMoveClient(delegate: pinning),
             evalClient: HTTPEngineEvalClient(delegate: pinning),
             gameClient: HTTPGameClient(delegate: pinning),
-            token: { auth.bearerToken }
+            token: { auth.bearerToken },
+            resume: resume
         )
         _vm = StateObject(wrappedValue: play)
         // The chat reads the live board / game / last-move from the same view
