@@ -25,7 +25,26 @@ xcodebuild -scheme Cereveon \
 ```
 
 Requires Xcode 16+ (XcodeGen emits the Xcode-16 project format / objectVersion
-77; iOS 16 deployment target).
+77; iOS 16 deployment target). The **simulator** build needs no signing
+(`CODE_SIGNING_ALLOWED=NO`).
+
+### Before a real device / TestFlight build
+
+The simulator/Appetize path above needs nothing extra. For a **device or
+TestFlight** build, two things the simulator doesn't require:
+
+1. **Signing** — in Xcode select the `Cereveon` target → Signing & Capabilities →
+   pick a Team (a free Apple ID works for on-device development; a paid Apple
+   Developer Program membership is required for TestFlight). XcodeGen leaves
+   signing automatic; you may need to flip `CODE_SIGNING_ALLOWED` back on for the
+   device destination.
+2. **App icon** — `Cereveon/Assets.xcassets/AppIcon` ships a **generated
+   placeholder** (an Atrium-cyan ring). The app builds + runs with it, but replace
+   `AppIcon.png` with real 1024×1024 artwork before an App Store submission.
+
+Fonts (Cormorant / JetBrains Mono / Inter) are still optional — see
+`Cereveon/Resources/Fonts/README.md`; the UI falls back to system faces until the
+`.ttf` files are added.
 
 ## CI
 
