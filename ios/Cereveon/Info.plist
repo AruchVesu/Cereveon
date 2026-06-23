@@ -29,8 +29,18 @@
 	<!-- Atrium is a dark-only design system; force dark appearance app-wide. -->
 	<key>UIUserInterfaceStyle</key>
 	<string>Dark</string>
-	<!-- Fonts: add a UIAppFonts array here once the .ttf files exist under
-	     Resources/Fonts/ (see Resources/Fonts/README.md). The typography layer
-	     falls back to system fonts until then. -->
+	<!-- Atrium brand fonts (OFL). Bundled under Resources/Fonts/; see the README
+	     there. AtriumTypography falls back to system faces if a face fails. -->
+	<key>UIAppFonts</key>
+	<array>
+		<string>CormorantGaramond-Regular.ttf</string>
+		<string>CormorantGaramond-Medium.ttf</string>
+		<string>CormorantGaramond-Italic.ttf</string>
+		<string>CormorantGaramond-MediumItalic.ttf</string>
+		<string>JetBrainsMono-Regular.ttf</string>
+		<string>JetBrainsMono-Medium.ttf</string>
+		<string>Inter-Regular.ttf</string>
+		<string>Inter-Medium.ttf</string>
+	</array>
 </dict>
 </plist>

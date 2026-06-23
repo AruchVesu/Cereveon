@@ -25,6 +25,9 @@ targets:
         excludes:
           - "Info.plist"
           - "**/*.md"
+          # Brand-font .ttf files ARE bundled (resources); their OFL licenses
+          # ship in-repo for compliance but need not go in the app bundle.
+          - "**/OFL-*.txt"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.chesscoach.app
