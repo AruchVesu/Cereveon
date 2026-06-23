@@ -13,6 +13,8 @@ struct PlayView: View {
     /// stays tappable (no scrim) — "play while chatting".
     @State private var showChat = false
     @State private var containerHeight: CGFloat = 0
+    /// Resizable chat-panel height (0 until first opened); clamped to panelBounds.
+    @State private var panelHeight: CGFloat = 0
 
     init(auth: AuthViewModel) {
         let pinning = PinningURLSessionDelegate()
@@ -35,11 +37,16 @@ struct PlayView: View {
         ))
     }
 
-    /// Bottom panel height — roughly half the screen so the upper board stays
-    /// visible and tappable while chatting.
-    private var panelHeight: CGFloat {
-        guard containerHeight > 0 else { return 360 }
-        return max(300, containerHeight * 0.52)
+    /// Resize bounds: never below ~⅓ or above ~⅞ of the screen, so the upper
+    /// board always keeps a tappable strip ("play while chatting").
+    private var panelBounds: ClosedRange<CGFloat> {
+        let h = containerHeight > 0 ? containerHeight : 600
+        return (h * 0.32)...(h * 0.88)
+    }
+
+    /// Opening height — ~55% of the screen.
+    private var defaultPanelHeight: CGFloat {
+        (containerHeight > 0 ? containerHeight : 600) * 0.55
     }
 
     var body: some View {
@@ -79,7 +86,10 @@ struct PlayView: View {
 
             // Non-modal chat panel: no scrim, so the board above stays tappable.
             if showChat {
-                ChatPanelView(viewModel: chat, onClose: { showChat = false })
+                ChatPanelView(viewModel: chat,
+                              height: $panelHeight,
+                              heightBounds: panelBounds,
+                              onClose: { showChat = false })
                     .frame(height: panelHeight)
                     .transition(.move(edge: .bottom))
             }
@@ -105,10 +115,23 @@ struct PlayView: View {
             }
         )
         .animation(.easeInOut(duration: 0.22), value: showChat)
+        .onChange(of: containerHeight) { _ in
+            guard panelHeight > 0 else { return }
+            panelHeight = min(max(panelHeight, panelBounds.lowerBound), panelBounds.upperBound)
+        }
+    }
+
+    /// Open the panel: initialise the height on first open; otherwise keep the
+    /// last size, re-clamped in case the screen rotated since.
+    private func openChat() {
+        panelHeight = panelHeight <= 0
+            ? defaultPanelHeight
+            : min(max(panelHeight, panelBounds.lowerBound), panelBounds.upperBound)
+        showChat = true
     }
 
     private var coachButton: some View {
-        Button { showChat = true } label: {
+        Button { openChat() } label: {
             Text("Coach".uppercased())
                 .atriumStyle(AtriumTypography.kicker)
                 .foregroundStyle(AtriumColors.accentCyan)
