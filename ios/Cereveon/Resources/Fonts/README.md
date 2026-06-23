@@ -43,3 +43,19 @@ the repo, excluded from the app bundle in `project.yml`).
 
 To regenerate, pin the same axes from the current variable sources and re-set the
 PostScript / family names to the stems above.
+
+## Latin subset
+
+The bundled faces are subset to Latin plus the punctuation/symbol ranges the UI
+actually uses — Basic Latin, Latin-1 Supplement, Latin Extended-A/B, General
+Punctuation, basic arrows, and every non-ASCII codepoint found in the iOS Swift
+source — via `fonttools` `Subsetter` with `layout_features=['*']` and
+`name_IDs=['*']` so kerning/ligatures and the PostScript name survive. This drops
+non-Latin coverage the app never renders (Cyrillic, Greek, Vietnamese, …),
+roughly **3.6 MB → 1.5 MB**, under the invariant `dropped_used == 0` (no codepoint
+the source uses was removed).
+
+The chess pieces on the board are Unicode glyphs (U+265A–F) drawn by system font
+substitution, **not** these text fonts, so subsetting does not affect the board.
+`BundledFontsTests.testSubsetFacesResolveAndCoverPrintableAscii` guards the floor
+(each face resolves to itself and still covers printable ASCII).
