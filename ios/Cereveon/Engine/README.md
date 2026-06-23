@@ -20,10 +20,10 @@ Objective-C++ wrapper `CereveonEngine.mm`.
   ignores the FEN side-to-move field.
 - `EngineProvider.swift` — Swift `EngineProvider` protocol + `NativeEngineProvider`.
 
-## Deferred to Phase 2 (board work)
+## Coordinate reconciliation
 
-`EngineProvider.kt` on Android runs a coordinate-reconciliation layer
-(`JniMoveBridge`, an 8-symmetry search) to map the engine's raw, Black-relative
-`(row, col)` move onto the on-screen board square. That mapping is **not** ported
-yet — `AIMove` here carries the engine's raw coordinates. Port `JniMoveBridge`
-when wiring the engine to the live board.
+`NativeEngineProvider.bestMove` returns the engine's raw, Black-relative
+`(row, col)` move. `EngineMoveBridge.normalize` (in `../Game/EngineMoveBridge.swift`)
+maps it onto the on-screen board square via an 8-symmetry search — a verbatim
+port of Android's `JniMoveBridge` — and `PlayViewModel` calls it before applying
+the AI's reply to the board.

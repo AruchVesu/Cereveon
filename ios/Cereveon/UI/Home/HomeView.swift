@@ -9,18 +9,17 @@ import SwiftUI
 ///
 /// What is wired here
 /// ------------------
-///   • **New game** (row I) — FUNCTIONAL: presents `PlayView(auth:)` via a
-///     `.fullScreenCover`, matching `HomeStubView`'s play-presentation pattern.
-///   • **Lessons / Openings / Past games** (rows II–IV) — visual-only
-///     placeholders; their destination screens do not exist yet, so the rows
-///     render with a muted "soon" sub-line and do not navigate.
-///   • **Tab bar** — Home is active; Lessons / Coach are inert visuals. **You**
+///   • **Library rows I–IV** — all route via `.fullScreenCover`: New game →
+///     `PlayView`, Lessons → `LessonsView`, Openings → `OpeningsView`, Past
+///     games → `GameHistoryView`.
+///   • **Resume card** — restores the last in-progress local game from
+///     `GameSnapshotStore`; **Today's drill** — the due per-mistake study-plan
+///     puzzle, shown only when one is actually due.
+///   • **Header kickers** — the "Day N" date line (local first-seen) and the
+///     "Level N · X XP" line (once `/auth/me` returns training XP).
+///   • **Tab bar** — Home is the only live tab; Lessons / Coach are inert
+///     visuals (the Library rows already reach those destinations). **You**
 ///     opens Settings (coach voice, board style, preferences, account/sign out).
-///
-/// Deliberately deferred (need persistence / `/auth/me` wiring that isn't in
-/// place yet — follow-ups, not part of this screen):
-///   • the Resume card (last in-progress game), and
-///   • the XP / "Day N" kicker.
 struct HomeView: View {
     @EnvironmentObject private var auth: AuthViewModel
 
@@ -66,10 +65,6 @@ struct HomeView: View {
                             todaysDrillCard(puzzle)
                                 .padding(.top, AtriumSpacing.space24)
                         }
-
-                        // Follow-ups (deferred): the Resume card and the
-                        // XP / "Day N" kicker land once persistence + /auth/me
-                        // are wired — see file header.
 
                         librarySection
                             .padding(.top, AtriumSpacing.space24)
@@ -315,7 +310,8 @@ struct HomeView: View {
 
 // MARK: - Library model
 
-/// Where a library row routes; nil = visual-only placeholder.
+/// Destination a library row opens. (`LibraryEntry.route` is `Optional` so a
+/// future row can be inert with `nil`; every current row routes.)
 private enum LibraryRoute { case play, pastGames, openings, lessons }
 
 /// A single Home library row. Roman numeral + Cormorant title + italic sub +
@@ -342,8 +338,9 @@ private struct LibraryEntry: Identifiable {
 
 // MARK: - Library row
 
-/// One tappable Atrium library row. Placeholder rows dim their content slightly
-/// so the "not yet" treatment reads without an extra badge.
+/// One tappable Atrium library row. Every current row routes; the dim +
+/// dropped-hit-test guard below stays as a latent affordance for a future
+/// inert (route-less) row.
 private struct HomeLibraryRow: View {
     let entry: LibraryEntry
     let action: () -> Void
@@ -377,9 +374,8 @@ private struct HomeLibraryRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        // Placeholder rows are non-interactive: tappable target stays for
-        // layout fidelity but the action is a no-op (guarded in the closure)
-        // and we drop the hit-test so they read as inert.
+        // A route-less row (none today) would read as inert: the tap target
+        // stays for layout fidelity but the hit-test is dropped so it can't fire.
         .allowsHitTesting(entry.isFunctional)
     }
 }
