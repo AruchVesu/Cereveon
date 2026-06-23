@@ -49,11 +49,17 @@ PostScript / family names to the stems above.
 The bundled faces are subset to Latin plus the punctuation/symbol ranges the UI
 actually uses — Basic Latin, Latin-1 Supplement, Latin Extended-A/B, General
 Punctuation, basic arrows, and every non-ASCII codepoint found in the iOS Swift
-source — via `fonttools` `Subsetter` with `layout_features=['*']` and
-`name_IDs=['*']` so kerning/ligatures and the PostScript name survive. This drops
-non-Latin coverage the app never renders (Cyrillic, Greek, Vietnamese, …),
-roughly **3.6 MB → 1.5 MB**, under the invariant `dropped_used == 0` (no codepoint
-the source uses was removed).
+source — via `fonttools` `Subsetter` with `name_IDs=['*']` so the PostScript name
+survives. This drops non-Latin coverage the app never renders (Cyrillic, Greek,
+Vietnamese, …) under the invariant `dropped_used == 0` (no codepoint the source
+uses was removed).
+
+Cormorant Garamond additionally keeps only the OpenType features SwiftUI applies
+by default (`layout_features=['ccmp','calt','liga','locl','kern']`) — no source
+enables any optional feature, so its small caps, stylistic sets (`ss##`), char
+variants (`cv##`), oldstyle figures and swashes (~1000 alternate glyphs per face)
+are pruned with no visual change. JetBrains Mono and Inter keep all features
+(`['*']`); they carry no such alternate bloat. Net **~3.6 MB → ~0.9 MB**.
 
 The chess pieces on the board are Unicode glyphs (U+265A–F) drawn by system font
 substitution, **not** these text fonts, so subsetting does not affect the board.
