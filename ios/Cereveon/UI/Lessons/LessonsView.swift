@@ -8,8 +8,11 @@ import SwiftUI
 struct LessonsView: View {
     @StateObject private var vm: LessonsViewModel
     @Environment(\.dismiss) private var dismiss
+    private let auth: AuthViewModel
+    @State private var showSession = false
 
     init(auth: AuthViewModel) {
+        self.auth = auth
         _vm = StateObject(wrappedValue: LessonsViewModel(
             client: HTTPCurriculumClient(delegate: PinningURLSessionDelegate()),
             token: { auth.bearerToken }
@@ -42,6 +45,14 @@ struct LessonsView: View {
         }
         .tint(AtriumColors.accentCyan)
         .task { await vm.load() }
+        .sheet(isPresented: $showSession) {
+            if case let .loaded(plan) = vm.state {
+                LessonChatView(topic: plan.topic,
+                               exerciseType: plan.exerciseType,
+                               difficulty: plan.difficulty,
+                               auth: auth)
+            }
+        }
     }
 
     private func content(_ plan: CurriculumNext) -> some View {
@@ -57,6 +68,7 @@ struct LessonsView: View {
                         }
                     }
                 }
+                AtriumPrimaryButton(title: "Start session") { showSession = true }
                 AtriumSecondaryButton(title: "Get another") { Task { await vm.load() } }
             }
             .padding(AtriumSpacing.space24)

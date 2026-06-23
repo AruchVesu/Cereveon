@@ -64,4 +64,16 @@ final class LessonsTests: XCTestCase {
         XCTAssertEqual(LessonsViewModel.humanize("find_the_fork"), "Find The Fork")
         XCTAssertEqual(LessonsViewModel.humanize(""), "—")
     }
+
+    func testLessonChatSeedPrompt() {
+        let prompt = LessonChatSeed.prompt(topic: "endgame_technique", exerciseType: "drill", difficulty: "Medium")
+        XCTAssertEqual(prompt,
+            "I want to train on endgame technique (Drill, medium difficulty). Please guide me through this training session.")
+    }
+
+    func testLessonChatSeedPromptEmptyType() {
+        let prompt = LessonChatSeed.prompt(topic: "tactics", exerciseType: "", difficulty: "easy")
+        XCTAssertTrue(prompt.contains("train on tactics"), prompt)
+        XCTAssertTrue(prompt.contains("easy difficulty"), prompt)
+    }
 }
