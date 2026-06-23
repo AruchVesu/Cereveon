@@ -63,4 +63,18 @@ final class PlayViewModelTests: XCTestCase {
         XCTAssertTrue(vm.whiteToMove)
         XCTAssertEqual(vm.board[6][4], "P")   // e2 pawn restored to its home square
     }
+
+    @MainActor
+    func testResumeReplaysSnapshot() {
+        let snapshot = GameSnapshot(uciHistory: ["e2e4", "e7e5"], fen: "x",
+                                    moveCount: 2, gameNumber: 3, savedAt: Date())
+        let defaults = UserDefaults(suiteName: "PlayVMResume-\(UUID().uuidString)")!
+        let vm = PlayViewModel(engine: FakeEngine(move: nil), resume: snapshot, snapshotDefaults: defaults)
+
+        XCTAssertEqual(vm.uciHistory, ["e2e4", "e7e5"], "the move list is restored")
+        XCTAssertEqual(vm.halfMoveCount, 2)
+        XCTAssertTrue(vm.whiteToMove, "White to move after 1.e4 e5")
+        XCTAssertEqual(vm.board[6][4], ".", "e2 vacated by the replayed move")
+        XCTAssertEqual(vm.board[4][4], "P", "white pawn now on e4")
+    }
 }
