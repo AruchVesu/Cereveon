@@ -26,6 +26,7 @@ struct HomeView: View {
 
     @State private var showPlay = false
     @State private var showSettings = false
+    @State private var showHistory = false
     /// Inert tab selection — Home is the only live tab. Stored so the bar can
     /// show a pressed/active accent without yet routing anywhere.
     @State private var selectedTab: Tab = .home
@@ -62,6 +63,9 @@ struct HomeView: View {
         }
         .sheet(isPresented: $showSettings) {
             SettingsView().environmentObject(auth)
+        }
+        .fullScreenCover(isPresented: $showHistory) {
+            GameHistoryView(auth: auth)
         }
     }
 
@@ -120,7 +124,11 @@ struct HomeView: View {
 
             ForEach(Array(LibraryEntry.all.enumerated()), id: \.element.id) { index, entry in
                 HomeLibraryRow(entry: entry) {
-                    if entry.isFunctional { showPlay = true }
+                    switch entry.route {
+                    case .play: showPlay = true
+                    case .pastGames: showHistory = true
+                    case nil: break
+                    }
                 }
 
                 if index < LibraryEntry.all.count - 1 {
@@ -170,6 +178,9 @@ struct HomeView: View {
 
 // MARK: - Library model
 
+/// Where a library row routes; nil = visual-only placeholder.
+private enum LibraryRoute { case play, pastGames }
+
 /// A single Home library row. Roman numeral + Cormorant title + italic sub +
 /// chevron, mirroring `Atrium.HomeLibraryRow`.
 private struct LibraryEntry: Identifiable {
@@ -177,18 +188,18 @@ private struct LibraryEntry: Identifiable {
     let numeral: String
     let title: String
     let sub: String
-    /// Only `New game` routes anywhere in this phase.
-    let isFunctional: Bool
+    let route: LibraryRoute?
+    var isFunctional: Bool { route != nil }
 
     static let all: [LibraryEntry] = [
         LibraryEntry(numeral: "I",   title: "New game",
-                     sub: "Adaptive opponent",        isFunctional: true),
+                     sub: "Adaptive opponent",         route: .play),
         LibraryEntry(numeral: "II",  title: "Lessons",
-                     sub: "Curriculum coach · soon",  isFunctional: false),
+                     sub: "Curriculum coach · soon",   route: nil),
         LibraryEntry(numeral: "III", title: "Openings",
-                     sub: "Repertoire trainer · soon", isFunctional: false),
+                     sub: "Repertoire trainer · soon", route: nil),
         LibraryEntry(numeral: "IV",  title: "Past games",
-                     sub: "Game history · soon",      isFunctional: false),
+                     sub: "Game history",              route: .pastGames),
     ]
 }
 
