@@ -20,10 +20,9 @@ protocol EngineProvider: Sendable {
 /// Production engine backed by the native SachmatuLenta via `CereveonEngine`.
 ///
 /// Coordinate note: `AIMove` carries the engine's *raw* (Black-relative,
-/// row/col) coordinates. Mapping those onto on-screen squares — the job
-/// `EngineProvider.kt`'s `JniMoveBridge` does on Android — is deferred to the
-/// Phase-2 board work. Phase 0 only verifies the engine reproduces Android's
-/// search/perft.
+/// row/col) coordinates. The caller reconciles those onto on-screen squares via
+/// `EngineMoveBridge.normalize` (the Swift port of Android's `JniMoveBridge`
+/// 8-symmetry search) — see `PlayViewModel`.
 /// `@unchecked Sendable`: stateless and thread-safe — each call constructs a
 /// fresh `SachmatuLenta` on the stack, so the engine can be invoked off the main
 /// actor (the search is too slow to block the UI).

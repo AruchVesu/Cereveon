@@ -23,8 +23,9 @@ private func chatHeaders(token: String?) -> [String: String] {
 /// `CoachApiClient` the iOS chat panel needs. `moveCount` gives the backend
 /// game-phase context during mid-game chat; `gameId` scopes the exchange to a
 /// per-game thread; `lastMove` (UCI) lets the coach name the move in plain
-/// English. `coachVoice` / `playerProfile` / `pastMistakes` are deferred (no
-/// Settings screen / rating-source on iOS yet) and sent as nil.
+/// English; `coachVoice` carries the coach tone. Player profile and recent
+/// mistakes are not sent — the backend derives both from the authenticated
+/// session.
 protocol ChatClient {
     func chat(fen: String,
               messages: [ChatMessageDTO],
