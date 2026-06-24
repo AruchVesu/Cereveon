@@ -30,6 +30,10 @@ Requires Xcode 16+ (XcodeGen emits the Xcode-16 project format / objectVersion
 
 ### Before a real device / TestFlight build
 
+> **Full step-by-step runbook: [`TESTFLIGHT.md`](TESTFLIGHT.md)** — hand this to
+> whoever has a Mac for the device / TestFlight pass (the authoritative check,
+> since Appetize can't reliably deliver keyboard input).
+
 The simulator/Appetize path above needs nothing extra. For a **device or
 TestFlight** build, two things the simulator doesn't require:
 
