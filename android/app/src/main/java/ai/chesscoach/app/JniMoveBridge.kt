@@ -37,7 +37,8 @@ internal object JniMoveBridge {
 
     private class Position(
         private val board: Array<CharArray>,
-        private val whiteToMove: Boolean
+        private val whiteToMove: Boolean,
+        private val enPassant: Pair<Int, Int>?
     ) {
         fun isLegal(move: AIMove): Boolean {
             if (!move.isValid()) return false
@@ -47,7 +48,9 @@ internal object JniMoveBridge {
 
             val piece = board[move.fr][move.fc]
             if (piece == '.' || piece.isUpperCase() != whiteToMove) return false
-            if (!isLegalGeometry(piece, move.fr, move.fc, move.tr, move.tc)) return false
+            if (!isLegalGeometry(piece, move.fr, move.fc, move.tr, move.tc, allowCastle = true)) {
+                return false
+            }
 
             val target = board[move.tr][move.tc]
             board[move.tr][move.tc] = piece
@@ -58,7 +61,12 @@ internal object JniMoveBridge {
             return !leavesKingInCheck
         }
 
-        private fun isLegalGeometry(piece: Char, fr: Int, fc: Int, tr: Int, tc: Int): Boolean {
+        // ``allowCastle`` is true only on the actual move being normalised; the
+        // attack-detection path (isSquareAttacked) passes false so a king never
+        // counts as "attacking" its 2-square castle-target square.
+        private fun isLegalGeometry(
+            piece: Char, fr: Int, fc: Int, tr: Int, tc: Int, allowCastle: Boolean
+        ): Boolean {
             if (fr == tr && fc == tc) return false
             val target = board[tr][tc]
             if (target != '.' && target.isUpperCase() == piece.isUpperCase()) return false
@@ -77,6 +85,12 @@ internal object JniMoveBridge {
                             target == '.' &&
                             board[fr + dir][fc] == '.' -> true
                         dc == 1 && tr == fr + dir && target != '.' && target.isUpperCase() != piece.isUpperCase() -> true
+                        // En passant reaches the bridge as a diagonal pawn move
+                        // onto an EMPTY square; recognise it via the FEN
+                        // en-passant target so the right transform is selected.
+                        // ChessBoardView.applyAIMove re-validates and removes the
+                        // captured pawn.
+                        dc == 1 && tr == fr + dir && target == '.' && enPassant == (tr to tc) -> true
                         else -> false
                     }
                 }
@@ -84,9 +98,26 @@ internal object JniMoveBridge {
                 'n' -> (dr == 2 && dc == 1) || (dr == 1 && dc == 2)
                 'b' -> dr == dc && pathClear(fr, fc, tr, tc)
                 'q' -> (dr == dc || fr == tr || fc == tc) && pathClear(fr, fc, tr, tc)
-                'k' -> dr <= 1 && dc <= 1
+                // Castling reaches the bridge as a bare 2-square king move (the
+                // native engine sends no castle flag).  Recognise it so the
+                // correct transform is picked; ChessBoardView.applyAIMove
+                // re-checks castling rights and moves the rook.
+                'k' -> (dr <= 1 && dc <= 1) ||
+                    (allowCastle && dr == 0 && dc == 2 && isCastleShape(piece, fr, fc, tc))
                 else -> false
             }
+        }
+
+        /** True when a 2-square king move lands as a standard castle on this
+         *  board: a same-coloured rook sits on the corner toward [destCol] and
+         *  the squares between king and rook are empty.  Disambiguates the
+         *  coordinate frame only — full rights/through-check legality is
+         *  re-checked by [ChessBoardView.applyAIMove]. */
+        private fun isCastleShape(king: Char, row: Int, kingCol: Int, destCol: Int): Boolean {
+            val rook = if (king.isUpperCase()) 'R' else 'r'
+            val rookCol = if (destCol > kingCol) 7 else 0
+            if (board[row][rookCol] != rook) return false
+            return pathClear(row, kingCol, row, rookCol)
         }
 
         private fun pathClear(fr: Int, fc: Int, tr: Int, tc: Int): Boolean {
@@ -124,7 +155,9 @@ internal object JniMoveBridge {
                 for (sourceCol in 0..7) {
                     val piece = board[sourceRow][sourceCol]
                     if (piece != '.' && piece.isUpperCase() == byWhite) {
-                        if (isLegalGeometry(piece, sourceRow, sourceCol, row, col)) return true
+                        if (isLegalGeometry(piece, sourceRow, sourceCol, row, col, allowCastle = false)) {
+                            return true
+                        }
                     }
                 }
             }
@@ -154,7 +187,19 @@ internal object JniMoveBridge {
                 }
 
                 val whiteToMove = parts.getOrNull(1)?.equals("w", ignoreCase = true) ?: false
-                return Position(board, whiteToMove)
+                // FEN field 4 (index 3) is the en-passant target square ("-" or
+                // e.g. "e3").  Absent on the short placement-only FENs used in
+                // some call sites, which simply disables EP recognition.
+                val enPassant = parts.getOrNull(3)?.let(::squareFromAlgebraic)
+                return Position(board, whiteToMove, enPassant)
+            }
+
+            private fun squareFromAlgebraic(square: String): Pair<Int, Int>? {
+                if (square.length != 2) return null
+                val col = square[0] - 'a'
+                val rank = square[1] - '0'
+                if (col !in 0..7 || rank !in 1..8) return null
+                return (8 - rank) to col
             }
         }
     }
