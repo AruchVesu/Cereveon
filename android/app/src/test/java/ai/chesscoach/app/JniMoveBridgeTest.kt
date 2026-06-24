@@ -42,4 +42,55 @@ class JniMoveBridgeTest {
 
         assertNull(normalized)
     }
+
+    // ── Castling / en-passant: the native engine emits these as bare king /
+    // pawn moves with no special flag.  Before the bridge recognised their
+    // shapes, normalize() returned null and the engine silently "skipped" its
+    // reply.  See the engine-move-drop fix. ────────────────────────────────
+
+    @Test
+    fun `normalize keeps a black kingside castle`() {
+        // Black king e8 -> g8, rook h8, f8/g8 empty.
+        val fen = "4k2r/8/8/8/8/8/8/4K3 b k - 0 1"
+        val rawMove = AIMove(0, 4, 0, 6)
+
+        val normalized = JniMoveBridge.normalize(rawMove, fen)
+
+        assertEquals(AIMove(0, 4, 0, 6), normalized)
+    }
+
+    @Test
+    fun `normalize keeps a black queenside castle`() {
+        // Black king e8 -> c8, rook a8, b8/c8/d8 empty.
+        val fen = "r3k3/8/8/8/8/8/8/4K3 b q - 0 1"
+        val rawMove = AIMove(0, 4, 0, 2)
+
+        val normalized = JniMoveBridge.normalize(rawMove, fen)
+
+        assertEquals(AIMove(0, 4, 0, 2), normalized)
+    }
+
+    @Test
+    fun `normalize keeps a black en passant capture`() {
+        // Black d4 pawn captures a white e4 pawn that just double-stepped;
+        // EP target e3.  Diagonal move onto an empty square.
+        val fen = "4k3/8/8/8/3pP3/8/8/4K3 b - e3 0 1"
+        val rawMove = AIMove(4, 3, 5, 4)
+
+        val normalized = JniMoveBridge.normalize(rawMove, fen)
+
+        assertEquals(AIMove(4, 3, 5, 4), normalized)
+    }
+
+    @Test
+    fun `normalize rejects a 2-square king move with no rook to castle`() {
+        // King "castles" but there is no rook on the corner — not a real castle,
+        // and no other transform is a legal 1-square king move.
+        val fen = "4k3/8/8/8/8/8/8/4K3 b - - 0 1"
+        val rawMove = AIMove(0, 4, 0, 6)
+
+        val normalized = JniMoveBridge.normalize(rawMove, fen)
+
+        assertNull(normalized)
+    }
 }
