@@ -112,8 +112,12 @@ def render_mode_1_prompt(
     # position hallucination class).  The eval is omitted (include_eval=False):
     # it's already framed above in POSITION CONTEXT.  ``player_color`` flips the
     # flag perspective so a Black player isn't handed the opponent's facts.
+    # ``include_check=False`` drops the transient check fact: Mode-1 coaches the
+    # post-move position, but the engine's forced reply resolves any check the
+    # player just gave, so by the time the hint is read the king is no longer in
+    # check — surfacing it produced a phantom "opponent's king is in check".
     fact_lines = render_engine_facts(
-        engine_signal, player_color=player_color, include_eval=False
+        engine_signal, player_color=player_color, include_eval=False, include_check=False
     )
     threat = describe_threats(fen, last_move_uci) if last_move_uci else ""
     if threat:

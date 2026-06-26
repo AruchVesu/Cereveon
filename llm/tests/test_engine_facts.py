@@ -53,6 +53,26 @@ def test_render_facts_empty_and_dedup():
     assert deduped == ["Your opponent has an undefended piece under attack."]
 
 
+def test_include_check_drops_only_the_transient_check_fact():
+    signal = {
+        "tactical_flags": ["check:black_to_move", "hanging_piece:black"],
+        "position_flags": [],
+    }
+    # Default (chat): the check is current state of the viewed position -> kept.
+    kept = render_engine_facts(signal)
+    assert "Your opponent's king is in check." in kept
+    assert "Your opponent has an undefended piece under attack." in kept
+    # Mode-1: the transient check is dropped, every other fact retained.
+    dropped = render_engine_facts(signal, include_check=False)
+    assert "Your opponent's king is in check." not in dropped
+    assert "Your opponent has an undefended piece under attack." in dropped
+    # Suppression matches the raw board-absolute flag, so it holds from either
+    # seat (the flag is filtered before the colour flip).
+    dropped_black = render_engine_facts(signal, player_color="black", include_check=False)
+    assert "Your king is in check." not in dropped_black
+    assert "Your opponent's king is in check." not in dropped_black
+
+
 def test_eval_band_leads_the_facts():
     facts = render_engine_facts(
         {"evaluation": {"type": "cp", "band": "clear_advantage", "side": "white"}}

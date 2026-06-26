@@ -209,6 +209,30 @@ class TestRenderMode1EngineFacts(unittest.TestCase):
         self.assertIn("Your opponent is up a pawn.", prompt)  # white_up_pawn -> opponent
         self.assertNotIn("You are up a pawn.", prompt)
 
+    def test_transient_check_fact_is_suppressed(self):
+        """A check the player just delivered is answered by the engine's forced
+        reply, so by the time the post-move hint is read the king is no longer
+        in check.  Mode-1 must NOT ground the LLM on it (it rendered as a
+        phantom "opponent's king is in check" on the post-reply board)."""
+        signal = {
+            "evaluation": {"type": "cp", "band": "small_advantage", "side": "white"},
+            "eval_delta": "stable",
+            "last_move_quality": "unknown",
+            "tactical_flags": ["check:black_to_move"],
+            "position_flags": ["material:white_up_pawn"],
+            "phase": "middlegame",
+        }
+        prompt = render_mode_1_prompt(
+            system_prompt="<SYS>",
+            engine_signal=signal,
+            fen=self._FEN_PLAYER_WHITE,
+            explanation_style="intermediate",
+            player_color="white",
+        )
+        self.assertNotIn("king is in check", prompt)
+        # Non-transient facts are still grounded.
+        self.assertIn("You are up a pawn.", prompt)
+
     def test_threat_line_from_last_move_uci(self):
         """describe_threats grounds what the last move attacks (the #253 case:
         4.Ng5 hits f7 near the Black king)."""
