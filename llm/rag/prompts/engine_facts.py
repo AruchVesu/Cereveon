@@ -57,6 +57,15 @@ _FLAG_FACT: dict[str, str] = {
     "space_advantage": "One side has a space advantage.",
 }
 
+# The check flag is *transient* in the Mode-1 (live-move) context: a check the
+# player just delivered is answered by the engine's immediate forced reply, so
+# by the time the post-move hint is rendered and read the king is no longer in
+# check (the player sees a phantom "opponent's king is in check" on a board the
+# engine already escaped).  Mode-1 passes ``include_check=False`` to drop it;
+# chat keeps it, where a check IS the current state of the position the user is
+# looking at.
+_CHECK_FLAGS: frozenset[str] = frozenset({"check:white_to_move", "check:black_to_move"})
+
 
 def _eval_fact(evaluation: dict, player_color: str = "white") -> str:
     """Player-perspective sentence for the eval band / mate, or "" if unknown.
@@ -113,6 +122,7 @@ def render_engine_facts(
     *,
     player_color: str = "white",
     include_eval: bool = True,
+    include_check: bool = True,
 ) -> list[str]:
     """Plain-English, player-perspective facts from the engine signal.
 
@@ -126,6 +136,11 @@ def render_engine_facts(
     "you" / "your opponent" stay correct.  ``include_eval=False`` omits the
     leading eval-band fact — Mode-1 already frames the evaluation in its POSITION
     CONTEXT and only needs the tactical / positional flag facts.
+
+    ``include_check=False`` drops the transient ``check:*_to_move`` fact (see
+    ``_CHECK_FLAGS``): Mode-1 passes it because the engine's forced reply always
+    resolves the check before the hint is read; chat keeps the default so a
+    check in the current position is still reported.
     """
     facts: list[str] = []
     seen: set[str] = set()
@@ -141,6 +156,8 @@ def render_engine_facts(
         engine_signal.get("position_flags") or []
     )
     for flag in flags:
+        if not include_check and flag in _CHECK_FLAGS:
+            continue
         sentence = _FLAG_FACT.get(_flip_color(flag) if flip else flag)
         if sentence and sentence not in seen:
             seen.add(sentence)
