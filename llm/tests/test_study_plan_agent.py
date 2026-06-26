@@ -30,6 +30,13 @@ Pinned invariants
 15. TODAY_SKIPS_COMPLETED_PLAN             status="completed" plan not surfaced.
 16. TODAY_RETURNS_MOST_RECENT_ACTIVE_PLAN  two active plans → most recent by created_at.
 17. TODAY_RESPONSE_SHAPE                   total_days=3, theme="generic", verdict="" in phase 1.
+18. TODAY_RESPONSE_INCLUDES_STATUS_AND_DAYS  status + per-day overview list present.
+19. COMPLETE_MARKS_PUZZLE_DONE            completing a day sets completed_at; drops from today_puzzle.
+20. COMPLETE_ADVANCES_PLAN_WHEN_ALL_DONE  all three days solved → plan status="completed".
+21. COMPLETE_IS_IDEMPOTENT                re-completing a day keeps the original completed_at.
+22. COMPLETE_REJECTS_OTHER_PLAYERS_PLAN   completing another player's plan → 404, untouched.
+23. COMPLETE_REJECTS_UNKNOWN_PLAN         nonexistent plan id → 404.
+24. COMPLETE_REJECTS_UNKNOWN_DAY          valid plan, missing day_offset → 404.
 """
 
 from __future__ import annotations
@@ -66,7 +73,13 @@ from llm.seca.coach.study_plan.models import (
     MistakeStudyPlan,
     MistakeStudyPuzzle,
 )
-from llm.seca.coach.study_plan.router import get_today_plan
+from llm.seca.coach.study_plan.router import (
+    CompletePuzzleRequest,
+    complete_puzzle,
+    get_today_plan,
+)
+
+from fastapi import HTTPException
 
 _MISTAKE_FEN = "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
 _PLAYED_UCI = "f3e5"
@@ -185,6 +198,21 @@ def _call_today(player, db):
     limiter.enabled = False
     try:
         return get_today_plan(
+            request=_fake_request(),
+            player=player,
+            db=db,
+        )
+    finally:
+        limiter.enabled = prev_enabled
+
+
+def _call_complete(player, db, plan_id, day_offset):
+    """Direct-call the completion handler bypassing FastAPI DI."""
+    prev_enabled = limiter.enabled
+    limiter.enabled = False
+    try:
+        return complete_puzzle(
+            req=CompletePuzzleRequest(plan_id=plan_id, day_offset=day_offset),
             request=_fake_request(),
             player=player,
             db=db,
@@ -1386,3 +1414,134 @@ class TestTodayPlanEndpoint:
         assert result.theme == "generic"
         assert result.verdict == ""
         assert isinstance(result.plan_id, str) and len(result.plan_id) > 0
+
+    def test_response_includes_status_and_days(self, db_session, player, game_event):
+        """TODAY_RESPONSE_INCLUDES_STATUS_AND_DAYS — week-overview fields.
+
+        The overview screen needs the plan ``status`` plus a per-day
+        list (offset / due_at / completed / is_due / source_type).  A
+        fresh plan is ``active`` with day-0 due and days 3/7 locked.
+        """
+        generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+        )
+
+        result = _call_today(player, db_session)
+        assert result is not None
+        assert result.status == STATUS_ACTIVE
+        assert [d.day_offset for d in result.days] == list(PLAN_DAY_OFFSETS)
+        day_by_offset = {d.day_offset: d for d in result.days}
+        # Day 0 is due immediately; days 3 / 7 are still locked.
+        assert day_by_offset[0].is_due is True
+        assert day_by_offset[0].completed is False
+        assert day_by_offset[3].is_due is False
+        assert day_by_offset[7].is_due is False
+        # Nothing solved yet.
+        assert all(d.completed is False for d in result.days)
+
+
+class TestCompletePuzzleEndpoint:
+    """POST /coach/plan/puzzle/complete — closes the completion loop."""
+
+    def _make_plan(self, db, player, game_event):
+        return generate_plan(
+            db=db,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+        )
+
+    def test_marks_puzzle_done(self, db_session, player, game_event):
+        """COMPLETE_MARKS_PUZZLE_DONE — completing day-0 sets completed_at and
+        drops it from today_puzzle while the plan stays active."""
+        plan = self._make_plan(db_session, player, game_event)
+
+        result = _call_complete(player, db_session, plan.id, 0)
+
+        # Day-0 done; days 3/7 not due yet → no puzzle currently due.
+        assert result.today_puzzle is None
+        assert result.status == STATUS_ACTIVE
+        day0 = next(d for d in result.days if d.day_offset == 0)
+        assert day0.completed is True
+        # DB reflects the write.
+        db_session.refresh(plan)
+        p0 = next(p for p in plan.puzzles if p.day_offset == 0)
+        assert p0.completed_at is not None
+
+    def test_advances_plan_when_all_done(self, db_session, player, game_event):
+        """COMPLETE_ADVANCES_PLAN_WHEN_ALL_DONE — completing all three days
+        flips the plan to completed and removes it from /today."""
+        plan = self._make_plan(db_session, player, game_event)
+
+        result = None
+        for offset in PLAN_DAY_OFFSETS:
+            result = _call_complete(player, db_session, plan.id, offset)
+
+        assert result is not None
+        assert result.status == STATUS_COMPLETED
+        assert all(d.completed for d in result.days)
+
+        db_session.refresh(plan)
+        assert plan.status == STATUS_COMPLETED
+        assert plan.completed_at is not None
+        # The active-only /today query no longer surfaces it.
+        assert _call_today(player, db_session) is None
+
+    def test_idempotent(self, db_session, player, game_event):
+        """COMPLETE_IS_IDEMPOTENT — re-completing the same day keeps the
+        original completed_at and does not error."""
+        plan = self._make_plan(db_session, player, game_event)
+
+        _call_complete(player, db_session, plan.id, 0)
+        db_session.refresh(plan)
+        first_ts = next(p for p in plan.puzzles if p.day_offset == 0).completed_at
+
+        second = _call_complete(player, db_session, plan.id, 0)
+        db_session.refresh(plan)
+        second_ts = next(p for p in plan.puzzles if p.day_offset == 0).completed_at
+
+        assert second_ts == first_ts
+        assert second.status == STATUS_ACTIVE
+
+    def test_rejects_other_players_plan(self, db_session, player, game_event):
+        """COMPLETE_REJECTS_OTHER_PLAYERS_PLAN — a different player gets 404
+        and the plan is left untouched (ownership-scoped)."""
+        plan = self._make_plan(db_session, player, game_event)
+        intruder = Player(
+            email="intruder@test.com",
+            password_hash="dummy-hash",
+            rating=1500.0,
+            confidence=0.5,
+            skill_vector_json="{}",
+            player_embedding="[]",
+            training_xp=0,
+        )
+        db_session.add(intruder)
+        db_session.commit()
+        db_session.refresh(intruder)
+
+        with pytest.raises(HTTPException) as exc:
+            _call_complete(intruder, db_session, plan.id, 0)
+        assert exc.value.status_code == 404
+
+        db_session.refresh(plan)
+        p0 = next(p for p in plan.puzzles if p.day_offset == 0)
+        assert p0.completed_at is None
+
+    def test_rejects_unknown_plan(self, db_session, player):
+        """COMPLETE_REJECTS_UNKNOWN_PLAN — nonexistent plan id → 404."""
+        with pytest.raises(HTTPException) as exc:
+            _call_complete(player, db_session, "does-not-exist", 0)
+        assert exc.value.status_code == 404
+
+    def test_rejects_unknown_day(self, db_session, player, game_event):
+        """COMPLETE_REJECTS_UNKNOWN_DAY — valid plan, no such day_offset → 404."""
+        plan = self._make_plan(db_session, player, game_event)
+        with pytest.raises(HTTPException) as exc:
+            _call_complete(player, db_session, plan.id, 99)
+        assert exc.value.status_code == 404

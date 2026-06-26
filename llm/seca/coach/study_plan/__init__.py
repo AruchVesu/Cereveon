@@ -26,6 +26,15 @@ verify-replay + /training/solve endpoints remain the trust anchors
 for actually crediting XP — the study plan only *schedules* puzzles,
 it doesn't bypass any existing verification.
 
+Completion loop
+---------------
+``POST /coach/plan/puzzle/complete`` (study_plan/router.py) marks a
+day's puzzle solved and flips the plan to ``completed`` once every day
+is done — closing the loop the scaffold left open (nothing used to
+write ``MistakeStudyPuzzle.completed_at``, so day 0 re-served forever).
+It records schedule progress only; engine truth + XP still flow through
+verify-replay + /training/solve first.
+
 Wire-name note
 --------------
 The study-plan wire field on /coach/plan/today is named ``today_puzzle``
