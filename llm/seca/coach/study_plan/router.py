@@ -1,26 +1,36 @@
 """HTTP surface for the per-mistake study-plan agent.
 
-One endpoint, authenticated:
+Two endpoints, both authenticated:
 
 * ``GET /coach/plan/today`` — return the player's most recent active
-  study plan + the puzzle currently due (the lowest-day-offset puzzle
-  whose ``due_at <= now()`` and ``completed_at IS NULL``).
+  study plan, the puzzle currently due (the lowest-day-offset puzzle
+  whose ``due_at <= now()`` and ``completed_at IS NULL``), and the
+  full week schedule (``days[]``) for the overview screen.
 
-The Android Home-screen ``TodaysDrillCard`` (phase 4) polls this on
-home-open.  When the response carries a puzzle, the card surfaces the
-LLM coach verdict (phase 2+) + a "Start drill" button that launches
-the existing ``MistakeReplayBottomSheet`` against the puzzle's FEN.
-When the response is ``null``, the card stays hidden.
+* ``POST /coach/plan/puzzle/complete`` — mark one day's puzzle solved
+  and advance the plan; flips it to ``completed`` once every day is
+  done.  This closes the loop the phase-1 scaffold left open (nothing
+  used to write ``MistakeStudyPuzzle.completed_at``, so day 0 re-served
+  forever and plans never finished).
+
+The Home-screen ``TodaysDrillCard`` polls ``GET`` on home-open.  When
+the response carries a puzzle, the card surfaces the LLM coach verdict
+(phase 2+) + a "Start drill" button that launches the existing
+``MistakeReplayBottomSheet`` against the puzzle's FEN.  The
+week-overview screen renders ``days[]``.  When the response is
+``null``, the card stays hidden.
 
 Trust posture
 -------------
-Read-only.  The endpoint serves the persisted plan; it does NOT
-regenerate or LLM-call.  The plan was written by the background-task
-``generate_plan_async`` invoked from /game/finish.  XP credit on
-puzzle completion goes through the existing
-``POST /training/verify-replay`` + ``POST /training/solve`` path
-(phase 4 wires the Android side; phase 1 has no completion path
-because the UI doesn't exist yet).
+``GET`` is read-only; it serves the persisted plan and does NOT
+regenerate or LLM-call.  ``complete`` records plan PROGRESS only — the
+engine-truth gate already happened on the
+``POST /training/verify-replay`` → ``POST /training/solve`` path the
+client runs first.  Marking progress carries no cross-user value, so
+it trusts the caller's assertion (same posture as ``/training/solve``)
+and is idempotent + ownership-scoped to the authenticated player.  XP
+still flows through ``/training/solve``; this endpoint only advances
+the study-plan schedule.
 """
 
 # Slowapi reads ``request: Request`` from each rate-limited handler's
@@ -34,7 +44,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 
@@ -43,6 +53,7 @@ from llm.seca.auth.router import get_current_player, get_db
 from llm.seca.coach.study_plan.models import (
     PLAN_DAY_OFFSETS,
     STATUS_ACTIVE,
+    STATUS_COMPLETED,
     MistakeStudyPlan,
     MistakeStudyPuzzle,
 )
@@ -76,6 +87,34 @@ class TodayPuzzleResponse(BaseModel):
     are actually due)."""
 
 
+class PlanDayResponse(BaseModel):
+    """One day-slot in the week-overview list.
+
+    The week-overview screen renders the whole plan at a glance:
+    each day is ``completed`` (done), ``is_due`` (available to start
+    now), or neither (still locked behind its ``due_at``).  Unlike
+    ``today_puzzle`` this carries no FEN / expected move — the overview
+    only needs the schedule + status; the playable position comes from
+    ``today_puzzle`` (or a follow-up ``GET`` once the next day unlocks).
+    """
+
+    day_offset: int
+    due_at: str
+    """ISO-8601 UTC timestamp of when this day's puzzle unlocks."""
+
+    completed: bool
+    """True once the day's puzzle has been solved (``completed_at`` set)."""
+
+    is_due: bool
+    """True when the puzzle is available now — ``due_at <= now()`` AND
+    not yet completed.  The natural ``today_puzzle`` is the lowest
+    ``day_offset`` day with ``is_due == True``."""
+
+    source_type: str
+    """``"original"`` (the player's actual mistake) or ``"library"``
+    (a theme-matched practice puzzle)."""
+
+
 class TodayPlanResponse(BaseModel):
     """The top-level shape of ``GET /coach/plan/today`` when the
     player has an active plan.
@@ -94,6 +133,13 @@ class TodayPlanResponse(BaseModel):
     always ``""`` (empty string); phase 2 populates it with a <= 100-
     word Mode-2-validator-clean string."""
 
+    status: str
+    """One of ``STATUSES`` — ``"active"`` while the week is in
+    progress, ``"completed"`` once all days are solved.  ``GET`` only
+    ever returns ``"active"`` plans; the completion endpoint returns
+    the freshly-``"completed"`` plan so the client can show the
+    week-complete celebration."""
+
     total_days: int
     """How many puzzles are in the plan (always ``len(PLAN_DAY_OFFSETS) == 3``
     in phase 1, but surfaced as a field so the UI can render
@@ -103,6 +149,66 @@ class TodayPlanResponse(BaseModel):
     """The puzzle currently due, or ``null`` when the plan is active
     but no puzzle's ``due_at`` has elapsed yet (e.g. day-0 is solved,
     day-3 isn't due for another 2 days)."""
+
+    days: list[PlanDayResponse]
+    """The full week schedule, ordered by ``day_offset``.  Powers the
+    week-overview screen (which day is done / available / locked).
+    Always ``len(PLAN_DAY_OFFSETS)`` entries."""
+
+
+# ---------------------------------------------------------------------------
+# Serialization
+# ---------------------------------------------------------------------------
+
+
+def _serialize_plan(plan: MistakeStudyPlan, now: datetime) -> TodayPlanResponse:
+    """Build the wire response from a plan + its puzzles.
+
+    Shared by ``GET /coach/plan/today`` and
+    ``POST /coach/plan/puzzle/complete`` so both surfaces compute the
+    ``today_puzzle`` / ``days`` view identically.  Reads only the
+    in-session ``plan.puzzles`` collection (no extra query) — the
+    caller has already loaded the plan.
+
+    ``today_puzzle`` is the lowest-``day_offset`` puzzle that is due
+    (``due_at <= now``) AND incomplete; ``None`` when nothing is
+    currently due (every due day solved, or the next day hasn't
+    unlocked yet).
+    """
+    puzzles = sorted(plan.puzzles, key=lambda p: p.day_offset)
+
+    today_puzzle_field: TodayPuzzleResponse | None = None
+    for puzzle in puzzles:
+        if puzzle.completed_at is None and puzzle.due_at <= now:
+            today_puzzle_field = TodayPuzzleResponse(
+                day_offset=puzzle.day_offset,
+                fen=puzzle.fen,
+                expected_move_uci=puzzle.expected_move_uci,
+                source_type=puzzle.source_type,
+                due_at=puzzle.due_at.isoformat(),
+            )
+            break
+
+    days = [
+        PlanDayResponse(
+            day_offset=puzzle.day_offset,
+            due_at=puzzle.due_at.isoformat(),
+            completed=puzzle.completed_at is not None,
+            is_due=puzzle.completed_at is None and puzzle.due_at <= now,
+            source_type=puzzle.source_type,
+        )
+        for puzzle in puzzles
+    ]
+
+    return TodayPlanResponse(
+        plan_id=plan.id,
+        theme=plan.theme,
+        verdict=plan.verdict,
+        status=plan.status,
+        total_days=len(PLAN_DAY_OFFSETS),
+        today_puzzle=today_puzzle_field,
+        days=days,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -151,32 +257,93 @@ def get_today_plan(
     if plan is None:
         return None
 
-    now = datetime.utcnow()
-    due_puzzle = (
+    return _serialize_plan(plan, datetime.utcnow())
+
+
+# ---------------------------------------------------------------------------
+# POST /coach/plan/puzzle/complete
+# ---------------------------------------------------------------------------
+
+
+class CompletePuzzleRequest(BaseModel):
+    """Mark one day's puzzle in a study plan as solved.
+
+    The client calls this AFTER a verified-correct solve
+    (``POST /training/verify-replay`` → ``POST /training/solve``), so
+    engine truth has already gated the move.  This endpoint records
+    plan PROGRESS, not engine truth — same trust posture as
+    ``/training/solve`` (the caller asserts the solve; XP and progress
+    are personal, idempotent, and carry no cross-user value)."""
+
+    plan_id: str
+    day_offset: int
+
+
+@router.post("/plan/puzzle/complete", response_model=TodayPlanResponse)
+@limiter.limit("60/minute")
+def complete_puzzle(
+    req: CompletePuzzleRequest,
+    request: Request,
+    player: Player = Depends(get_current_player),
+    db: DBSession = Depends(get_db),
+) -> TodayPlanResponse:
+    """Mark a study-plan puzzle complete and advance the plan.
+
+    Closes the loop the phase-1 scaffold left open: it writes
+    ``MistakeStudyPuzzle.completed_at`` so the day stops resurfacing in
+    ``GET /coach/plan/today``, and flips the plan to ``STATUS_COMPLETED``
+    once every day is solved (so the week ends instead of re-serving
+    day 0 forever).
+
+    Idempotent: completing an already-completed puzzle keeps the
+    original ``completed_at`` and returns ``200`` with the current
+    plan state.  Returns the refreshed plan (including the possibly-new
+    ``status == "completed"``) so the client can render the next due
+    puzzle — or the week-complete celebration — without a second
+    round-trip.
+
+    Errors
+    ------
+    * ``404`` — no plan with that id owned by the authenticated player
+      (ownership is enforced by the ``player_id`` filter, so another
+      player's plan is indistinguishable from a missing one), or the
+      plan has no puzzle at ``day_offset``.
+    """
+    plan = (
+        db.query(MistakeStudyPlan)
+        .filter(
+            MistakeStudyPlan.id == req.plan_id,
+            MistakeStudyPlan.player_id == player.id,
+        )
+        .first()
+    )
+    if plan is None:
+        raise HTTPException(status_code=404, detail="study plan not found")
+
+    puzzle = (
         db.query(MistakeStudyPuzzle)
         .filter(
             MistakeStudyPuzzle.plan_id == plan.id,
-            MistakeStudyPuzzle.due_at <= now,
-            MistakeStudyPuzzle.completed_at.is_(None),
+            MistakeStudyPuzzle.day_offset == req.day_offset,
         )
-        .order_by(MistakeStudyPuzzle.day_offset.asc())
         .first()
     )
+    if puzzle is None:
+        raise HTTPException(status_code=404, detail="no puzzle for that day in this plan")
 
-    today_puzzle_field: TodayPuzzleResponse | None = None
-    if due_puzzle is not None:
-        today_puzzle_field = TodayPuzzleResponse(
-            day_offset=due_puzzle.day_offset,
-            fen=due_puzzle.fen,
-            expected_move_uci=due_puzzle.expected_move_uci,
-            source_type=due_puzzle.source_type,
-            due_at=due_puzzle.due_at.isoformat(),
-        )
+    now = datetime.utcnow()
+    if puzzle.completed_at is None:
+        puzzle.completed_at = now
 
-    return TodayPlanResponse(
-        plan_id=plan.id,
-        theme=plan.theme,
-        verdict=plan.verdict,
-        total_days=len(PLAN_DAY_OFFSETS),
-        today_puzzle=today_puzzle_field,
-    )
+    # ``puzzle`` is the same identity-map object as the matching entry
+    # in ``plan.puzzles`` (same session, same PK), so this all-done
+    # check sees the completed_at we just set.
+    all_days_done = all(p.completed_at is not None for p in plan.puzzles)
+    if all_days_done and plan.status != STATUS_COMPLETED:
+        plan.status = STATUS_COMPLETED
+        plan.completed_at = now
+
+    db.commit()
+    db.refresh(plan)
+
+    return _serialize_plan(plan, now)

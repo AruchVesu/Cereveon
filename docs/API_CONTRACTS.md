@@ -1574,6 +1574,7 @@ No body.  Reads the authenticated player from the bearer token.
   "plan_id":      <string>,
   "theme":        <string>,
   "verdict":      <string>,
+  "status":       <string>,
   "total_days":   3,
   "today_puzzle": {
     "day_offset":         <int>,
@@ -1581,15 +1582,25 @@ No body.  Reads the authenticated player from the bearer token.
     "expected_move_uci":  <string>,
     "source_type":        <string>,
     "due_at":             <string>
-  } | null
+  } | null,
+  "days": [
+    {
+      "day_offset":  <int>,
+      "due_at":      <string>,
+      "completed":   <bool>,
+      "is_due":      <bool>,
+      "source_type": <string>
+    }
+  ]
 }
 ```
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `plan_id` | `string` | UUID of the `mistake_study_plans` row.  Stable for the life of the plan. |
+| `plan_id` | `string` | UUID of the `mistake_study_plans` row.  Stable for the life of the plan.  Pass it (with a `day_offset`) to `POST /coach/plan/puzzle/complete` (§35) when a day is solved. |
 | `theme` | `string` | Theme tag of the mistake, from a fixed vocabulary (see below).  Populated by a single-shot LLM call run in the background after `/game/finish`.  Falls back to `"generic"` when the LLM was unreachable, returned out-of-vocabulary, or its output failed the Mode-2 validators on both retries. |
 | `verdict` | `string` | LLM-written ≤ 60-word retrospective on the originating mistake.  Mode-2-validator-clean: no specific moves (no algebraic notation, no UCI), no engine mentions, no advisory phrasing.  Empty string when the LLM path failed unrecoverably; Android `TodaysDrillCard` hides the coach-note line in that case. |
+| `status` | `string` | Plan lifecycle: `"active"` while the week is in progress, `"completed"` once every day is solved.  `GET` only ever returns `"active"` plans (a completed plan returns `null`); `POST /coach/plan/puzzle/complete` (§35) returns the freshly-`"completed"` plan so the client can show the week-complete state. |
 | `total_days` | `int` | Number of puzzles in the plan.  Always `3` in phase 1; surfaced as a field so the UI can render "Day N of M" without hard-coding. |
 | `today_puzzle` | `object \| null` | The puzzle whose `due_at <= now()` AND `completed_at IS NULL`, with the lowest `day_offset`.  `null` when no puzzle is currently due (e.g. day-0 solved, day-3 not yet due). |
 | `today_puzzle.day_offset` | `int` | One of `0`, `3`, `7`.  Maps to "Day 1 / 3", "Day 2 / 3", "Day 3 / 3" via a static client-side label. |
@@ -1597,6 +1608,12 @@ No body.  Reads the authenticated player from the bearer token.
 | `today_puzzle.expected_move_uci` | `string` | The engine's preferred move at that FEN (UCI).  For day-0 puzzles this is the player's ORIGINAL bad move — the puzzle asks the user to find a stronger alternative.  For library variants this is the puzzle's expected solution. |
 | `today_puzzle.source_type` | `string` | `"original"` for day-0 (the player's actual mistake) and any day whose library lookup didn't find a match; `"library"` for day-3 / day-7 puzzles served from the curated YAML corpus (`llm/seca/coach/study_plan/library/`).  Lets the UI title the puzzle accordingly ("Replay your mistake" vs "Practice: <theme>"). |
 | `today_puzzle.due_at` | `string` | ISO-8601 UTC timestamp of when the puzzle became available.  Invariant: `due_at <= now()` whenever this object is non-null. |
+| `days` | `array` | The full week schedule, ordered by `day_offset` (always `total_days` entries).  Powers the week-overview screen — each entry is `completed` (done), `is_due` (available now), or neither (locked behind its `due_at`). |
+| `days[].day_offset` | `int` | One of `0`, `3`, `7`. |
+| `days[].due_at` | `string` | ISO-8601 UTC timestamp of when this day unlocks. |
+| `days[].completed` | `bool` | `true` once the day's puzzle has been solved. |
+| `days[].is_due` | `bool` | `true` when available now — `due_at <= now()` AND not completed.  The `today_puzzle` is the lowest-`day_offset` day with `is_due == true`. |
+| `days[].source_type` | `string` | `"original"` or `"library"`, same meaning as `today_puzzle.source_type`. |
 
 ### Response (200, no active plan)
 
@@ -1609,17 +1626,23 @@ has no active study plan — either no qualifying game has landed yet,
 or every plan is completed.  The Android client hides the
 `TodaysDrillCard` in this case.
 
-### XP credit on puzzle completion
+### Puzzle completion + XP credit
 
-Puzzle completion goes through the existing `POST /training/verify-replay`
-(§33) → `POST /training/solve` (§32) path.  No new endpoints in phase 1.
-The Android client (phase 4+) will call those with:
+On a solved day the client runs three calls, in order:
 
-* `source_type = "mistake_replay"`
-* `source_ref = "plan_<plan_id>:day_<day_offset>"`
+1. `POST /training/verify-replay` (§33) — engine-truth gate on the move.
+2. `POST /training/solve` (§32) — credits XP, with
+   `source_type = "mistake_replay"` and
+   `source_ref = "plan_<plan_id>:day_<day_offset>"` so the
+   `(player, source_type, source_ref)` dedup triple keeps each
+   individual puzzle credit-once.
+3. `POST /coach/plan/puzzle/complete` (§35) — advances the study plan
+   (marks the day done; flips the plan to `completed` when all days
+   are solved).
 
-so the `(player, source_type, source_ref)` dedup triple on
-`/training/solve` keeps each individual puzzle credit-once.
+Steps 2 and 3 are distinct on purpose: XP is a global counter, plan
+progress is per-plan schedule state.  Step 1 is the trust anchor;
+steps 2-3 record the personal, idempotent outcome.
 
 ### Rate limit
 
@@ -1636,6 +1659,65 @@ each home-screen open.
 
 No 4xx beyond auth — a missing plan returns 200 with `null` body, not
 404, because the absence is a normal product state.
+
+---
+
+## 35. `POST /coach/plan/puzzle/complete`
+
+**Host:** `llm/seca/coach/study_plan/router.py`
+**Auth:** `Authorization: Bearer <token>` (required)
+
+Mark one day's puzzle in a study plan as solved and advance the plan.
+This closes the loop the phase-1 scaffold left open: nothing previously
+wrote `MistakeStudyPuzzle.completed_at`, so `GET /coach/plan/today` (§34)
+re-served day 0 forever and plans never reached `completed`.  The client
+calls this as step 3 of the completion flow (see §34 → "Puzzle
+completion + XP credit").
+
+### Trust posture
+
+Records plan PROGRESS, not engine truth.  The engine-truth gate already
+happened on `POST /training/verify-replay` (§33), which the client runs
+first.  Plan progress carries no cross-user value, so — like
+`POST /training/solve` (§32) — the endpoint trusts the caller's
+assertion.  It is **idempotent** (re-completing a day is a no-op that
+returns 200) and **ownership-scoped** (a plan not owned by the
+authenticated player is indistinguishable from a missing one → 404).
+
+### Request
+
+```json
+{
+  "plan_id":    <string>,
+  "day_offset": <int>
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `plan_id` | `string` | UUID from the `plan_id` field of `GET /coach/plan/today` (§34). |
+| `day_offset` | `int` | The day being completed — one of `0`, `3`, `7` (from `today_puzzle.day_offset`). |
+
+### Response (200)
+
+The full plan, in the **same shape as `GET /coach/plan/today` (§34)**
+(`plan_id`, `theme`, `verdict`, `status`, `total_days`, `today_puzzle`,
+`days`).  Unlike `GET`, this returns the plan even when the completion
+flipped `status` to `"completed"`, so the client can render the next due
+puzzle — or the week-complete state — without a second round-trip.
+
+### Rate limit
+
+`60/minute` per client (shared slowapi limiter).
+
+### Errors
+
+| Status | Cause |
+|--------|-------|
+| `401`  | Missing or invalid `Authorization` header. |
+| `404`  | No plan with that `plan_id` owned by the player, or the plan has no puzzle at `day_offset`. |
+| `422`  | Body validation failed (missing `plan_id` / `day_offset`, wrong types). |
+| `429`  | Rate limit exceeded. |
 
 ---
 
