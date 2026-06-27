@@ -28,7 +28,7 @@ struct HomeView: View {
     @State private var showHistory = false
     @State private var showOpenings = false
     @State private var showLessons = false
-    @State private var showDrill = false
+    @State private var showOverview = false
     /// Today's-drill card — loads the due study-plan puzzle, if any.
     @StateObject private var drill = TodaysDrillViewModel()
     /// Header cosmetics — the Day-N kicker (local first-seen) + the XP kicker.
@@ -92,18 +92,26 @@ struct HomeView: View {
         .fullScreenCover(isPresented: $showLessons) {
             LessonsView(auth: auth)
         }
-        .fullScreenCover(isPresented: $showDrill) {
-            if let fen = drill.puzzle?.fen, !fen.isEmpty {
+        .fullScreenCover(isPresented: $showOverview) {
+            if let plan = drill.plan {
                 NavigationStack {
-                    MistakeReplayView(positions: [fen], token: { auth.bearerToken })
+                    StudyPlanOverviewView(plan: plan, token: { auth.bearerToken })
                         .toolbar {
                             ToolbarItem(placement: .navigationBarLeading) {
-                                Button("Close") { showDrill = false }
+                                Button("Close") { showOverview = false }
                                     .foregroundStyle(AtriumColors.muted)
                             }
                         }
                 }
                 .tint(AtriumColors.accentCyan)
+            }
+        }
+        .onChange(of: showOverview) { showing in
+            // After the overview closes, re-poll so the card reflects any
+            // day the user just solved (advanced inside the overview) — or
+            // hides when the week is complete.
+            if !showing {
+                Task { await drill.load(token: auth.bearerToken) }
             }
         }
         .task { await drill.load(token: auth.bearerToken) }
@@ -154,7 +162,7 @@ struct HomeView: View {
     // MARK: - Today's drill
 
     private func todaysDrillCard(_ puzzle: TodayPuzzle) -> some View {
-        Button { showDrill = true } label: {
+        Button { showOverview = true } label: {
             VStack(alignment: .leading, spacing: AtriumSpacing.space8) {
                 HStack {
                     Text("Today's drill".uppercased())
@@ -169,7 +177,7 @@ struct HomeView: View {
                     .atriumStyle(AtriumTypography.body)
                     .foregroundStyle(AtriumColors.ink)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Tap to solve \u{2192}")
+                Text("Tap to view your week \u{2192}")
                     .atriumStyle(AtriumTypography.inline)
                     .foregroundStyle(AtriumColors.muted)
             }
