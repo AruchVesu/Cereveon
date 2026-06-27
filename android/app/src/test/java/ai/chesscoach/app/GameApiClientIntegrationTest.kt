@@ -530,4 +530,103 @@ class GameApiClientIntegrationTest {
         assertTrue("expected HttpError, got $result", result is ApiResult.HttpError)
         assertEquals(500, (result as ApiResult.HttpError).code)
     }
+
+    // ---------------------------------------------------------------------------
+    // POST /coach/plan/puzzle/complete (docs/API_CONTRACTS.md §35)
+    // ---------------------------------------------------------------------------
+
+    private val coachPlanCompletedJson = """
+{
+  "plan_id": "plan-xyz",
+  "theme": "king_safety",
+  "verdict": "",
+  "anchor_category": "tactical_vision",
+  "status": "completed",
+  "total_days": 3,
+  "today_puzzle": null,
+  "days": [
+    {"day_offset": 0, "due_at": "2026-06-20T00:00:00", "completed": true, "is_due": false, "source_type": "original"},
+    {"day_offset": 3, "due_at": "2026-06-23T00:00:00", "completed": true, "is_due": false, "source_type": "library"},
+    {"day_offset": 7, "due_at": "2026-06-27T00:00:00", "completed": true, "is_due": false, "source_type": "library"}
+  ]
+}"""
+
+    @Test
+    fun `INT_PLAN_COMPLETE_METHOD_PATH - POST to complete endpoint`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(coachPlanCompletedJson))
+        client(token = "tok").completePlanPuzzle(planId = "plan-xyz", dayOffset = 7)
+        val req = server.takeRequest(10, TimeUnit.SECONDS)!!
+        assertEquals("POST", req.method)
+        assertEquals("/coach/plan/puzzle/complete", req.path)
+    }
+
+    @Test
+    fun `INT_PLAN_COMPLETE_BODY - plan_id and day_offset serialised`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(coachPlanCompletedJson))
+        client(token = "tok").completePlanPuzzle(planId = "plan-xyz", dayOffset = 3)
+        val body = JSONObject(server.takeRequest(10, TimeUnit.SECONDS)!!.body.readUtf8())
+        assertEquals("plan-xyz", body.getString("plan_id"))
+        assertEquals(3, body.getInt("day_offset"))
+    }
+
+    @Test
+    fun `INT_PLAN_COMPLETE_BEARER - Bearer sent, no X-Api-Key`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(coachPlanCompletedJson))
+        client(token = "bearer-plan-tok").completePlanPuzzle("plan-xyz", 0)
+        val req = server.takeRequest(10, TimeUnit.SECONDS)!!
+        assertEquals("Bearer bearer-plan-tok", req.getHeader("Authorization"))
+        assertNull(req.getHeader("X-Api-Key"))
+    }
+
+    @Test
+    fun `INT_PLAN_COMPLETE_PARSED - status, anchor_category, and days deserialised`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(coachPlanCompletedJson))
+        val result = client(token = "tok").completePlanPuzzle("plan-xyz", 7)
+        assertTrue("expected Success, got $result", result is ApiResult.Success<*>)
+        val data = (result as ApiResult.Success<*>).data as CoachPlanResponse
+        assertEquals("completed", data.status)
+        assertEquals("tactical_vision", data.anchorCategory)
+        assertEquals(3, data.days.size)
+        assertTrue(data.days.all { it.completed })
+        assertNull(data.todayPuzzle)
+    }
+
+    @Test
+    fun `INT_PLAN_COMPLETE_HTTP_ERROR - 404 maps to HttpError`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(404).setBody("""{"detail":"study plan not found"}""")
+        )
+        val result = client(token = "tok").completePlanPuzzle("nope", 0)
+        assertTrue("expected HttpError, got $result", result is ApiResult.HttpError)
+        assertEquals(404, (result as ApiResult.HttpError).code)
+    }
+
+    // ---------------------------------------------------------------------------
+    // GET /coach/plan/today — decode coverage for the new overview fields
+    // ---------------------------------------------------------------------------
+
+    @Test
+    fun `INT_PLAN_TODAY_LEGACY_SHAPE - response without new fields decodes with defaults`() =
+        runBlocking {
+            // A server response predating the status / anchor_category /
+            // days[] fields must still decode leniently: status defaults
+            // to "active", anchor_category to null, days to empty.
+            val legacy =
+                """{"plan_id":"p1","theme":"king_safety","verdict":"","total_days":3,"today_puzzle":null}"""
+            server.enqueue(MockResponse().setResponseCode(200).setBody(legacy))
+            val result = client(token = "tok").getCoachPlanToday()
+            assertTrue(result is ApiResult.Success<*>)
+            val data = (result as ApiResult.Success<*>).data as CoachPlanResponse
+            assertEquals("active", data.status)
+            assertNull(data.anchorCategory)
+            assertTrue(data.days.isEmpty())
+        }
+
+    @Test
+    fun `INT_PLAN_TODAY_NULL_BODY - JSON null decodes to a null plan`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("null"))
+        val result = client(token = "tok").getCoachPlanToday()
+        assertTrue(result is ApiResult.Success<*>)
+        assertNull((result as ApiResult.Success<*>).data)
+    }
 }

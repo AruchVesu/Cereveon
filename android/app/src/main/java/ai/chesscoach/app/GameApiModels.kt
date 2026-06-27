@@ -540,14 +540,40 @@ data class TodayPuzzleDto(
 
 
 /**
+ * One day-slot in the week-overview schedule (`days[]`).
+ *
+ * Powers the week-overview screen: each day is [completed] (done),
+ * [isDue] (available to start now), or neither (locked behind its
+ * [dueAt]).  Unlike [TodayPuzzleDto] this carries no FEN / expected
+ * move — the playable position comes from [CoachPlanResponse.todayPuzzle].
+ *
+ * Wire shape pinned by ``docs/API_CONTRACTS.md`` §34.
+ */
+@Serializable
+data class PlanDayDto(
+    /** One of 0, 3, 7. */
+    @SerialName("day_offset") val dayOffset: Int = 0,
+    /** ISO-8601 UTC timestamp of when this day unlocks. */
+    @SerialName("due_at") val dueAt: String = "",
+    /** True once the day's puzzle has been solved. */
+    val completed: Boolean = false,
+    /** True when available now — ``due_at <= now()`` AND not completed. */
+    @SerialName("is_due") val isDue: Boolean = false,
+    /** ``"original"`` (the player's actual mistake) or ``"library"``. */
+    @SerialName("source_type") val sourceType: String = "",
+)
+
+
+/**
  * Top-level shape of ``GET /coach/plan/today`` when the player has an
- * active per-mistake study plan.
+ * active per-mistake study plan.  Also the response of
+ * ``POST /coach/plan/puzzle/complete``.
  *
  * The endpoint also returns JSON ``null`` (HTTP 200) when no active
  * plan exists; the Android client decodes that to a Kotlin ``null``
  * via the [GameApiClient.getCoachPlanToday] parse step.
  *
- * Wire shape pinned by ``docs/API_CONTRACTS.md`` §34.
+ * Wire shape pinned by ``docs/API_CONTRACTS.md`` §34 / §35.
  */
 @Serializable
 data class CoachPlanResponse(
@@ -560,9 +586,37 @@ data class CoachPlanResponse(
      *  LLM was unreachable or failed validators — TodaysDrillCard
      *  hides the verdict line in that case. */
     val verdict: String = "",
+    /** The aggregate dominant weakness the week is built around — one of
+     *  opening_preparation / tactical_vision / positional_play /
+     *  endgame_technique, or ``null`` for legacy plans / too little
+     *  history.  Rendered as the week's focus in the overview screen. */
+    @SerialName("anchor_category") val anchorCategory: String? = null,
+    /** Plan lifecycle: ``"active"`` while in progress, ``"completed"``
+     *  once every day is solved.  GET returns only active plans; the
+     *  completion endpoint returns the freshly-completed plan so the
+     *  client can show the week-complete state. */
+    val status: String = "active",
     /** Always 3 today; surfaced for "Day N of M" rendering. */
     @SerialName("total_days") val totalDays: Int = 3,
     /** ``null`` when no puzzle's ``due_at`` has elapsed yet (e.g.
      *  day-0 solved, day-3 not yet due). */
     @SerialName("today_puzzle") val todayPuzzle: TodayPuzzleDto? = null,
+    /** The full week schedule, ordered by day_offset (always
+     *  [totalDays] entries).  Empty only when decoding an older
+     *  server response that predates the field. */
+    val days: List<PlanDayDto> = emptyList(),
+)
+
+
+/**
+ * Body for ``POST /coach/plan/puzzle/complete`` — mark one day's puzzle
+ * solved and advance the plan.  Sent after a verified-correct solve
+ * (verify-replay → training/solve).
+ *
+ * Wire shape pinned by ``docs/API_CONTRACTS.md`` §35.
+ */
+@Serializable
+data class CompletePuzzleRequest(
+    @SerialName("plan_id") val planId: String,
+    @SerialName("day_offset") val dayOffset: Int,
 )
