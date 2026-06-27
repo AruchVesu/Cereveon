@@ -12,9 +12,20 @@ private func consumeStudyPlanRotation(_ response: HTTPURLResponse, _ sink: ((Str
     sink(token)
 }
 
-/// GET /coach/plan/today — the active study plan + today's due puzzle, or nil.
+/// Body for POST /coach/plan/puzzle/complete. APIJSON snake-cases
+/// `planId` → `plan_id`, `dayOffset` → `day_offset`.
+struct CompletePuzzleRequest: Encodable {
+    let planId: String
+    let dayOffset: Int
+}
+
+/// Study-plan surface: read today's plan, advance it on a solved day.
 protocol StudyPlanClient {
+    /// GET /coach/plan/today — the active study plan + today's due puzzle, or nil.
     func today(token: String) async -> APIResult<TodayPlan?>
+    /// POST /coach/plan/puzzle/complete — mark one day's puzzle solved and
+    /// advance the plan; returns the refreshed plan (possibly completed).
+    func complete(planId: String, dayOffset: Int, token: String) async -> APIResult<TodayPlan>
 }
 
 final class HTTPStudyPlanClient: StudyPlanClient {
@@ -41,6 +52,16 @@ final class HTTPStudyPlanClient: StudyPlanClient {
                 if trimmed == "null" || (trimmed?.isEmpty ?? true) { return nil }
                 return try APIJSON.decode(TodayPlan.self, from: data)
             }
+        )
+    }
+
+    func complete(planId: String, dayOffset: Int, token: String) async -> APIResult<TodayPlan> {
+        let body = try? APIJSON.encode(CompletePuzzleRequest(planId: planId, dayOffset: dayOffset))
+        return await http.request(
+            path: "/coach/plan/puzzle/complete", method: "POST",
+            headers: studyPlanHeaders(token: token), body: body,
+            onResponse: { [tokenSink] in consumeStudyPlanRotation($0, tokenSink) },
+            decode: { try APIJSON.decode(TodayPlan.self, from: $0) }
         )
     }
 }
