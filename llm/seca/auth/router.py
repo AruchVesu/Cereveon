@@ -198,6 +198,21 @@ def init_schema() -> None:
         )
         conn.commit()
 
+        # Weekly-curriculum anchor (aggregate-weakness re-anchor).  Records
+        # the player's dominant MistakeCategory the study plan is built
+        # around so the day-3 / day-7 practice puzzles can be selected from
+        # that category's theme set.  Nullable: legacy plan rows and plans
+        # created before a dominant category could be derived have none, and
+        # fall back to the day-0 mistake's own theme.  Postgres needs the
+        # ADD COLUMN because create_all skips existing tables; SQLite for
+        # dev files that pre-date the column.
+        _ensure_column(
+            conn,
+            "mistake_study_plans",
+            "anchor_category",
+            _column_type_for_dialect("TEXT", "VARCHAR"),
+        )
+
         # Lichess background-import jobs (PR: v2 async import).  One
         # non-terminal row per player is enforced by:
         #   (a) llm.seca.lichess.get_player_import_lock — primary

@@ -1571,11 +1571,12 @@ No body.  Reads the authenticated player from the bearer token.
 
 ```json
 {
-  "plan_id":      <string>,
-  "theme":        <string>,
-  "verdict":      <string>,
-  "status":       <string>,
-  "total_days":   3,
+  "plan_id":         <string>,
+  "theme":           <string>,
+  "verdict":         <string>,
+  "anchor_category": <string | null>,
+  "status":          <string>,
+  "total_days":      3,
   "today_puzzle": {
     "day_offset":         <int>,
     "fen":                <string>,
@@ -1600,6 +1601,7 @@ No body.  Reads the authenticated player from the bearer token.
 | `plan_id` | `string` | UUID of the `mistake_study_plans` row.  Stable for the life of the plan.  Pass it (with a `day_offset`) to `POST /coach/plan/puzzle/complete` (§35) when a day is solved. |
 | `theme` | `string` | Theme tag of the mistake, from a fixed vocabulary (see below).  Populated by a single-shot LLM call run in the background after `/game/finish`.  Falls back to `"generic"` when the LLM was unreachable, returned out-of-vocabulary, or its output failed the Mode-2 validators on both retries. |
 | `verdict` | `string` | LLM-written ≤ 60-word retrospective on the originating mistake.  Mode-2-validator-clean: no specific moves (no algebraic notation, no UCI), no engine mentions, no advisory phrasing.  Empty string when the LLM path failed unrecoverably; Android `TodaysDrillCard` hides the coach-note line in that case. |
+| `anchor_category` | `string \| null` | The player's aggregate dominant weakness the week is built around — one of `opening_preparation` / `tactical_vision` / `positional_play` / `endgame_technique` (from `HistoricalAnalysisPipeline` over recent games at `/game/finish`).  The day-3 / day-7 practice puzzles are drawn from this category's theme set; the overview renders it as the week's focus ("This week: Tactics").  `null` for legacy plans and players with too little history to surface a dominant category — those fall back to the day-0 mistake's own `theme` for puzzle selection.  Distinct from `theme`, which describes the day-0 mistake's own motif. |
 | `status` | `string` | Plan lifecycle: `"active"` while the week is in progress, `"completed"` once every day is solved.  `GET` only ever returns `"active"` plans (a completed plan returns `null`); `POST /coach/plan/puzzle/complete` (§35) returns the freshly-`"completed"` plan so the client can show the week-complete state. |
 | `total_days` | `int` | Number of puzzles in the plan.  Always `3` in phase 1; surfaced as a field so the UI can render "Day N of M" without hard-coding. |
 | `today_puzzle` | `object \| null` | The puzzle whose `due_at <= now()` AND `completed_at IS NULL`, with the lowest `day_offset`.  `null` when no puzzle is currently due (e.g. day-0 solved, day-3 not yet due). |
@@ -1701,8 +1703,9 @@ authenticated player is indistinguishable from a missing one → 404).
 ### Response (200)
 
 The full plan, in the **same shape as `GET /coach/plan/today` (§34)**
-(`plan_id`, `theme`, `verdict`, `status`, `total_days`, `today_puzzle`,
-`days`).  Unlike `GET`, this returns the plan even when the completion
+(`plan_id`, `theme`, `verdict`, `anchor_category`, `status`,
+`total_days`, `today_puzzle`, `days`).  Unlike `GET`, this returns the
+plan even when the completion
 flipped `status` to `"completed"`, so the client can render the next due
 puzzle — or the week-complete state — without a second round-trip.
 

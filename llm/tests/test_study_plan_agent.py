@@ -37,6 +37,15 @@ Pinned invariants
 22. COMPLETE_REJECTS_OTHER_PLAYERS_PLAN   completing another player's plan → 404, untouched.
 23. COMPLETE_REJECTS_UNKNOWN_PLAN         nonexistent plan id → 404.
 24. COMPLETE_REJECTS_UNKNOWN_DAY          valid plan, missing day_offset → 404.
+25. TODAY_RESPONSE_SURFACES_ANCHOR        anchor_category present on the wire.
+26. CATEGORY_PICKS_TWO_ON_THEME           category with >=2 on-theme puzzles → two distinct.
+27. CATEGORY_BACKFILLS_GENERIC            single on-theme puzzle backfills day-7 from generic.
+28. CATEGORY_FALLS_BACK_GENERIC           no on-theme puzzles → generic pair.
+29. CATEGORY_MAP_COVERS_ALL               every MistakeCategory maps to >=1 theme.
+30. ANCHOR_CATEGORY_PERSISTED             generate_plan stores dominant_category on the plan.
+31. ANCHOR_SELECTS_FROM_CATEGORY          days 3/7 follow the category, not the LLM theme.
+32. ONE_ACTIVE_PLAN                       a new game while active returns the existing plan.
+33. REGEN_AFTER_COMPLETION                completing the active plan lets the next game mint a new one.
 """
 
 from __future__ import annotations
@@ -1042,6 +1051,138 @@ class TestPuzzleLibraryPicker:
         assert d3 is not None and d7 is not None
 
 
+class TestPuzzleLibraryCategoryPicker:
+    """``library.pick_two_puzzles_for_category`` — the aggregate-weakness
+    selection path (days 3/7 drawn from the dominant category's themes)."""
+
+    def _puzzle(self, pid, theme, difficulty="intermediate"):
+        from llm.seca.coach.study_plan.library import LibraryPuzzle
+
+        return LibraryPuzzle(
+            id=pid,
+            theme=theme,
+            difficulty=difficulty,
+            fen="8/4P3/8/8/8/8/8/4K2k w - - 0 1",
+            expected_move_uci="e7e8q",
+            description="stub",
+        )
+
+    def test_two_on_theme_when_category_has_enough(self):
+        """CATEGORY_PICKS_TWO_ON_THEME — tactical_vision pools several
+        motif themes; picks two distinct on-theme puzzles (not generic)."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_for_category
+
+        library = {
+            "fork": [self._puzzle("fk1", "fork")],
+            "pin": [self._puzzle("pn1", "pin")],
+            "back_rank": [self._puzzle("br1", "back_rank")],
+            "hung_piece": [],
+            "queen_safety": [],
+            "generic": [self._puzzle("gn1", "generic")],
+        }
+        d3, d7 = pick_two_puzzles_for_category(
+            library, "tactical_vision", "intermediate", "plan-1"
+        )
+        assert d3 is not None and d7 is not None
+        assert d3.id != d7.id
+        # Both on-theme — generic must not be reached when >= 2 on-theme exist.
+        assert {d3.theme, d7.theme} <= {"fork", "pin", "back_rank"}
+
+    def test_single_on_theme_backfills_from_generic(self):
+        """CATEGORY_BACKFILLS_GENERIC — one on-theme puzzle stays on day 3;
+        day 7 is backfilled from generic so the two days are distinct."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_for_category
+
+        library = {
+            "king_safety": [self._puzzle("ks1", "king_safety")],
+            "tempo": [],
+            "generic": [self._puzzle("gn1", "generic"), self._puzzle("gn2", "generic")],
+        }
+        d3, d7 = pick_two_puzzles_for_category(
+            library, "positional_play", "intermediate", "plan-1"
+        )
+        assert d3.id == "ks1"
+        assert d7.theme == "generic"
+        assert d3.id != d7.id
+
+    def test_single_on_theme_no_generic_repeats(self):
+        """CATEGORY_SINGLE_NO_GENERIC — one on-theme puzzle, no generic →
+        same puzzle both days (degraded but functional)."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_for_category
+
+        library = {
+            "king_safety": [self._puzzle("ks1", "king_safety")],
+            "tempo": [],
+            "generic": [],
+        }
+        d3, d7 = pick_two_puzzles_for_category(
+            library, "positional_play", "intermediate", "plan-1"
+        )
+        assert d3.id == "ks1" and d7.id == "ks1"
+
+    def test_no_on_theme_falls_back_to_generic_pair(self):
+        """CATEGORY_FALLS_BACK_GENERIC — empty category themes → generic pair."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_for_category
+
+        library = {
+            "endgame_technique": [],
+            "generic": [self._puzzle("gn1", "generic"), self._puzzle("gn2", "generic")],
+        }
+        d3, d7 = pick_two_puzzles_for_category(
+            library, "endgame_technique", "intermediate", "plan-1"
+        )
+        assert d3.theme == "generic" and d7.theme == "generic"
+        assert d3.id != d7.id
+
+    def test_unknown_category_uses_generic(self):
+        """CATEGORY_UNKNOWN_USES_GENERIC — an unmapped category pools no
+        themes → generic fallback (never crashes)."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_for_category
+
+        library = {"generic": [self._puzzle("gn1", "generic"), self._puzzle("gn2", "generic")]}
+        d3, d7 = pick_two_puzzles_for_category(
+            library, "not_a_category", "intermediate", "plan-1"
+        )
+        assert d3 is not None and d7 is not None
+        assert d3.id != d7.id
+
+    def test_empty_library_returns_none(self):
+        """CATEGORY_EMPTY_RETURNS_NONE — nothing anywhere → (None, None)."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_for_category
+
+        result = pick_two_puzzles_for_category(
+            {"generic": []}, "tactical_vision", "intermediate", "plan-1"
+        )
+        assert result == (None, None)
+
+    def test_deterministic_per_plan_id(self):
+        """CATEGORY_DETERMINISTIC — same plan_id → same two picks."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_for_category
+
+        library = {
+            "fork": [self._puzzle(f"fk{i}", "fork") for i in range(4)],
+            "pin": [self._puzzle(f"pn{i}", "pin") for i in range(4)],
+            "back_rank": [],
+            "hung_piece": [],
+            "queen_safety": [],
+            "generic": [],
+        }
+        a = pick_two_puzzles_for_category(library, "tactical_vision", "intermediate", "plan-9")
+        b = pick_two_puzzles_for_category(library, "tactical_vision", "intermediate", "plan-9")
+        assert (a[0].id, a[1].id) == (b[0].id, b[1].id)
+
+    def test_category_map_covers_every_mistake_category(self):
+        """CATEGORY_MAP_COVERS_ALL — every MistakeCategory has a non-empty
+        theme mapping, so a real dominant category never silently degrades
+        to the generic bucket."""
+        from llm.seca.coach.study_plan.library import _CATEGORY_TO_THEMES
+        from llm.seca.analytics.mistake_stats import MistakeCategory
+
+        for category in MistakeCategory.ALL:
+            assert category in _CATEGORY_TO_THEMES
+            assert _CATEGORY_TO_THEMES[category]
+
+
 class TestAgentLibraryIntegration:
     """``generate_plan`` end-to-end with verdict + library wired."""
 
@@ -1145,6 +1286,182 @@ class TestAgentLibraryIntegration:
         for puzzle in plan.puzzles:
             assert puzzle.fen == _MISTAKE_FEN
             assert puzzle.source_type == PUZZLE_SOURCE_ORIGINAL
+
+
+class TestAgentAggregateAnchor:
+    """``generate_plan`` anchored on the player's aggregate dominant
+    weakness (the Phase-1b re-anchor)."""
+
+    _CLEAN_VERDICT = (
+        "Bringing the king toward the centre with pieces still on the "
+        "board exposes it to a quick attack; the resulting tempo loss "
+        "let the opponent build pressure faster than it could be defended."
+    )
+
+    def _puzzle(self, pid, theme, fen, move="e2e4"):
+        from llm.seca.coach.study_plan.library import LibraryPuzzle
+
+        return LibraryPuzzle(
+            id=pid,
+            theme=theme,
+            difficulty="intermediate",
+            fen=fen,
+            expected_move_uci=move,
+            description="stub",
+        )
+
+    def test_sets_anchor_category(self, db_session, player, game_event):
+        """ANCHOR_CATEGORY_PERSISTED — dominant_category is stored on the plan."""
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            dominant_category="tactical_vision",
+        )
+        assert plan.anchor_category == "tactical_vision"
+
+    def test_none_category_leaves_anchor_null(self, db_session, player, game_event):
+        """ANCHOR_CATEGORY_NULL_WHEN_NONE — no dominant category → NULL anchor."""
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            dominant_category=None,
+        )
+        assert plan.anchor_category is None
+
+    def test_days_3_7_drawn_from_category_not_llm_theme(self, db_session, player, game_event):
+        """ANCHOR_SELECTS_FROM_CATEGORY — with an anchor category, the
+        day-3/7 puzzles come from that category's theme set, NOT the
+        day-0 mistake's LLM-classified theme."""
+        from llm.seca.coach.study_plan.models import (
+            PUZZLE_SOURCE_LIBRARY,
+            PUZZLE_SOURCE_ORIGINAL,
+        )
+
+        llm = _ScriptedLLM([f'{{"theme": "king_safety", "verdict": "{self._CLEAN_VERDICT}"}}'])
+        # LLM classifies the day-0 mistake as king_safety, but the
+        # aggregate weakness is tactical_vision — selection must follow
+        # the category (fork/pin), not the king_safety LLM theme.
+        ks_fen = "8/4P3/8/8/8/8/8/4K2k w - - 0 1"
+        library = {
+            "king_safety": [self._puzzle("ks_x", "king_safety", ks_fen, "e7e8q")],
+            "fork": [self._puzzle("fk_a", "fork", "7k/4q3/8/4N3/8/8/8/K7 w - - 0 1", "e5g6")],
+            "pin": [self._puzzle("pn_a", "pin", "4k3/4q3/8/8/8/8/8/4R2K w - - 0 1", "e1e7")],
+            "generic": [],
+        }
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            dominant_category="tactical_vision",
+            llm=llm,
+            library=library,
+        )
+        by_offset = {p.day_offset: p for p in plan.puzzles}
+        assert by_offset[0].fen == _MISTAKE_FEN
+        assert by_offset[0].source_type == PUZZLE_SOURCE_ORIGINAL
+        for off in (3, 7):
+            assert by_offset[off].source_type == PUZZLE_SOURCE_LIBRARY
+        chosen = {by_offset[3].fen, by_offset[7].fen}
+        assert ks_fen not in chosen  # king_safety (LLM theme) NOT chosen
+        assert by_offset[3].fen != by_offset[7].fen
+
+    def test_one_active_plan_blocks_a_new_one(self, db_session, player):
+        """ONE_ACTIVE_PLAN — a second game while a plan is active returns
+        the existing plan and creates no new row."""
+        ev1 = GameEvent(
+            player_id=player.id,
+            pgn='[Result "0-1"]\n\n1. e4 e5 0-1',
+            result="loss",
+            accuracy=0.5,
+            weaknesses_json="{}",
+        )
+        ev2 = GameEvent(
+            player_id=player.id,
+            pgn='[Result "0-1"]\n\n1. d4 d5 0-1',
+            result="loss",
+            accuracy=0.4,
+            weaknesses_json="{}",
+        )
+        db_session.add_all([ev1, ev2])
+        db_session.commit()
+        db_session.refresh(ev1)
+        db_session.refresh(ev2)
+
+        plan1 = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=ev1.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            dominant_category="tactical_vision",
+        )
+        plan2 = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=ev2.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            dominant_category="endgame_technique",
+        )
+        assert plan2.id == plan1.id
+        assert (
+            db_session.query(MistakeStudyPlan).filter_by(player_id=player.id).count() == 1
+        )
+
+    def test_new_plan_after_active_one_completes(self, db_session, player):
+        """REGEN_AFTER_COMPLETION — once the active plan completes, the next
+        game mints a fresh plan anchored on the new weakness."""
+        ev1 = GameEvent(
+            player_id=player.id,
+            pgn='[Result "0-1"]\n\n1. e4 e5 0-1',
+            result="loss",
+            accuracy=0.5,
+            weaknesses_json="{}",
+        )
+        ev2 = GameEvent(
+            player_id=player.id,
+            pgn='[Result "0-1"]\n\n1. d4 d5 0-1',
+            result="loss",
+            accuracy=0.4,
+            weaknesses_json="{}",
+        )
+        db_session.add_all([ev1, ev2])
+        db_session.commit()
+        db_session.refresh(ev1)
+        db_session.refresh(ev2)
+
+        plan1 = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=ev1.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            dominant_category="tactical_vision",
+        )
+        plan1.status = STATUS_COMPLETED
+        db_session.commit()
+
+        plan2 = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=ev2.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            dominant_category="endgame_technique",
+        )
+        assert plan2.id != plan1.id
+        assert plan2.anchor_category == "endgame_technique"
+        assert (
+            db_session.query(MistakeStudyPlan).filter_by(player_id=player.id).count() == 2
+        )
 
 
 class TestSkillHintForRating:
@@ -1354,8 +1671,19 @@ class TestTodayPlanEndpoint:
         assert result is None
 
     def test_returns_most_recent_active_plan(self, db_session, player):
-        """TODAY_RETURNS_MOST_RECENT_ACTIVE_PLAN — two active plans → most recent by created_at."""
-        # Two distinct GameEvents (UNIQUE constraint on (player, event))
+        """TODAY_RETURNS_MOST_RECENT_ACTIVE_PLAN — when multiple active
+        plans exist (the best-effort one-active-plan guard can race, and
+        legacy data may carry several), the endpoint returns the most
+        recent by created_at.
+
+        Built directly via the ORM rather than ``generate_plan`` because
+        ``generate_plan`` now enforces one active plan per player (a
+        second call returns the existing active plan instead of minting a
+        new one) — so the only way to set up the multi-active-plan state
+        this endpoint query must still handle correctly is to insert the
+        rows directly.
+        """
+        # Two distinct GameEvents (UNIQUE constraint on (player, event)).
         ev_old = GameEvent(
             player_id=player.id,
             pgn='[Result "0-1"]\n\n1. e4 e5 0-1',
@@ -1370,28 +1698,28 @@ class TestTodayPlanEndpoint:
             accuracy=0.4,
             weaknesses_json="{}",
         )
-        db_session.add(ev_old)
-        db_session.add(ev_new)
+        db_session.add_all([ev_old, ev_new])
         db_session.commit()
+        db_session.refresh(ev_old)
+        db_session.refresh(ev_new)
 
-        plan_old = generate_plan(
-            db=db_session,
+        plan_old = MistakeStudyPlan(
             player_id=player.id,
             source_event_id=ev_old.id,
-            mistake_fen=_MISTAKE_FEN,
-            played_uci=_PLAYED_UCI,
+            theme="generic",
+            verdict="",
+            status=STATUS_ACTIVE,
+            created_at=datetime.utcnow() - timedelta(hours=2),
         )
-        plan_new = generate_plan(
-            db=db_session,
+        plan_new = MistakeStudyPlan(
             player_id=player.id,
             source_event_id=ev_new.id,
-            mistake_fen=_MISTAKE_FEN,
-            played_uci=_PLAYED_UCI,
+            theme="generic",
+            verdict="",
+            status=STATUS_ACTIVE,
+            created_at=datetime.utcnow(),
         )
-        # Bias created_at so the comparison isn't ambiguous within a
-        # single-microsecond test window.
-        plan_old.created_at = datetime.utcnow() - timedelta(hours=2)
-        plan_new.created_at = datetime.utcnow()
+        db_session.add_all([plan_old, plan_new])
         db_session.commit()
 
         result = _call_today(player, db_session)
@@ -1442,6 +1770,23 @@ class TestTodayPlanEndpoint:
         assert day_by_offset[7].is_due is False
         # Nothing solved yet.
         assert all(d.completed is False for d in result.days)
+        # A plan created without a dominant category has no anchor.
+        assert result.anchor_category is None
+
+    def test_response_surfaces_anchor_category(self, db_session, player, game_event):
+        """TODAY_RESPONSE_SURFACES_ANCHOR — the week's focus category is on
+        the wire so the overview can render "This week: <focus>"."""
+        generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            dominant_category="tactical_vision",
+        )
+        result = _call_today(player, db_session)
+        assert result is not None
+        assert result.anchor_category == "tactical_vision"
 
 
 class TestCompletePuzzleEndpoint:
