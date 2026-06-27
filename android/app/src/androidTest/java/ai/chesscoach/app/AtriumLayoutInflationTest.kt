@@ -188,6 +188,23 @@ class AtriumLayoutInflationTest {
     }
 
     @Test
+    fun bottom_sheet_study_plan_overview_inflates() {
+        val v = inflate(R.layout.bottom_sheet_study_plan_overview)
+        // Spot-check the IDs StudyPlanOverviewBottomSheet.onViewCreated
+        // resolves; an XML rename would surface here rather than at the
+        // first user who opens "This week's plan".
+        assertNotNull(v.findViewById<View>(R.id.overviewFocus))
+        assertNotNull(v.findViewById<View>(R.id.overviewVerdict))
+        assertNotNull(v.findViewById<View>(R.id.overviewProgress))
+        assertNotNull(v.findViewById<View>(R.id.overviewDay1Label))
+        assertNotNull(v.findViewById<View>(R.id.overviewDay1Status))
+        assertNotNull(v.findViewById<View>(R.id.overviewDay2Label))
+        assertNotNull(v.findViewById<View>(R.id.overviewDay3Label))
+        assertNotNull(v.findViewById<View>(R.id.overviewStartButton))
+        assertNotNull(v.findViewById<View>(R.id.overviewCloseButton))
+    }
+
+    @Test
     fun bottom_sheet_game_history_inflates() {
         inflate(R.layout.bottom_sheet_game_history)
     }

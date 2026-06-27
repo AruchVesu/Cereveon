@@ -16,6 +16,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -423,19 +424,19 @@ class HomeActivity : AppCompatActivity() {
             }
             block.visibility = View.VISIBLE
 
+            // Tapping the card opens the week-overview sheet (the whole
+            // spaced-repetition plan + focus), which carries the
+            // "Start today's drill" CTA into the existing drill flow.
+            // We hand it the already-fetched plan as JSON so the overview
+            // does no network I/O of its own.
+            startButton.text = "This week's plan"
             startButton.setOnClickListener {
                 if (supportFragmentManager.isStateSaved) return@setOnClickListener
-                val sheet = TodaysDrillBottomSheet.newInstance(
-                    planId = response.planId,
-                    dayOffset = puzzle.dayOffset,
-                    totalDays = response.totalDays,
-                    theme = response.theme,
-                    verdict = response.verdict,
-                    fen = puzzle.fen,
-                    expectedMoveUci = puzzle.expectedMoveUci,
+                val sheet = StudyPlanOverviewBottomSheet.newInstance(
+                    ApiJson.encodeToString(response)
                 )
                 sheet.gameApiClient = gameApiClient
-                sheet.show(supportFragmentManager, "TodaysDrillBottomSheet")
+                sheet.show(supportFragmentManager, "StudyPlanOverviewBottomSheet")
             }
         }
     }
