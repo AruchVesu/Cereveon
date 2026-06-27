@@ -69,6 +69,11 @@ class TodaysDrillBottomSheet : BottomSheetDialogFragment() {
     private var fen: String = ""
     private var sourceRef: String = ""
 
+    // Plan coordinates for the completion call after a verified solve —
+    // advances the study plan (day 0 -> 3 -> 7) so the week progresses.
+    private var planId: String = ""
+    private var dayOffset: Int = 0
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -80,8 +85,8 @@ class TodaysDrillBottomSheet : BottomSheetDialogFragment() {
 
         val args = requireArguments()
         fen = args.getString(ARG_FEN, "")
-        val planId = args.getString(ARG_PLAN_ID, "")
-        val dayOffset = args.getInt(ARG_DAY_OFFSET, 0)
+        planId = args.getString(ARG_PLAN_ID, "")
+        dayOffset = args.getInt(ARG_DAY_OFFSET, 0)
         val totalDays = args.getInt(ARG_TOTAL_DAYS, 3)
         val theme = args.getString(ARG_THEME, "generic")
         val verdict = args.getString(ARG_VERDICT, "")
@@ -180,6 +185,16 @@ class TodaysDrillBottomSheet : BottomSheetDialogFragment() {
                     .edit()
                     .putInt(MainActivity.PREF_TRAINING_XP, total)
                     .apply()
+
+                // Advance the study plan: mark this day's puzzle solved
+                // so the week progresses (day 0 -> 3 -> 7) and completes.
+                // Best-effort — XP is already credited above; if this call
+                // fails the day simply resurfaces on the next
+                // /coach/plan/today fetch (the endpoint is idempotent), so
+                // we don't block the success UX on it.
+                if (planId.isNotBlank()) {
+                    client.completePlanPuzzle(planId = planId, dayOffset = dayOffset)
+                }
 
                 val toastText =
                     if (awarded > 0) "+$awarded XP"

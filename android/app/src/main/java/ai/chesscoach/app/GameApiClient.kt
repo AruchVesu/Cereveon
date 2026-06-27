@@ -234,6 +234,21 @@ interface GameApiClient {
      * test fakes don't have to implement it.
      */
     suspend fun getCoachPlanToday(): ApiResult<CoachPlanResponse?> = ApiResult.HttpError(501)
+
+    /**
+     * POST /coach/plan/puzzle/complete — mark one day's puzzle solved
+     * and advance the study plan (§35).  Called after a verified-correct
+     * solve (verify-replay → training/solve).  Returns the refreshed
+     * plan, which may now carry ``status == "completed"`` so the caller
+     * can show the week-complete state without a second round-trip.
+     *
+     * Default implementation returns [ApiResult.HttpError(501)] so test
+     * fakes don't have to implement it.
+     */
+    suspend fun completePlanPuzzle(
+        planId: String,
+        dayOffset: Int,
+    ): ApiResult<CoachPlanResponse> = ApiResult.HttpError(501)
 }
 
 // ── HTTP implementation ───────────────────────────────────────────────────────
@@ -501,6 +516,21 @@ class HttpGameApiClient(
                 ApiJson.decodeFromString<CoachPlanResponse>(trimmed)
             }
         },
+    )
+
+    override suspend fun completePlanPuzzle(
+        planId: String,
+        dayOffset: Int,
+    ): ApiResult<CoachPlanResponse> = http.request(
+        path = "/coach/plan/puzzle/complete",
+        method = "POST",
+        // Bearer-only — same auth posture as /coach/plan/today.
+        headers = authHeaders(includeApiKey = false),
+        body = ApiJson.encodeToString(
+            CompletePuzzleRequest(planId = planId, dayOffset = dayOffset)
+        ),
+        onResponse = refreshOnSuccess(),
+        parse = { body -> ApiJson.decodeFromString<CoachPlanResponse>(body) },
     )
 
     /**
