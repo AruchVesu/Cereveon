@@ -133,6 +133,14 @@ class TodayPlanResponse(BaseModel):
     always ``""`` (empty string); phase 2 populates it with a <= 100-
     word Mode-2-validator-clean string."""
 
+    anchor_category: str | None
+    """The aggregate dominant weakness the week is built around — one of
+    the four ``MistakeCategory`` values (``opening_preparation`` /
+    ``tactical_vision`` / ``positional_play`` / ``endgame_technique``),
+    or ``null`` for legacy plans / players with too little history.  The
+    overview screen renders it as the week's focus ("This week:
+    Tactics"); the day-3 / day-7 puzzles are drawn from its theme set."""
+
     status: str
     """One of ``STATUSES`` — ``"active"`` while the week is in
     progress, ``"completed"`` once all days are solved.  ``GET`` only
@@ -204,6 +212,7 @@ def _serialize_plan(plan: MistakeStudyPlan, now: datetime) -> TodayPlanResponse:
         plan_id=plan.id,
         theme=plan.theme,
         verdict=plan.verdict,
+        anchor_category=plan.anchor_category,
         status=plan.status,
         total_days=len(PLAN_DAY_OFFSETS),
         today_puzzle=today_puzzle_field,

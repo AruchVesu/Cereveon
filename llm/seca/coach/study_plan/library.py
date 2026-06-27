@@ -246,6 +246,67 @@ def _validate_entry(entry: object, source: str, seen_ids: set[str]) -> LibraryPu
     )
 
 
+# Maps the aggregate ``MistakeCategory`` (from
+# ``HistoricalAnalysisPipeline.dominant_category``) to the library theme
+# tags that train it.  The four categories are coarse (one per
+# phase-ish bucket); the library themes are fine motifs, so the mapping
+# is one-to-many.  ``pick_two_puzzles_for_category`` pools every theme
+# in the value tuple, then backfills from ``"generic"`` so a thin
+# category still yields two DISTINCT puzzles.  ``positional_play``
+# leans on king-safety / tempo because those are the positional motifs
+# the curated corpus carries; it falls through to ``generic`` when
+# neither has entries.
+_CATEGORY_TO_THEMES: dict[str, tuple[str, ...]] = {
+    "opening_preparation": ("opening_principles",),
+    "tactical_vision": ("fork", "pin", "back_rank", "hung_piece", "queen_safety"),
+    "positional_play": ("king_safety", "tempo"),
+    "endgame_technique": ("endgame_technique",),
+}
+
+
+def _rng_for_plan(plan_id: str) -> random.Random:
+    """Deterministic RNG seeded from ``plan_id``.
+
+    Same plan_id always yields the same draws, so a re-fired
+    ``generate_plan_async`` (BackgroundTask retry) never reshuffles the
+    day-3 / day-7 picks under the user.
+    """
+    seed_bytes = hashlib.sha256(plan_id.encode("utf-8")).digest()
+    return random.Random(int.from_bytes(seed_bytes[:8], "big"))
+
+
+def _pick_two_from(
+    candidates: list[LibraryPuzzle],
+    skill_hint: str,
+    plan_id: str,
+) -> tuple[LibraryPuzzle | None, LibraryPuzzle | None]:
+    """Skill-filter + deterministic-shuffle + pick two from a pool.
+
+    Shared core of ``pick_two_puzzles`` (single theme) and
+    ``pick_two_puzzles_for_category`` (aggregate weakness).  Returns
+    ``(None, None)`` for an empty pool, and ``(only, only)`` for a
+    single-element pool (degraded-but-functional — the same variant on
+    both days still beats re-solving the original mistake).
+    """
+    if not candidates:
+        return (None, None)
+
+    # Skill filter — keep puzzles whose difficulty band is exact-match
+    # or one step adjacent to the player's skill_hint.  Fall through to
+    # the unfiltered pool if the filter would empty the candidate list.
+    skill_filtered = _filter_by_skill(candidates, skill_hint)
+    pool = skill_filtered if skill_filtered else candidates
+
+    rng = _rng_for_plan(plan_id)
+    if len(pool) == 1:
+        only = pool[0]
+        return (only, only)
+
+    # ``sample`` guarantees no duplicates when len(pool) >= 2.
+    picks = rng.sample(pool, 2)
+    return (picks[0], picks[1])
+
+
 def pick_two_puzzles(
     library: dict[str, list[LibraryPuzzle]],
     theme: str,
@@ -254,50 +315,91 @@ def pick_two_puzzles(
 ) -> tuple[LibraryPuzzle | None, LibraryPuzzle | None]:
     """Pick two distinct library puzzles for the day-3 / day-7 slots.
 
-    Selection happens in three stages: theme filter, skill filter,
-    deterministic shuffle.  See module docstring for the full rationale.
-
-    Returns ``(None, None)`` when both the requested theme and the
-    ``"generic"`` fallback bucket are empty.  Caller (``agent.py``)
-    treats that as "leave the day-3/day-7 puzzles at the phase-1
-    stub (the mistake position)" — the plan stays usable; just no
-    library variants.
-
-    When only one puzzle survives the filters, returns it as BOTH
-    elements of the tuple.  That's a degraded-but-functional state:
-    the user solves the same library variant on days 3 and 7, which is
-    still better pedagogically than re-solving the original mistake.
+    Single-theme selection (the pre-aggregate-anchor path, still used
+    when no dominant category is available): theme filter → skill
+    filter → deterministic shuffle.  Falls back to the ``"generic"``
+    bucket when the requested theme is empty.  See
+    ``pick_two_puzzles_for_category`` for the aggregate-weakness path.
     """
-    # Theme filter — fall back to "generic" bucket if the requested
-    # theme has no entries.
     candidates = library.get(theme, [])
     if not candidates and theme != "generic":
         candidates = library.get("generic", [])
-    if not candidates:
-        return (None, None)
+    return _pick_two_from(candidates, skill_hint, plan_id)
 
-    # Skill filter — keep puzzles whose difficulty band is exact-match
-    # or one step adjacent to the player's skill_hint.  Fall through
-    # to the unfiltered pool if the filter would empty the candidate
-    # list.
-    skill_filtered = _filter_by_skill(candidates, skill_hint)
-    pool = skill_filtered if skill_filtered else candidates
 
-    # Deterministic shuffle seeded from plan_id.  Same plan_id always
-    # picks the same two puzzles, which makes the schedule stable
-    # across BackgroundTask retries (a re-fired generate_plan_async
-    # won't shuffle the day-3 / day-7 picks under the user).
-    seed_bytes = hashlib.sha256(plan_id.encode("utf-8")).digest()
-    seed_int = int.from_bytes(seed_bytes[:8], "big")
-    rng = random.Random(seed_int)
+def _candidates_for_category(
+    library: dict[str, list[LibraryPuzzle]],
+    category: str,
+) -> list[LibraryPuzzle]:
+    """Pooled, de-duplicated puzzles across every theme that trains
+    ``category`` (see ``_CATEGORY_TO_THEMES``).  Empty list for an
+    unknown category."""
+    out: list[LibraryPuzzle] = []
+    seen: set[str] = set()
+    for theme in _CATEGORY_TO_THEMES.get(category, ()):
+        for puzzle in library.get(theme, []):
+            if puzzle.id not in seen:
+                out.append(puzzle)
+                seen.add(puzzle.id)
+    return out
 
-    if len(pool) == 1:
-        only = pool[0]
-        return (only, only)
 
-    # ``sample`` guarantees no duplicates when len(pool) >= 2.
-    picks = rng.sample(pool, 2)
-    return (picks[0], picks[1])
+def _pick_one_excluding(
+    candidates: list[LibraryPuzzle],
+    exclude_id: str,
+    skill_hint: str,
+    plan_id: str,
+) -> LibraryPuzzle | None:
+    """Deterministically pick one puzzle, skipping ``exclude_id``.
+
+    Used to backfill the day-7 slot from the ``"generic"`` bucket when
+    a category has exactly one on-theme puzzle, so the two days stay
+    distinct.  Returns ``None`` when nothing else is available.
+    """
+    pool = [p for p in candidates if p.id != exclude_id]
+    if not pool:
+        return None
+    skill_filtered = _filter_by_skill(pool, skill_hint)
+    final_pool = skill_filtered if skill_filtered else pool
+    return _rng_for_plan(plan_id).choice(final_pool)
+
+
+def pick_two_puzzles_for_category(
+    library: dict[str, list[LibraryPuzzle]],
+    category: str,
+    skill_hint: str,
+    plan_id: str,
+) -> tuple[LibraryPuzzle | None, LibraryPuzzle | None]:
+    """Pick two distinct day-3 / day-7 puzzles for the player's
+    aggregate dominant weakness ``category``.
+
+    Preference order, all deterministic in ``plan_id``:
+
+    1. **Two on-theme.**  When the category's theme set has >= 2
+       puzzles, pick two distinct from it (skill-filtered).
+    2. **One on-theme + one generic.**  When the category has exactly
+       one on-theme puzzle, keep it on day 3 and backfill day 7 from
+       the ``"generic"`` bucket so the days are distinct (better than
+       repeating the single on-theme puzzle).
+    3. **Generic pair.**  When the category has no on-theme puzzles at
+       all (or is unknown / ``None``), fall back to a generic pair.
+
+    Returns ``(None, None)`` only when even the generic bucket is empty
+    — the caller leaves day-3 / day-7 at the day-0 mistake position.
+    """
+    on_theme = _candidates_for_category(library, category)
+    if len(on_theme) >= 2:
+        return _pick_two_from(on_theme, skill_hint, plan_id)
+
+    generic = list(library.get("generic", []))
+    if len(on_theme) == 1:
+        backfill = _pick_one_excluding(generic, on_theme[0].id, skill_hint, plan_id)
+        if backfill is None:
+            return (on_theme[0], on_theme[0])
+        return (on_theme[0], backfill)
+
+    # No on-theme puzzles for this category — generic pair (or None).
+    return _pick_two_from(generic, skill_hint, plan_id)
 
 
 def _filter_by_skill(candidates: list[LibraryPuzzle], skill_hint: str) -> list[LibraryPuzzle]:

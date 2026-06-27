@@ -55,6 +55,7 @@ from llm.seca.coach.study_plan.library import (
     LibraryPuzzle,
     load_library,
     pick_two_puzzles,
+    pick_two_puzzles_for_category,
 )
 from llm.seca.coach.study_plan.models import (
     PLAN_DAY_OFFSETS,
@@ -89,6 +90,7 @@ def generate_plan(
     source_event_id: str,
     mistake_fen: str,
     played_uci: str,
+    dominant_category: str | None = None,
     llm: "BaseLLM | None" = None,
     library: dict[str, list[LibraryPuzzle]] | None = None,
 ) -> MistakeStudyPlan | None:
@@ -127,6 +129,17 @@ def generate_plan(
         Used as the day-0 puzzle's ``expected_move_uci`` — the
         client-side replay sheet uses it to short-circuit a
         re-submission of the same wrong move.
+    dominant_category:
+        The player's aggregate biggest weakness across recent games —
+        one of the four ``MistakeCategory`` values, computed by
+        ``HistoricalAnalysisPipeline`` at /game/finish.  When provided,
+        the week is *anchored* on it: stored in ``plan.anchor_category``
+        and used to select the day-3 / day-7 practice puzzles from that
+        category's theme set (``pick_two_puzzles_for_category``).  Day 0
+        always stays the player's real mistake position.  ``None`` (new
+        player / too little history) falls back to the pre-anchor path:
+        days 3 / 7 drawn from the day-0 mistake's own LLM-classified
+        theme.
     llm:
         Optional ``BaseLLM`` instance.  ``None`` (the default) skips
         the verdict generation step and leaves the plan at the
@@ -144,8 +157,30 @@ def generate_plan(
     plan is best-effort and the user-facing /game/finish response
     has already been sent.
     """
-    # Pre-check: existing plan for the same (player, source_event)?
-    # The unique index makes this a cheap point lookup.
+    # One active plan per player.  While a week is in progress, don't
+    # mint a new plan — let the player finish it.  The next /game/finish
+    # AFTER the active plan completes starts a fresh week anchored on the
+    # THEN-current dominant weakness.  (Best-effort: two games finishing
+    # near-simultaneously could both pass this check before either plan
+    # commits and create two active plans; /coach/plan/today shows the
+    # most recent, same benign posture as before.)
+    active = (
+        db.query(MistakeStudyPlan)
+        .filter(
+            MistakeStudyPlan.player_id == player_id,
+            MistakeStudyPlan.status == STATUS_ACTIVE,
+        )
+        .order_by(MistakeStudyPlan.created_at.desc())
+        .first()
+    )
+    if active is not None:
+        return active
+
+    # Idempotency for a double-fired background task on the SAME game
+    # (the unique (player, source_event) index also enforces this at the
+    # DB level).  Catches the case where this game's plan already
+    # completed and the task re-fires: return the existing plan rather
+    # than minting a duplicate for the same source event.
     existing = (
         db.query(MistakeStudyPlan)
         .filter(
@@ -166,6 +201,10 @@ def generate_plan(
         # call before the row is committed.
         theme="generic",
         verdict="",
+        # The week's focus (aggregate dominant weakness).  ``None`` when
+        # the player has too little history — the library selector then
+        # falls back to the day-0 mistake's own theme.
+        anchor_category=dominant_category,
         status=STATUS_ACTIVE,
         created_at=now,
     )
@@ -321,12 +360,26 @@ def _populate_library_variants(
         rating = float(player.rating) if player is not None else 1500.0
         skill_hint = skill_hint_for_rating(rating)
 
-        puzzle_day_3, puzzle_day_7 = pick_two_puzzles(
-            library=library,
-            theme=plan.theme,
-            skill_hint=skill_hint,
-            plan_id=plan.id,
-        )
+        # Aggregate-weakness anchor: when the plan carries a dominant
+        # category, draw the day-3 / day-7 practice puzzles from that
+        # category's theme set so the week trains the player's biggest
+        # recurring weakness.  Fall back to the day-0 mistake's own
+        # LLM-classified theme when there's no anchor category (new
+        # player / too little history).
+        if plan.anchor_category:
+            puzzle_day_3, puzzle_day_7 = pick_two_puzzles_for_category(
+                library=library,
+                category=plan.anchor_category,
+                skill_hint=skill_hint,
+                plan_id=plan.id,
+            )
+        else:
+            puzzle_day_3, puzzle_day_7 = pick_two_puzzles(
+                library=library,
+                theme=plan.theme,
+                skill_hint=skill_hint,
+                plan_id=plan.id,
+            )
         if puzzle_day_3 is None or puzzle_day_7 is None:
             logger.info(
                 "study_plan no library puzzles for theme=%s; days 3/7 stay at mistake position",
@@ -359,6 +412,7 @@ def generate_plan_async(
     source_event_id: str,
     mistake_fen: str,
     played_uci: str,
+    dominant_category: str | None = None,
     llm: "BaseLLM | None" = None,
 ) -> None:
     """FastAPI ``BackgroundTasks`` entrypoint — runs after /game/finish.
@@ -397,6 +451,7 @@ def generate_plan_async(
             source_event_id=source_event_id,
             mistake_fen=mistake_fen,
             played_uci=played_uci,
+            dominant_category=dominant_category,
             llm=llm,
         )
     except Exception:  # noqa: BLE001

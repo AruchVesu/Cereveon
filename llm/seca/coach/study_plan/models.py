@@ -91,8 +91,22 @@ class MistakeStudyPlan(Base):
 
     # Theme tag (e.g. ``"king_safety"``, ``"fork"``, ``"back_rank"``).
     # Phase 1 ships every plan with ``"generic"``; phase 2's LLM call
-    # produces a real value from a fixed vocabulary.
+    # produces a real value from a fixed vocabulary.  This describes the
+    # day-0 mistake's motif specifically; the week's overall focus is
+    # ``anchor_category`` below.
     theme: Mapped[str] = mapped_column(String, nullable=False, default="generic")
+
+    # The player's aggregate dominant weakness this week's plan is built
+    # around — one of the four ``MistakeCategory`` values
+    # (``opening_preparation`` / ``tactical_vision`` / ``positional_play``
+    # / ``endgame_technique``) computed by
+    # ``HistoricalAnalysisPipeline`` over recent games at /game/finish.
+    # The day-3 / day-7 practice puzzles are selected from this
+    # category's theme set (see ``library.pick_two_puzzles_for_category``).
+    # Nullable: legacy plans and plans created when the player has too
+    # little history to surface a dominant category (``None``) fall back
+    # to the day-0 mistake's own ``theme`` for puzzle selection.
+    anchor_category: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # LLM-written retrospective verdict explaining the mistake.
     # Phase 1 ships empty (``""``); phase 2's single-shot generation

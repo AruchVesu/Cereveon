@@ -707,13 +707,14 @@ def _finish_game_body(
                     "source_ref": (f"event_{event.id}:move_{mistake.move_number}"),
                 }
 
-                # Per-mistake study-plan agent (LLM coaching v1, phase 1
-                # scaffold).  Background-task entrypoint runs AFTER the
-                # response is sent — writes a 3-puzzle plan keyed off
-                # this mistake.  Phase 1 stub: all 3 puzzles share the
-                # mistake FEN, theme="generic", verdict="".  Phases
-                # 2-4 light up the LLM verdict, the library variants,
-                # and the Android Home card.  Lazy import to keep
+                # Weekly study-plan agent.  Background-task entrypoint
+                # runs AFTER the response is sent.  Day 0 replays THIS
+                # game's mistake; the day-3 / day-7 practice puzzles are
+                # anchored on the player's aggregate dominant weakness
+                # (``analysis_dominant_category``, computed above by the
+                # HistoricalAnalysisPipeline).  The agent itself enforces
+                # one active plan per player, so this no-ops while a week
+                # is already in progress.  Lazy import to keep
                 # /game/finish hot-path imports unchanged on requests
                 # that don't carry a first-mistake.
                 from llm.seca.coach.study_plan.agent import (
@@ -726,6 +727,7 @@ def _finish_game_body(
                     source_event_id=str(event.id),
                     mistake_fen=mistake.fen_before,
                     played_uci=mistake.played_uci,
+                    dominant_category=analysis_dominant_category,
                 )
         except Exception:  # noqa: BLE001 — never 500 /game/finish
             # Detector is non-critical — log and continue without the
