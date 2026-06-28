@@ -36,6 +36,10 @@ final class MistakeReplayViewModel: ObservableObject {
     private let historyClient: GameHistoryClient
     private let verifyClient: VerifyReplayClient
     private let token: () -> String?
+    /// Fired once when a position is verified CORRECT.  Used by the
+    /// study-plan "today's drill" (a single seeded position) to advance
+    /// the plan; nil for the multi-position history "sharpen".
+    private let onSolved: (() -> Void)?
     private var verifyTask: Task<Void, Never>?
 
     var total: Int { queue.count }
@@ -45,12 +49,14 @@ final class MistakeReplayViewModel: ObservableObject {
          seedFENs: [String]? = nil,
          historyClient: GameHistoryClient,
          verifyClient: VerifyReplayClient,
-         token: @escaping () -> String?) {
+         token: @escaping () -> String?,
+         onSolved: (() -> Void)? = nil) {
         self.eventId = eventId
         self.seedFENs = seedFENs
         self.historyClient = historyClient
         self.verifyClient = verifyClient
         self.token = token
+        self.onSolved = onSolved
         board = game.board
     }
 
@@ -126,6 +132,7 @@ final class MistakeReplayViewModel: ObservableObject {
         if verdict.isCorrect {
             correctCount += 1
             feedback = "Best move. ✓"
+            onSolved?()
         } else {
             feedback = "Not quite — the engine plays \(verdict.engineBestUci) (−\(verdict.evalLossCp) cp)."
         }

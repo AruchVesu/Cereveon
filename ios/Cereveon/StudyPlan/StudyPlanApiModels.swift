@@ -51,6 +51,8 @@ struct PlanDay: Decodable, Equatable {
 /// Response from GET /coach/plan/today (or JSON `null` when no active plan).
 /// Also the body of POST /coach/plan/puzzle/complete.
 struct TodayPlan: Decodable, Equatable {
+    /// UUID of the mistake_study_plans row — pass to complete(planId:…).
+    let planId: String
     let theme: String
     let verdict: String
     /// Aggregate dominant weakness the week is built around — one of
@@ -67,6 +69,7 @@ struct TodayPlan: Decodable, Equatable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        planId = (try? c.decode(String.self, forKey: .planId)) ?? ""
         theme = (try? c.decode(String.self, forKey: .theme)) ?? ""
         verdict = (try? c.decode(String.self, forKey: .verdict)) ?? ""
         anchorCategory = try? c.decode(String.self, forKey: .anchorCategory)
@@ -76,7 +79,7 @@ struct TodayPlan: Decodable, Equatable {
         days = (try? c.decode([PlanDay].self, forKey: .days)) ?? []
     }
     private enum CodingKeys: String, CodingKey {
-        case theme, verdict, anchorCategory, status, totalDays, todayPuzzle, days
+        case planId, theme, verdict, anchorCategory, status, totalDays, todayPuzzle, days
     }
 
     /// A card is shown only when a puzzle is actually due.

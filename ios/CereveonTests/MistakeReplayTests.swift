@@ -181,4 +181,38 @@ final class MistakeReplayTests: XCTestCase {
         XCTAssertEqual(vm.total, 1)
         XCTAssertTrue(vm.whiteToMove)
     }
+
+    // MARK: - onSolved (study-plan "today's drill" advance hook)
+
+    func testCorrectSolveFiresOnSolved() async {
+        var solvedFired = 0
+        let vm = MistakeReplayViewModel(
+            eventId: "",
+            seedFENs: ["rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2"],
+            historyClient: FakeHistoryClient(.httpError(500)),
+            verifyClient: FakeVerifyClient(.success(verdict(correct: true, best: "g1f3"))),
+            token: { "t" },
+            onSolved: { solvedFired += 1 }
+        )
+        await vm.load()
+        vm.attempt(from: square("g1"), to: square("f3"))   // Nf3, judged correct
+        await vm.awaitVerifyCompletion()
+        XCTAssertEqual(solvedFired, 1, "a verified-correct solve fires onSolved once")
+    }
+
+    func testWrongAttemptDoesNotFireOnSolved() async {
+        var solvedFired = 0
+        let vm = MistakeReplayViewModel(
+            eventId: "",
+            seedFENs: ["rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2"],
+            historyClient: FakeHistoryClient(.httpError(500)),
+            verifyClient: FakeVerifyClient(.success(verdict(correct: false, best: "g1f3", loss: 90))),
+            token: { "t" },
+            onSolved: { solvedFired += 1 }
+        )
+        await vm.load()
+        vm.attempt(from: square("d2"), to: square("d4"))   // legal, judged wrong
+        await vm.awaitVerifyCompletion()
+        XCTAssertEqual(solvedFired, 0, "a wrong attempt does not advance the plan")
+    }
 }
