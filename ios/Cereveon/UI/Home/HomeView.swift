@@ -95,7 +95,9 @@ struct HomeView: View {
         .fullScreenCover(isPresented: $showOverview) {
             if let plan = drill.plan {
                 NavigationStack {
-                    StudyPlanOverviewView(plan: plan, token: { auth.bearerToken })
+                    StudyPlanOverviewView(plan: plan,
+                                          token: { auth.bearerToken },
+                                          onAdvance: { drill.apply($0) })
                         .toolbar {
                             ToolbarItem(placement: .navigationBarLeading) {
                                 Button("Close") { showOverview = false }
@@ -104,14 +106,6 @@ struct HomeView: View {
                         }
                 }
                 .tint(AtriumColors.accentCyan)
-            }
-        }
-        .onChange(of: showOverview) { showing in
-            // After the overview closes, re-poll so the card reflects any
-            // day the user just solved (advanced inside the overview) — or
-            // hides when the week is complete.
-            if !showing {
-                Task { await drill.load(token: auth.bearerToken) }
             }
         }
         .task { await drill.load(token: auth.bearerToken) }
