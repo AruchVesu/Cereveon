@@ -145,9 +145,10 @@ struct StudyPlanOverviewView: View {
         if !byCategory.isEmpty { return byCategory }
         let theme = plan.theme.trimmingCharacters(in: .whitespaces).lowercased()
         if !theme.isEmpty, theme != "generic" {
-            return theme.split(separator: "_")
-                .map { $0.prefix(1).uppercased() + $0.dropFirst() }
-                .joined(separator: " ")
+            // Sentence-case (first word only), matching Android's
+            // prettyTheme: "king_safety" → "King safety".
+            let spaced = theme.split(separator: "_").joined(separator: " ")
+            return spaced.prefix(1).uppercased() + spaced.dropFirst()
         }
         return "This week"
     }
