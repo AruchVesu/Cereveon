@@ -22,4 +22,9 @@ final class TodaysDrillViewModel: ObservableObject {
             plan = loaded
         }
     }
+
+    /// Apply an authoritative plan pushed by the week overview after it
+    /// advances a solved day, so the Home card reflects the new state without
+    /// a second /coach/plan/today round-trip.
+    func apply(_ plan: TodayPlan) { self.plan = plan }
 }

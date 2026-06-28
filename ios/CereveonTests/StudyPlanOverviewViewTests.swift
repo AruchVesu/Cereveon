@@ -27,6 +27,14 @@ final class StudyPlanOverviewViewTests: XCTestCase {
         XCTAssertEqual(StudyPlanOverviewView.formatCategory("nonsense"), "")
     }
 
+    func testFormatCategoryTrimsWhitespaceAndNewlines() {
+        // Kotlin's .trim() (Android) strips newlines/tabs; the iOS port must
+        // use .whitespacesAndNewlines so a trailing newline still maps to the
+        // category rather than falling through to "".
+        XCTAssertEqual(StudyPlanOverviewView.formatCategory("tactical_vision\n"), "Tactics")
+        XCTAssertEqual(StudyPlanOverviewView.formatCategory("\tpositional_play\n"), "Strategy")
+    }
+
     func testFormatFocusPrefersCategory() {
         let plan = decodePlan(#"{"plan_id":"p","anchor_category":"tactical_vision","theme":"king_safety"}"#)
         XCTAssertEqual(StudyPlanOverviewView.formatFocus(plan), "Tactics")
@@ -40,6 +48,20 @@ final class StudyPlanOverviewViewTests: XCTestCase {
     func testFormatFocusNeutralDefault() {
         let plan = decodePlan(#"{"plan_id":"p","theme":"generic"}"#)
         XCTAssertEqual(StudyPlanOverviewView.formatFocus(plan), "This week")
+    }
+
+    func testFormatFocusDegenerateThemeFallsBackToNeutral() {
+        // A theme that collapses to "" after the underscore split must not
+        // render a blank title — it falls through to the neutral default.
+        let plan = decodePlan(#"{"plan_id":"p","theme":"_"}"#)
+        XCTAssertEqual(StudyPlanOverviewView.formatFocus(plan), "This week")
+    }
+
+    func testFormatFocusTrimsThemeNewline() {
+        // A trailing newline on the theme tag must be trimmed before casing,
+        // otherwise the title leaks a trailing newline ("King safety\n").
+        let plan = decodePlan(#"{"plan_id":"p","theme":"king_safety\n"}"#)
+        XCTAssertEqual(StudyPlanOverviewView.formatFocus(plan), "King safety")
     }
 
     func testDayLabel() {
@@ -83,5 +105,11 @@ final class StudyPlanOverviewViewTests: XCTestCase {
             decodeDay(#"{"day_offset":7,"completed":true}"#),
         ]
         XCTAssertEqual(StudyPlanOverviewView.formatProgress(done, 3), "Week complete")
+    }
+
+    func testCtaTitle() {
+        XCTAssertEqual(StudyPlanOverviewView.ctaTitle(1), "Start day 1")
+        XCTAssertEqual(StudyPlanOverviewView.ctaTitle(2), "Start day 2")
+        XCTAssertEqual(StudyPlanOverviewView.ctaTitle(3), "Start day 3")
     }
 }

@@ -15,16 +15,23 @@ import SwiftUI
 /// the Close toolbar item).
 struct StudyPlanOverviewView: View {
     @State private var plan: TodayPlan
-    @State private var showDrill = false
+    @State private var activeDrill: DrillPosition?
     private let token: () -> String?
     private let client: StudyPlanClient
+    /// Pushes the freshly-advanced plan back to Home's drill view-model so the
+    /// "Today's drill" card reflects the solve immediately — without a second
+    /// /coach/plan/today round-trip, and with no race between that re-poll and
+    /// the in-flight advance.  `@MainActor` because it mutates the view-model.
+    private let onAdvance: @MainActor (TodayPlan) -> Void
 
     init(plan: TodayPlan,
          token: @escaping () -> String?,
-         client: StudyPlanClient = HTTPStudyPlanClient(delegate: PinningURLSessionDelegate())) {
+         client: StudyPlanClient = HTTPStudyPlanClient(delegate: PinningURLSessionDelegate()),
+         onAdvance: @escaping @MainActor (TodayPlan) -> Void = { _ in }) {
         _plan = State(initialValue: plan)
         self.token = token
         self.client = client
+        self.onAdvance = onAdvance
     }
 
     var body: some View {
@@ -47,8 +54,8 @@ struct StudyPlanOverviewView: View {
 
                     daysList
 
-                    if plan.todayPuzzle != nil {
-                        AtriumPrimaryButton(title: ctaTitle) { showDrill = true }
+                    if let puzzle = plan.todayPuzzle {
+                        AtriumPrimaryButton(title: Self.ctaTitle(puzzle.dayNumber)) { startDrill() }
                             .padding(.top, AtriumSpacing.space8)
                     }
                 }
@@ -61,19 +68,17 @@ struct StudyPlanOverviewView: View {
         .toolbarBackground(AtriumColors.bgBase, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .fullScreenCover(isPresented: $showDrill) {
-            if let fen = plan.todayPuzzle?.fen, !fen.isEmpty {
-                NavigationStack {
-                    MistakeReplayView(positions: [fen], token: token, onSolved: { advanceCurrentDay() })
-                        .toolbar {
-                            ToolbarItem(placement: .navigationBarLeading) {
-                                Button("Close") { showDrill = false }
-                                    .foregroundStyle(AtriumColors.muted)
-                            }
+        .fullScreenCover(item: $activeDrill) { drill in
+            NavigationStack {
+                MistakeReplayView(positions: [drill.fen], token: token, onSolved: { advanceCurrentDay() })
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button("Close") { activeDrill = nil }
+                                .foregroundStyle(AtriumColors.muted)
                         }
-                }
-                .tint(AtriumColors.accentCyan)
+                    }
             }
+            .tint(AtriumColors.accentCyan)
         }
     }
 
@@ -104,14 +109,21 @@ struct StudyPlanOverviewView: View {
         }
     }
 
-    private var ctaTitle: String {
-        guard let puzzle = plan.todayPuzzle else { return "Start" }
-        return "Start day \(puzzle.dayNumber)"
+    /// Present the drill for the currently-due puzzle by capturing its FEN
+    /// as a stable item.  Presenting by *item* (not a `Bool` + a live
+    /// `plan.todayPuzzle` read) keeps the drill alive when `advanceCurrentDay()`
+    /// later nils out `todayPuzzle` mid-solve.  A missing/empty FEN is a no-op
+    /// rather than a blank cover.
+    private func startDrill() {
+        guard let fen = plan.todayPuzzle?.fen, !fen.isEmpty else { return }
+        activeDrill = DrillPosition(fen: fen)
     }
 
     /// Advance the plan after a verified-correct solve.  Best-effort: if
     /// the call fails the day resurfaces on the next /coach/plan/today
     /// fetch (the endpoint is idempotent), so we don't surface an error.
+    /// On success it also pushes the refreshed plan to Home via `onAdvance`,
+    /// so the card updates without a re-poll that could race this advance.
     private func advanceCurrentDay() {
         guard let day = plan.todayPuzzle?.dayOffset, let bearer = token(), !plan.planId.isEmpty
         else { return }
@@ -119,6 +131,7 @@ struct StudyPlanOverviewView: View {
             if case let .success(updated) =
                 await client.complete(planId: plan.planId, dayOffset: day, token: bearer) {
                 plan = updated
+                await onAdvance(updated)
             }
         }
     }
@@ -129,7 +142,7 @@ struct StudyPlanOverviewView: View {
     /// values) to a friendly focus noun.  Returns "" for nil / generic /
     /// unknown so the caller can fall back to the day-0 theme.
     static func formatCategory(_ category: String?) -> String {
-        switch category?.trimmingCharacters(in: .whitespaces).lowercased() {
+        switch category?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "tactical_vision": return "Tactics"
         case "endgame_technique": return "Endgames"
         case "opening_preparation": return "Openings"
@@ -143,12 +156,16 @@ struct StudyPlanOverviewView: View {
     static func formatFocus(_ plan: TodayPlan) -> String {
         let byCategory = formatCategory(plan.anchorCategory)
         if !byCategory.isEmpty { return byCategory }
-        let theme = plan.theme.trimmingCharacters(in: .whitespaces).lowercased()
+        let theme = plan.theme.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if !theme.isEmpty, theme != "generic" {
             // Sentence-case (first word only), matching Android's
             // prettyTheme: "king_safety" → "King safety".
             let spaced = theme.split(separator: "_").joined(separator: " ")
-            return spaced.prefix(1).uppercased() + spaced.dropFirst()
+            let pretty = spaced.prefix(1).uppercased() + spaced.dropFirst()
+            // Enforce the never-blank contract: a degenerate all-underscore
+            // theme collapses to "" after the split, so fall through to the
+            // neutral default rather than render an empty title.
+            if !pretty.isEmpty { return pretty }
         }
         return "This week"
     }
@@ -156,7 +173,7 @@ struct StudyPlanOverviewView: View {
     /// Row label: "Day N · Replay your mistake" (day-0 original) or
     /// "Day N · Practice" (library days).
     static func dayLabel(_ day: PlanDay) -> String {
-        let kind = day.sourceType.trimmingCharacters(in: .whitespaces).lowercased() == "original"
+        let kind = day.sourceType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "original"
             ? "Replay your mistake" : "Practice"
         return "Day \(day.dayNumber) · \(kind)"
     }
@@ -181,4 +198,18 @@ struct StudyPlanOverviewView: View {
         if totalDays > 0, completed >= totalDays { return "Week complete" }
         return "Day \(completed + 1) of \(totalDays)"
     }
+
+    /// Primary CTA label for the currently-due day.  Mirrors Android's
+    /// formatCtaLabel ("Start day 2").
+    static func ctaTitle(_ dayNumber: Int) -> String { "Start day \(dayNumber)" }
+}
+
+/// Identifiable FEN snapshot that drives the drill cover.  The cover is
+/// presented by *item* rather than a `Bool` + a live `plan.todayPuzzle` read,
+/// so that `advanceCurrentDay()` mutating `plan` to a nil `todayPuzzle`
+/// mid-solve cannot collapse the cover's content and strand the user on a
+/// blank, undismissable full-screen cover.
+private struct DrillPosition: Identifiable {
+    let id = UUID()
+    let fen: String
 }
