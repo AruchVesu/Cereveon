@@ -1816,14 +1816,16 @@ class TestCompletePuzzleEndpoint:
         )
 
     def test_marks_puzzle_done(self, db_session, player, game_event):
-        """COMPLETE_MARKS_PUZZLE_DONE — completing day-0 sets completed_at and
-        drops it from today_puzzle while the plan stays active."""
+        """COMPLETE_MARKS_PUZZLE_DONE — completing day-0 sets completed_at,
+        keeps the plan active, and (sequential pacing) immediately
+        surfaces day-3 as the next due puzzle."""
         plan = self._make_plan(db_session, player, game_event)
 
         result = _call_complete(player, db_session, plan.id, 0)
 
-        # Day-0 done; days 3/7 not due yet → no puzzle currently due.
-        assert result.today_puzzle is None
+        # Day-0 done; sequential pacing unlocks day-3 right away (no wait).
+        assert result.today_puzzle is not None
+        assert result.today_puzzle.day_offset == 3
         assert result.status == STATUS_ACTIVE
         day0 = next(d for d in result.days if d.day_offset == 0)
         assert day0.completed is True
