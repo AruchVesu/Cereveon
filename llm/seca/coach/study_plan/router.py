@@ -169,25 +169,35 @@ class TodayPlanResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _serialize_plan(plan: MistakeStudyPlan, now: datetime) -> TodayPlanResponse:
+def _serialize_plan(plan: MistakeStudyPlan) -> TodayPlanResponse:
     """Build the wire response from a plan + its puzzles.
 
     Shared by ``GET /coach/plan/today`` and
     ``POST /coach/plan/puzzle/complete`` so both surfaces compute the
     ``today_puzzle`` / ``days`` view identically.  Reads only the
-    in-session ``plan.puzzles`` collection (no extra query) — the
-    caller has already loaded the plan.
+    in-session ``plan.puzzles`` collection (no extra query).
 
-    ``today_puzzle`` is the lowest-``day_offset`` puzzle that is due
-    (``due_at <= now``) AND incomplete; ``None`` when nothing is
-    currently due (every due day solved, or the next day hasn't
-    unlocked yet).
+    Pacing is SEQUENTIAL and self-paced — NOT calendar-gated.  A day is
+    ``is_due`` when it is the FIRST incomplete day (every earlier
+    ``day_offset`` is already solved); the next day unlocks the instant
+    the previous one is solved, with no 3- / 7-day wait, and exactly one
+    day is ever ``is_due`` at a time.  ``today_puzzle`` is that
+    first-incomplete day, or ``None`` once the whole plan is solved.
+    ``due_at`` is still surfaced for record/ordering but no longer gates
+    anything (it was the old calendar wait users found frustrating).
     """
     puzzles = sorted(plan.puzzles, key=lambda p: p.day_offset)
 
     today_puzzle_field: TodayPuzzleResponse | None = None
+    days: list[PlanDayResponse] = []
+    due_assigned = False
     for puzzle in puzzles:
-        if puzzle.completed_at is None and puzzle.due_at <= now:
+        completed = puzzle.completed_at is not None
+        # First incomplete day is the one to do now; later incomplete
+        # days stay locked until their turn (sequential unlock).
+        is_due = (not completed) and (not due_assigned)
+        if is_due:
+            due_assigned = True
             today_puzzle_field = TodayPuzzleResponse(
                 day_offset=puzzle.day_offset,
                 fen=puzzle.fen,
@@ -195,18 +205,15 @@ def _serialize_plan(plan: MistakeStudyPlan, now: datetime) -> TodayPlanResponse:
                 source_type=puzzle.source_type,
                 due_at=puzzle.due_at.isoformat(),
             )
-            break
-
-    days = [
-        PlanDayResponse(
-            day_offset=puzzle.day_offset,
-            due_at=puzzle.due_at.isoformat(),
-            completed=puzzle.completed_at is not None,
-            is_due=puzzle.completed_at is None and puzzle.due_at <= now,
-            source_type=puzzle.source_type,
+        days.append(
+            PlanDayResponse(
+                day_offset=puzzle.day_offset,
+                due_at=puzzle.due_at.isoformat(),
+                completed=completed,
+                is_due=is_due,
+                source_type=puzzle.source_type,
+            )
         )
-        for puzzle in puzzles
-    ]
 
     return TodayPlanResponse(
         plan_id=plan.id,
@@ -238,9 +245,9 @@ def get_today_plan(
     ---------
     * Most recent ``MistakeStudyPlan`` for the authenticated player
       with ``status == STATUS_ACTIVE``, ordered by ``created_at DESC``.
-    * The puzzle whose ``due_at <= now()`` AND ``completed_at IS NULL``,
-      with the lowest ``day_offset`` (so day-0 surfaces before day-3,
-      day-3 before day-7).
+    * ``today_puzzle`` is the FIRST incomplete day (sequential pacing —
+      day-0 before day-3 before day-7; the next unlocks on solving the
+      previous, no calendar wait).
 
     Response
     --------
@@ -248,8 +255,8 @@ def get_today_plan(
       plan exists.
     * ``200`` with body ``null`` when no active plan exists (no
       qualifying game has landed yet, or every plan is completed).
-    * ``200`` with ``today_puzzle: null`` when an active plan exists
-      but no puzzle is currently due.
+    * ``200`` with ``today_puzzle: null`` only when every day is solved
+      (the plan is about to flip to ``completed``).
 
     No 4xx beyond the auth path (``get_current_player`` returns 401
     on missing/invalid token).
@@ -266,7 +273,7 @@ def get_today_plan(
     if plan is None:
         return None
 
-    return _serialize_plan(plan, datetime.utcnow())
+    return _serialize_plan(plan)
 
 
 # ---------------------------------------------------------------------------
@@ -355,4 +362,4 @@ def complete_puzzle(
     db.commit()
     db.refresh(plan)
 
-    return _serialize_plan(plan, now)
+    return _serialize_plan(plan)

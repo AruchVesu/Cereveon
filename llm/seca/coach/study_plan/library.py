@@ -307,24 +307,59 @@ def _pick_two_from(
     return (picks[0], picks[1])
 
 
+def _pick_two_with_backfill(
+    library: dict[str, list[LibraryPuzzle]],
+    on_theme: list[LibraryPuzzle],
+    skill_hint: str,
+    plan_id: str,
+) -> tuple[LibraryPuzzle | None, LibraryPuzzle | None]:
+    """Pick two DISTINCT day-3 / day-7 puzzles from an on-theme pool,
+    backfilling from the ``"generic"`` bucket so a thin pool still yields
+    two DIFFERENT puzzles.
+
+    Shared by ``pick_two_puzzles`` (single theme) and
+    ``pick_two_puzzles_for_category`` (aggregate weakness) so both paths
+    get the same anti-duplicate behaviour:
+
+    1. ``>= 2`` on-theme → two distinct on-theme picks.
+    2. exactly ``1`` on-theme → keep it on day 3, backfill day 7 from
+       ``"generic"``.  The curated corpus carries ~1 puzzle per theme, so
+       this is the COMMON case — it is the path whose missing backfill
+       made day-3 and day-7 identical for fresh / no-dominant-category
+       players.  Only repeats the single puzzle when ``generic`` is empty
+       too.
+    3. ``0`` on-theme → a generic pair (or ``(None, None)`` when generic
+       is empty too — caller leaves the days at the day-0 mistake).
+    """
+    if len(on_theme) >= 2:
+        return _pick_two_from(on_theme, skill_hint, plan_id)
+
+    generic = list(library.get("generic", []))
+    if len(on_theme) == 1:
+        backfill = _pick_one_excluding(generic, on_theme[0].id, skill_hint, plan_id)
+        if backfill is None:
+            return (on_theme[0], on_theme[0])
+        return (on_theme[0], backfill)
+
+    return _pick_two_from(generic, skill_hint, plan_id)
+
+
 def pick_two_puzzles(
     library: dict[str, list[LibraryPuzzle]],
     theme: str,
     skill_hint: str,
     plan_id: str,
 ) -> tuple[LibraryPuzzle | None, LibraryPuzzle | None]:
-    """Pick two distinct library puzzles for the day-3 / day-7 slots.
+    """Pick two distinct day-3 / day-7 puzzles for a single ``theme`` —
+    the fallback path used when the player has no aggregate dominant
+    category yet.
 
-    Single-theme selection (the pre-aggregate-anchor path, still used
-    when no dominant category is available): theme filter → skill
-    filter → deterministic shuffle.  Falls back to the ``"generic"``
-    bucket when the requested theme is empty.  See
-    ``pick_two_puzzles_for_category`` for the aggregate-weakness path.
+    Backfills from ``"generic"`` so a theme with only one curated puzzle
+    still yields two DIFFERENT days (see ``_pick_two_with_backfill``).
+    ``pick_two_puzzles_for_category`` is the aggregate-weakness path.
     """
-    candidates = library.get(theme, [])
-    if not candidates and theme != "generic":
-        candidates = library.get("generic", [])
-    return _pick_two_from(candidates, skill_hint, plan_id)
+    on_theme = list(library.get(theme, [])) if theme != "generic" else []
+    return _pick_two_with_backfill(library, on_theme, skill_hint, plan_id)
 
 
 def _candidates_for_category(
@@ -388,18 +423,7 @@ def pick_two_puzzles_for_category(
     — the caller leaves day-3 / day-7 at the day-0 mistake position.
     """
     on_theme = _candidates_for_category(library, category)
-    if len(on_theme) >= 2:
-        return _pick_two_from(on_theme, skill_hint, plan_id)
-
-    generic = list(library.get("generic", []))
-    if len(on_theme) == 1:
-        backfill = _pick_one_excluding(generic, on_theme[0].id, skill_hint, plan_id)
-        if backfill is None:
-            return (on_theme[0], on_theme[0])
-        return (on_theme[0], backfill)
-
-    # No on-theme puzzles for this category — generic pair (or None).
-    return _pick_two_from(generic, skill_hint, plan_id)
+    return _pick_two_with_backfill(library, on_theme, skill_hint, plan_id)
 
 
 def _filter_by_skill(candidates: list[LibraryPuzzle], skill_hint: str) -> list[LibraryPuzzle]:

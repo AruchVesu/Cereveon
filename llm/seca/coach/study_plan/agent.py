@@ -44,7 +44,7 @@ concurrent generator, the unique index promotes the race to an
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import IntegrityError
@@ -225,7 +225,14 @@ def generate_plan(
             fen=mistake_fen,
             expected_move_uci=played_uci,
             source_type=PUZZLE_SOURCE_ORIGINAL,
-            due_at=now + timedelta(days=day_offset),
+            # All puzzles are available from creation; the week is
+            # self-paced and SEQUENTIAL — the router unlocks the next day
+            # the moment the previous one is solved (no calendar wait).
+            # ``due_at`` is kept on the row for record/ordering, not as a
+            # time gate.  (Was ``now + timedelta(days=day_offset)``, which
+            # forced a 3- / 7-day wait users found frustrating for a small
+            # plan.)
+            due_at=now,
         )
         db.add(puzzle)
 
