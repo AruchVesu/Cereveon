@@ -79,6 +79,53 @@ THEME_VOCABULARY: frozenset[str] = frozenset(
 )
 
 
+# Deterministic aliases for natural theme tags the LLM keeps inventing
+# despite the verbatim-list instruction.  Observed in production
+# (2026-07-02): a centre-pawn-structure mistake got a perfect verdict
+# but an out-of-vocabulary tag, which collapsed to "generic" and served
+# the player unrelated filler puzzles.  Mapping a near-miss tag to the
+# closest real theme keeps the practice ON-topic; anything not listed
+# here still collapses to "generic".  This is classification
+# normalisation only — the verdict TEXT still passes every Mode-2 /
+# firewall gate unchanged.
+_THEME_ALIASES: dict[str, str] = {
+    # -> opening_principles
+    "pawn_structure": "opening_principles",
+    "center_control": "opening_principles",
+    "centre_control": "opening_principles",
+    "central_control": "opening_principles",
+    "development": "opening_principles",
+    "opening": "opening_principles",
+    "move_order": "opening_principles",
+    # -> king_safety
+    "exposed_king": "king_safety",
+    "king_exposure": "king_safety",
+    "unsafe_king": "king_safety",
+    "king_attack": "king_safety",
+    # -> hung_piece
+    "hanging_piece": "hung_piece",
+    "hung_pieces": "hung_piece",
+    "undefended_piece": "hung_piece",
+    "material_loss": "hung_piece",
+    # -> queen_safety
+    "early_queen": "queen_safety",
+    "queen_development": "queen_safety",
+    # -> fork
+    "double_attack": "fork",
+    "knight_fork": "fork",
+    # -> back_rank
+    "back_rank_weakness": "back_rank",
+    "back_rank_mate": "back_rank",
+    # -> tempo
+    "wasted_moves": "tempo",
+    "slow_play": "tempo",
+    "tempo_loss": "tempo",
+    # -> endgame_technique
+    "endgame": "endgame_technique",
+    "endgame_play": "endgame_technique",
+}
+
+
 # Maximum length (chars) of the verdict the validator pipeline will
 # accept.  60 words ≈ 360 chars; we cap at 500 to give the LLM some
 # slack but reject hard if it tries to write a paragraph.  Matches the
@@ -243,9 +290,29 @@ def _build_prompt(
         f"{esv_block}\n\n"
         f"The player chose UCI move: {played_uci}\n\n"
         "Your task — produce a strict JSON object with two fields:\n\n"
-        "  theme: ONE of the following tags (choose the one that best\n"
-        "         names the mistake category; if none fit, use 'generic'):\n"
+        "  theme: EXACTLY ONE tag copied VERBATIM from this list (any\n"
+        "         other string is invalid and will be discarded):\n"
         f"{themes_block}\n\n"
+        "         Mapping guide — name the LESSON, not the symptom:\n"
+        "         * centre control, pawn structure, development,\n"
+        "           premature flank play, move-order errors\n"
+        "             -> opening_principles\n"
+        "         * exposed king, weakened king shelter, walking into\n"
+        "           an attack, unsafe king in the middlegame\n"
+        "             -> king_safety\n"
+        "         * a piece left undefended or lost for nothing\n"
+        "             -> hung_piece\n"
+        "         * the queen developed early or trapped/harassed\n"
+        "             -> queen_safety\n"
+        "         * a double attack missed or allowed -> fork\n"
+        "         * a pin missed, allowed, or ignored -> pin\n"
+        "         * a weak or undefended back rank -> back_rank\n"
+        "         * slow or wasted moves, falling behind in the race\n"
+        "             -> tempo\n"
+        "         * conversion or defence of a simplified position\n"
+        "             -> endgame_technique\n"
+        "         Use 'generic' ONLY when none of the above lessons\n"
+        "         fits the mistake at all.\n\n"
         "  verdict: a CONCEPTUAL retrospective of <= 60 words explaining\n"
         "           WHAT WENT WRONG.  Hard constraints:\n"
         "           * Do NOT mention specific moves (no algebraic notation,\n"
@@ -324,16 +391,31 @@ def _parse_and_validate(  # pylint: disable=too-many-return-statements
         )
         return None
 
-    # Collapse out-of-vocab themes to "generic" — we don't reject the
-    # whole response over a theme typo because the verdict text itself
-    # may still be useful, and the downstream phase-3 library lookup
-    # treats "generic" as the catch-all bucket anyway.
+    # Normalise + alias out-of-vocab themes before giving up on them.
+    # Lowercase, trim, and fold separators so "Pawn Structure" /
+    # "pawn-structure" hit the alias table; anything still unknown
+    # collapses to "generic" — we don't reject the whole response over
+    # a theme typo because the verdict text itself may still be useful,
+    # and the downstream library lookup treats "generic" as the
+    # catch-all bucket anyway.
     if theme not in THEME_VOCABULARY:
-        logger.info(
-            "verdict: out-of-vocabulary theme %r; collapsing to 'generic'",
-            theme,
-        )
-        theme = "generic"
+        normalised = theme.lower().replace("-", "_").replace(" ", "_").strip("_")
+        aliased = _THEME_ALIASES.get(normalised)
+        if aliased is None and normalised in THEME_VOCABULARY:
+            aliased = normalised
+        if aliased is not None:
+            logger.info(
+                "verdict: aliased out-of-vocabulary theme %r -> %r",
+                theme,
+                aliased,
+            )
+            theme = aliased
+        else:
+            logger.info(
+                "verdict: out-of-vocabulary theme %r; collapsing to 'generic'",
+                theme,
+            )
+            theme = "generic"
 
     # Mode-2 lexical filter — same gate ``/explain`` and ``/chat`` run.
     # AssertionError is the documented failure type (mode_2_negative
