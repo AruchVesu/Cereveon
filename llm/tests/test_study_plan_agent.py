@@ -735,12 +735,32 @@ class TestPuzzleLibraryLoad:
 
     def test_loads_shipped_corpus(self):
         """LIBRARY_LOAD_SHIPPED_CORPUS — the loader succeeds against
-        the repo's seed corpus."""
+        the repo's seed corpus (and thereby validates every shipped
+        FEN + expected_move_uci for legality)."""
         from llm.seca.coach.study_plan.library import load_library
 
         lib = load_library()
         total = sum(len(v) for v in lib.values())
         assert total >= 1
+
+    def test_named_themes_carry_two_puzzles(self):
+        """LIBRARY_NAMED_THEMES_HAVE_TWO — every NAMED theme (all of
+        THEME_VOCABULARY except the catch-all ``generic`` and the
+        intentionally-empty ``tempo``) ships >= 2 puzzles, so the day-7
+        slot is filled ON-THEME rather than backfilled from generic.
+        Regresses if a future edit thins a theme back to one."""
+        from llm.seca.coach.study_plan.library import load_library
+        from llm.seca.coach.study_plan.verdict import THEME_VOCABULARY
+
+        lib = load_library()
+        thin = {
+            theme: len(lib.get(theme, []))
+            for theme in THEME_VOCABULARY
+            if theme not in {"generic", "tempo"} and len(lib.get(theme, [])) < 2
+        }
+        assert not thin, (
+            f"named themes with < 2 puzzles (day-7 would fall back to generic): {thin}"
+        )
 
     def test_rejects_unknown_theme(self, tmp_path, monkeypatch):
         from llm.seca.coach.study_plan import library as lib_module

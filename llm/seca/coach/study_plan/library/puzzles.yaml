@@ -86,3 +86,65 @@
   fen: "4k3/8/4n3/8/8/4R3/8/4K3 w - - 0 1"
   expected_move_uci: "e3e6"
   description: "Open-file rook capture. The black knight on e6 sits on the same file as White's rook on e3; nothing blocks the attack and the knight has no defender. The rook captures with check (the king on e8 is now attacked along the e-file)."
+
+# --- Second puzzle per named theme (day-7 stays on-theme) ---------------------
+# Added so a thin theme no longer forces the day-7 slot onto a generic backfill:
+# every named theme below now carries two entries.  Tempo stays intentionally
+# empty (positional_play draws from king-safety).  Each expected_move_uci is a
+# forcing / clearly-best move so /training/verify-replay accepts it.
+
+- id: ks_002
+  theme: king_safety
+  difficulty: beginner
+  fen: "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQK2R w KQkq - 2 5"
+  expected_move_uci: "e1g1"
+  description: "Giuoco Piano, move 5 for White. Both sides are developed but the king still sits in the centre. Castle kingside to tuck it behind the pawn shield and connect the rooks — the fundamental king-safety move."
+
+- id: fk_002
+  theme: fork
+  difficulty: intermediate
+  fen: "q3k3/8/8/1N6/8/8/8/4K3 w - - 0 1"
+  expected_move_uci: "b5c7"
+  description: "Knight fork winning the queen. The knight leaps to c7, checking the king on e8 and simultaneously attacking the queen on a8. The king must step out of check; the knight takes the queen next move."
+
+- id: pn_002
+  theme: pin
+  difficulty: intermediate
+  fen: "R4q1k/8/8/8/8/8/8/6K1 w - - 0 1"
+  expected_move_uci: "a8f8"
+  description: "Back-rank pin. The black queen on f8 is pinned to the king on h8 along the 8th rank by the rook on a8 — it cannot leave the rank without exposing the king. The rook captures it for free; the king on h8 is too far to recapture on f8."
+
+- id: br_002
+  theme: back_rank
+  difficulty: intermediate
+  fen: "6k1/5ppp/8/8/8/8/8/R6K w - - 0 1"
+  expected_move_uci: "a1a8"
+  description: "Back-rank mate. The black king on g8 is boxed in by its own f7/g7/h7 pawns. The rook swings to a8 and delivers checkmate along the empty 8th rank."
+
+- id: hp_002
+  theme: hung_piece
+  difficulty: beginner
+  fen: "4k3/8/8/8/b7/8/8/R3K3 w - - 0 1"
+  expected_move_uci: "a1a4"
+  description: "Hanging bishop. The black bishop on a4 has wandered off with no defender; White's rook on a1 slides up the open a-file and wins it for nothing."
+
+- id: qs_002
+  theme: queen_safety
+  difficulty: beginner
+  fen: "4k3/8/8/8/7q/6P1/8/4K3 w - - 0 1"
+  expected_move_uci: "g3h4"
+  description: "Early-queen punishment. The black queen raided to h4 with no support; the modest g3 pawn simply captures it. Bringing the queen out early exposes it to exactly this kind of pawn hit."
+
+- id: op_002
+  theme: opening_principles
+  difficulty: beginner
+  fen: "rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2"
+  expected_move_uci: "c2c4"
+  description: "Queen's Gambit, move 2 for White. Strike at the centre with c4, challenging Black's d5 pawn and opening lines for the pieces — a core opening principle: contest the centre before the flanks."
+
+- id: et_002
+  theme: endgame_technique
+  difficulty: intermediate
+  fen: "7k/8/6K1/8/8/8/8/R7 w - - 0 1"
+  expected_move_uci: "a1a8"
+  description: "King-and-rook vs lone king, mate in 1. The white king on g6 covers g7, g8 and h7; the rook drops to a8 and delivers checkmate along the 8th rank. The foundational rook-endgame mating pattern."
