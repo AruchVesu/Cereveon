@@ -441,7 +441,19 @@ class ChessBoardView @JvmOverloads constructor(
         return !inCheck
     }
 
-    private fun isLegalGeometry(p: Char, sr: Int, sc: Int, tr: Int, tc: Int): Boolean {
+    /**
+     * [allowCastle] gates the king's 2-square castle branch.  Attack tests
+     * ([isSquareAttacked]) MUST pass false: castling is not an attacking
+     * move, and — critically — evaluating it from an attack probe recurses
+     * (isLegalGeometry → canCastle → isInCheck → isSquareAttacked →
+     * isLegalGeometry …).  With two kings on the same rank two files apart
+     * (reachable in the drill boards, which self-validate moves) the two
+     * kings' castle branches probed each other forever → StackOverflowError
+     * (2026-07-02 on-device crash solving a study-plan puzzle).
+     */
+    private fun isLegalGeometry(
+        p: Char, sr: Int, sc: Int, tr: Int, tc: Int, allowCastle: Boolean = true,
+    ): Boolean {
         if (sr == tr && sc == tc) return false
         val target = board[tr][tc]
         if (target != '.' && target.isUpperCase() == p.isUpperCase()) return false
@@ -452,7 +464,8 @@ class ChessBoardView @JvmOverloads constructor(
             'n' -> (dr == 2 && dc == 1) || (dr == 1 && dc == 2)
             'b' -> (dr == dc) && pathClear(sr, sc, tr, tc)
             'q' -> (dr == dc || sr == tr || sc == tc) && pathClear(sr, sc, tr, tc)
-            'k' -> (dr <= 1 && dc <= 1) || (dr == 0 && dc == 2 && canCastle(p, sr, sc, tr, tc))
+            'k' -> (dr <= 1 && dc <= 1) ||
+                (allowCastle && dr == 0 && dc == 2 && canCastle(p, sr, sc, tr, tc))
             else -> false
         }
     }
@@ -474,9 +487,12 @@ class ChessBoardView @JvmOverloads constructor(
 
     private fun canCastle(k: Char, sr: Int, sc: Int, tr: Int, tc: Int): Boolean {
         val white = k.isUpperCase()
-        if (isInCheck(white)) return false
+        // Cheap flag checks BEFORE the isInCheck board scan — defense in
+        // depth against re-entering attack probes (see isLegalGeometry's
+        // allowCastle note) and avoids the scan when rights are gone anyway.
         if (white && whiteKingMoved) return false
         if (!white && blackKingMoved) return false
+        if (isInCheck(white)) return false
         val rookCol = if (tc > sc) 7 else 0
         if (white && ((tc > sc && whiteRookHMoved) || (tc < sc && whiteRookAMoved))) return false
         if (!white && ((tc > sc && blackRookHMoved) || (tc < sc && blackRookAMoved))) return false
@@ -499,7 +515,9 @@ class ChessBoardView @JvmOverloads constructor(
             for (col in 0..7) {
                 val p = board[row][col]
                 if (p != '.' && p.isUpperCase() == byWhite) {
-                    if (isLegalGeometry(p, row, col, r, c)) return true
+                    // allowCastle=false: castling can never deliver an attack,
+                    // and probing it from here is the recursion that crashed.
+                    if (isLegalGeometry(p, row, col, r, c, allowCastle = false)) return true
                 }
             }
         }
