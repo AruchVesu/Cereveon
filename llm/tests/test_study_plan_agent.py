@@ -622,6 +622,79 @@ class TestVerdictBranchCoverage:
         )
         assert result == ("generic", "")
 
+    def test_out_of_vocab_alias_maps_to_real_theme(self):
+        """VERDICT_ALIAS_MAPS — a natural out-of-vocab tag the LLM keeps
+        inventing ('pawn_structure') maps to the closest real theme
+        instead of collapsing to generic.  Regression for the 2026-07-02
+        production case: perfect centre-pawn verdict, generic puzzles."""
+        from llm.seca.coach.study_plan.verdict import generate_verdict
+
+        llm = _ScriptedLLM(
+            [f'{{"theme": "pawn_structure", "verdict": "{self._CLEAN_VERDICT}"}}']
+        )
+        theme, verdict = generate_verdict(
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            player_skill_hint="intermediate",
+            llm=llm,
+        )
+        assert theme == "opening_principles"
+        assert verdict == self._CLEAN_VERDICT
+
+    def test_alias_normalises_case_and_separators(self):
+        """VERDICT_ALIAS_NORMALISES — 'Centre Control' (spaces, caps)
+        normalises to centre_control and aliases to opening_principles;
+        a case-variant of a REAL theme ('King Safety') also survives."""
+        from llm.seca.coach.study_plan.verdict import generate_verdict
+
+        llm = _ScriptedLLM(
+            [f'{{"theme": "Centre Control", "verdict": "{self._CLEAN_VERDICT}"}}']
+        )
+        theme, _ = generate_verdict(
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            player_skill_hint="intermediate",
+            llm=llm,
+        )
+        assert theme == "opening_principles"
+
+        llm2 = _ScriptedLLM(
+            [f'{{"theme": "King Safety", "verdict": "{self._CLEAN_VERDICT}"}}']
+        )
+        theme2, _ = generate_verdict(
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            player_skill_hint="intermediate",
+            llm=llm2,
+        )
+        assert theme2 == "king_safety"
+
+    def test_unknown_theme_still_collapses_to_generic(self):
+        """VERDICT_UNKNOWN_STILL_GENERIC — junk with no alias keeps the
+        documented collapse-to-generic behaviour."""
+        from llm.seca.coach.study_plan.verdict import generate_verdict
+
+        llm = _ScriptedLLM(
+            [f'{{"theme": "quantum_flux", "verdict": "{self._CLEAN_VERDICT}"}}']
+        )
+        theme, verdict = generate_verdict(
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            player_skill_hint="intermediate",
+            llm=llm,
+        )
+        assert theme == "generic"
+        assert verdict == self._CLEAN_VERDICT
+
+    def test_alias_targets_are_all_real_themes(self):
+        """VERDICT_ALIAS_TARGETS_VALID — every alias VALUE is in
+        THEME_VOCABULARY, so a typo in the alias table can't invent a
+        theme the puzzle library doesn't know."""
+        from llm.seca.coach.study_plan.verdict import _THEME_ALIASES, THEME_VOCABULARY
+
+        bad = {k: v for k, v in _THEME_ALIASES.items() if v not in THEME_VOCABULARY}
+        assert not bad, f"alias targets outside THEME_VOCABULARY: {bad}"
+
     def test_empty_verdict_falls_back(self):
         """VERDICT_EMPTY_AFTER_STRIP — LLM returns valid JSON with
         verdict="" (or whitespace only).  After ``.strip()`` it's
