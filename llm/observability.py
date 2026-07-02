@@ -81,12 +81,14 @@ http_request_duration_seconds = Histogram(
 # ---------------------------------------------------------------------------
 
 # ``result`` is one of: success, invalid_credentials, rate_limited,
-# server_error.  ``register`` and ``login`` are separate counters since
-# their failure modes diverge (register can fail on duplicate email,
+# server_error — plus, for POST /auth/lichess (which shares this counter):
+# lichess_success, lichess_oauth_failed, lichess_rate_limited,
+# lichess_upstream_error.  ``register`` and ``login`` are separate counters
+# since their failure modes diverge (register can fail on duplicate email,
 # login can't).
 auth_login_total = Counter(
     "chesscoach_auth_login_total",
-    "Login attempts on /auth/login, labeled by outcome.",
+    "Login attempts on /auth/login and /auth/lichess, labeled by outcome.",
     labelnames=("result",),
 )
 

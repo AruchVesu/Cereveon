@@ -46,6 +46,8 @@ secret — see `docs/DEPLOYMENT.md`).
 | A3 | **Player-with-stolen-token** | Replays a captured JWT or `X-Api-Key`. Capability identical to A1 until rotation. |
 | A4 | **Compromised LLM output** | The managed DeepSeek API is treated as untrusted by the architecture; hostile output is a normal operating condition, not an attack. The trust boundary holds for any LLM provider — only the validator gates determine what reaches the client. |
 | A5 | **Operator misconfiguration** | A deploy that flips `SECA_ENV` or omits a required secret. Not malicious, but the failure mode is identical to a successful bypass. |
+| A6 | **Compromised identity provider (Lichess)** | Controls what `lichess.org` returns to the OAuth exchange / account fetch. Treated like A4: nothing it returns is trusted beyond fail-closed-validated identity fields. |
+| A7 | **Malicious co-installed app** | Runs on the player's device alongside Cereveon; can register the same custom URL scheme and fire forged VIEW intents, but cannot read Cereveon's app-private storage. |
 
 ## 3. Threats and mitigations
 
@@ -307,6 +309,63 @@ those conditions the guard does not fire — the deploy looks like a
 local-dev box on its CORS surface, and only the hostname / DNS makes
 it production. Mitigation: pre-deploy linting + the document trail
 (THIS file, `OPERATIONS.md`, `DEPLOYMENT.md`).
+
+### T7 — "Sign in with Lichess" OAuth abuse (A2, A6, A7)
+
+`POST /auth/lichess` (2026-07-02, PR #326) adds an identity path that is
+neither a password nor an `X-Api-Key`: the Android app runs the Lichess
+authorization-code + PKCE flow in the system browser and forwards the
+one-time `code` + `code_verifier`; the server exchanges them and
+find-or-creates the player on `players.lichess_user_id`. Threats: forged
+or replayed authorization codes, hostile identity-provider responses,
+identity squatting via the synthetic account namespace, custom-scheme
+redirect hijack, and dangling upstream tokens.
+
+Mitigation:
+
+- **Server-side code exchange.** The device never holds a Lichess access
+  token, and the endpoint accepts no tokens — only codes. The exchange
+  always sends the pinned `client_id` / `redirect_uri`
+  (`llm/seca/lichess/client.py`), so a code issued to a different app's
+  redirect, or an access token minted for another OAuth client, cannot be
+  replayed into a Cereveon sign-in (RFC 6749 §4.1.3 binding).
+- **PKCE + state.** 64-byte SecureRandom verifier (S256), 32-byte `state`
+  checked against the locally persisted pending attempt; unsolicited or
+  stale redirects are silently dropped (`LoginActivity.handleLichessRedirect`).
+- **Fail-closed identity validation.** The account `id` must match the
+  Lichess username shape before it becomes a DB identity key; the display
+  `username` is normalised to the id when malformed; OAuth response
+  bodies are streamed with a 1 MiB cap so a compromised upstream cannot
+  OOM a worker (`fetch_account`, `_request_json_bounded`).
+- **Unsquattable namespace.** Lichess-created accounts get
+  `email = "lichess:<id>"` — no `@`, so `_validate_email_strict` makes it
+  unreachable from `/auth/register` and `/auth/login` — plus an unusable
+  random credential (`AuthService.login_with_lichess`).
+- **Shared session machinery.** The endpoint issues sessions through the
+  same `_issue_session` tail as password login (F-07 token-hash pinning,
+  session caps, sliding window), rate-limited 10/min, with non-oracle
+  error mapping (401/502/503).
+- **Token hygiene.** The Lichess token is revoked best-effort immediately
+  after the account fetch, on both the success and the
+  fetch-failed-after-exchange paths.
+
+Residual risk (accepted, documented — the §5 "new auth path" trigger for
+this section): **unregistered-public-client impersonation by A7.**
+Lichess accepts unregistered public clients (any `client_id`, no client
+secret, no redirect-URI registration), and our redirect is a custom URL
+scheme any installed app may claim. A malicious co-installed app can
+therefore run the ENTIRE flow itself — its own verifier, our `client_id`
+— present the genuine Lichess consent screen under Cereveon's name, catch
+the redirect on its own scheme registration, and submit the (code,
+verifier) pair to `POST /auth/lichess`, obtaining a Cereveon session for
+the victim's Lichess identity. No custom-scheme public-client design
+prevents this; it requires on-device malware plus the victim explicitly
+approving a genuine consent screen, and the prize is a Cereveon coaching
+profile (not the victim's Lichess account — we request no scopes). The
+migration that closes it is verified HTTPS App Links for the redirect
+(and registered client credentials if Lichess ever offers them). Revisit
+when the app stores anything more sensitive than coaching history or
+when Lichess ships client registration.
 
 ## 4. Cross-cutting controls
 

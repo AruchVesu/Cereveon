@@ -124,14 +124,20 @@ class LichessNotLinkedError(LichessImportError):
 # ---------------------------------------------------------------------------
 
 
-def link_account(db: DBSession, player: Player, lichess_username: str) -> dict:
+def link_account(
+    db: DBSession, player: Player, lichess_username: str, *, profile: dict | None = None
+) -> dict:
     """Attach a Lichess handle to the given player.
 
     Steps:
 
     1. Hit ``GET /api/user/{username}`` to confirm the handle exists
        (raises ``LichessUserNotFound`` if not) and to capture the
-       canonical lowercase id.
+       canonical lowercase id.  Skipped when the caller supplies a
+       pre-fetched ``profile`` — the OAuth sign-in path
+       (``POST /auth/lichess``) already holds the ``GET /api/account``
+       response, which is a superset of the public-profile shape, and
+       its identity is verified rather than self-asserted.
     2. Reject if that canonical id is already linked to a *different*
        player (raises ``LichessAlreadyLinkedError``, surfaced as 409
        by the router).
@@ -143,7 +149,8 @@ def link_account(db: DBSession, player: Player, lichess_username: str) -> dict:
 
     Returns a summary dict for the API response.
     """
-    profile = lichess_client.fetch_user_profile(lichess_username)
+    if profile is None:
+        profile = lichess_client.fetch_user_profile(lichess_username)
     canonical_id = str(profile.get("id") or "").strip()
     if not canonical_id:
         raise LichessImportError("profile response missing 'id' field")

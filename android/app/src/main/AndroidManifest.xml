@@ -20,6 +20,24 @@
             </intent-filter>
         </activity>
 
+        <!-- Lichess OAuth redirect trampoline: catches the custom-scheme
+             redirect from the system browser and forwards it to
+             LoginActivity (see LichessAuthRedirectActivity docs).  Must
+             be exported so the browser can deliver the VIEW intent. -->
+        <activity
+            android:name=".LichessAuthRedirectActivity"
+            android:excludeFromRecents="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="lichess-auth"
+                    android:scheme="ai.chesscoach.app" />
+            </intent-filter>
+        </activity>
+
         <activity
             android:name=".OnboardingWelcomeActivity"
             android:exported="false" />

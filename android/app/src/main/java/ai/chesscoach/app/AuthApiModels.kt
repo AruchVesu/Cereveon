@@ -87,6 +87,25 @@ data class RegisterRequest(
 )
 
 /**
+ * Request body for POST /auth/lichess — "Sign in with Lichess".
+ *
+ * [code] is the one-time OAuth authorization code from the Lichess
+ * redirect; [codeVerifier] is the PKCE verifier that [LichessOAuth]
+ * generated for this attempt.  The SERVER performs the code exchange
+ * (see `docs/API_CONTRACTS.md` §16a) so no Lichess token ever reaches
+ * the device.  The response is a [LoginResponse] superset — the extra
+ * `created` / `lichess_username` fields are ignored by the shared
+ * [ApiJson] config (`ignoreUnknownKeys`).
+ */
+@Serializable
+data class LichessLoginRequest(
+    val code: String,
+    @SerialName("code_verifier") val codeVerifier: String,
+    /** Device fingerprint forwarded to the backend session record. */
+    @SerialName("device_info") val deviceInfo: String = "",
+)
+
+/**
  * Request body for POST /auth/change-password.  Both fields are
  * length-bounded server-side (1000 char max).
  */
