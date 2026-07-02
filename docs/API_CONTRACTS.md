@@ -746,7 +746,8 @@ Superset of the §15/§16 shape — the Android client deserialises it as
   rejects it at §15/§16, so the namespace cannot be squatted;
   `test_auth_lichess.py::LI_10`) — and an unusable random password hash.
 - The Lichess access token is revoked (best-effort `DELETE /api/token`)
-  immediately after the account fetch.
+  immediately after the account fetch — including when the fetch itself
+  fails after a successful exchange, so no live token is left dangling.
 - Best-effort auto-link: when the player has no `/lichess` link yet, the
   game-import link (§27) + first-link calibration are created from the
   already-fetched account profile.  Link failure (including a cross-player

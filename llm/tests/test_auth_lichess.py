@@ -23,9 +23,12 @@ OA_02  Grant rejection (4xx from Lichess) → LichessOAuthError.
 OA_03  5xx → LichessUpstreamError; 429 → LichessRateLimited.
 OA_04  Malformed code / code_verifier rejected BEFORE any network call.
 OA_05  fetch_account validates the ``id`` shape fail-closed
-       (LichessParseError on traversal / control / oversize ids).
+       (LichessParseError on traversal / control / oversize ids); a
+       malformed display ``username`` is replaced by the canonical id.
 OA_06  fetch_account maps 401 → LichessOAuthError.
 OA_07  revoke_token never raises, even on transport failure.
+OA_08  Response bodies beyond the OAuth byte cap abort mid-stream with
+       LichessParseError (hostile-upstream OOM guard).
 
 LI_01  First sign-in creates a player: lichess_user_id set, synthetic
        ``lichess:<id>`` email, created=True, token + player_id returned.
@@ -43,11 +46,19 @@ LI_10  The synthetic email shape is rejected by the /auth/register email
 LI_11  Password login can never match a lichess-created account.
 LI_12  The issued token round-trips through get_player_by_session.
 LI_13  Sign-in succeeds even when auto-link raises (best-effort contract).
+
+Deliberately untested: the IntegrityError branch in
+AuthService.login_with_lichess (two concurrent FIRST sign-ins for the same
+Lichess id racing on the unique index → rollback + adopt the winner's row)
+needs a true multi-connection race to exercise; it was reviewed by
+inspection (2026-07-02 security review) and is guarded by the unique
+indexes on players.lichess_user_id and players.email.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 
 import pytest
@@ -153,26 +164,34 @@ def _sign_in(db, monkeypatch, account: dict | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Client layer — httpx fakes (POST/GET/DELETE variants)
+# Client layer — httpx fakes (the OAuth functions use httpx.Client.stream)
 # ---------------------------------------------------------------------------
 
 
-class _FakeResponse:
+class _FakeStreamedResponse:
+    """Emulates the response object yielded by ``httpx.Client.stream(...)``."""
+
     def __init__(self, status_code: int, body: object = None, headers: dict | None = None):
         self.status_code = status_code
-        self._body = body
         self.headers = headers or {}
+        if body is None:
+            self._raw = b""
+        elif isinstance(body, (bytes, bytearray)):
+            self._raw = bytes(body)
+        else:
+            self._raw = json.dumps(body).encode("utf-8")
 
-    def json(self):
-        if self._body is None:
-            raise ValueError("no JSON body")
-        return self._body
+    def iter_bytes(self):
+        # Chunked so the byte-cap accumulation loop is actually exercised.
+        chunk = 8192
+        for i in range(0, len(self._raw), chunk):
+            yield self._raw[i : i + chunk]
 
 
 class _FakeClientCM:
-    """Stand-in for ``httpx.Client(...)`` supporting get/post/delete."""
+    """Stand-in for ``httpx.Client(...)`` supporting the stream() shape."""
 
-    def __init__(self, response: _FakeResponse, captured: dict | None = None):
+    def __init__(self, response: _FakeStreamedResponse, captured: dict | None = None):
         self._response = response
         self._captured = captured if captured is not None else {}
 
@@ -182,20 +201,21 @@ class _FakeClientCM:
     def __exit__(self, *a):
         return False
 
-    def get(self, url, headers=None):
-        self._captured.update({"method": "GET", "url": url, "headers": headers})
-        return self._response
+    def stream(self, method, url, headers=None, data=None):
+        self._captured.update({"method": method, "url": url, "headers": headers, "data": data})
+        response = self._response
 
-    def post(self, url, headers=None, data=None):
-        self._captured.update({"method": "POST", "url": url, "headers": headers, "data": data})
-        return self._response
+        class _StreamCM:
+            def __enter__(self):
+                return response
 
-    def delete(self, url, headers=None):
-        self._captured.update({"method": "DELETE", "url": url, "headers": headers})
-        return self._response
+            def __exit__(self, *a):
+                return False
+
+        return _StreamCM()
 
 
-def _patch_httpx(monkeypatch, response: _FakeResponse) -> dict:
+def _patch_httpx(monkeypatch, response: _FakeStreamedResponse) -> dict:
     captured: dict = {}
     monkeypatch.setattr(
         lichess_client.httpx, "Client", lambda **kw: _FakeClientCM(response, captured)
@@ -206,7 +226,8 @@ def _patch_httpx(monkeypatch, response: _FakeResponse) -> dict:
 class TestOAuthClient:
     def test_oa_01_exchange_posts_pkce_grant_and_returns_token(self, monkeypatch):
         captured = _patch_httpx(
-            monkeypatch, _FakeResponse(200, {"access_token": "lio_abc123", "token_type": "Bearer"})
+            monkeypatch,
+            _FakeStreamedResponse(200, {"access_token": "lio_abc123", "token_type": "Bearer"}),
         )
         token = lichess_client.exchange_authorization_code(VALID_CODE, VALID_VERIFIER)
         assert token == "lio_abc123"
@@ -223,15 +244,15 @@ class TestOAuthClient:
         assert "Authorization" not in (captured["headers"] or {})
 
     def test_oa_02_grant_rejection_raises_oauth_error(self, monkeypatch):
-        _patch_httpx(monkeypatch, _FakeResponse(400, {"error": "invalid_grant"}))
+        _patch_httpx(monkeypatch, _FakeStreamedResponse(400, {"error": "invalid_grant"}))
         with pytest.raises(lichess_client.LichessOAuthError):
             lichess_client.exchange_authorization_code(VALID_CODE, VALID_VERIFIER)
 
     def test_oa_03_upstream_and_rate_limit_map_to_typed_errors(self, monkeypatch):
-        _patch_httpx(monkeypatch, _FakeResponse(502))
+        _patch_httpx(monkeypatch, _FakeStreamedResponse(502))
         with pytest.raises(lichess_client.LichessUpstreamError):
             lichess_client.exchange_authorization_code(VALID_CODE, VALID_VERIFIER)
-        _patch_httpx(monkeypatch, _FakeResponse(429, headers={"Retry-After": "13"}))
+        _patch_httpx(monkeypatch, _FakeStreamedResponse(429, headers={"Retry-After": "13"}))
         with pytest.raises(lichess_client.LichessRateLimited) as excinfo:
             lichess_client.exchange_authorization_code(VALID_CODE, VALID_VERIFIER)
         assert excinfo.value.retry_after == 13
@@ -256,19 +277,32 @@ class TestOAuthClient:
     def test_oa_05_fetch_account_validates_id_fail_closed(self, monkeypatch):
         for hostile_id in ["../../admin", "a", "x" * 31, "", None, 42, "evil.com?"]:
             _patch_httpx(
-                monkeypatch, _FakeResponse(200, {"id": hostile_id, "username": "whatever"})
+                monkeypatch, _FakeStreamedResponse(200, {"id": hostile_id, "username": "whatever"})
             )
             with pytest.raises(lichess_client.LichessParseError):
                 lichess_client.fetch_account("lio_sometoken")
 
     def test_oa_05b_fetch_account_happy_path_sends_user_token(self, monkeypatch):
-        captured = _patch_httpx(monkeypatch, _FakeResponse(200, dict(ACCOUNT_JSON)))
+        captured = _patch_httpx(monkeypatch, _FakeStreamedResponse(200, dict(ACCOUNT_JSON)))
         account = lichess_client.fetch_account("lio_sometoken")
         assert account["id"] == "chesswizard"
         assert captured["headers"]["Authorization"] == "Bearer lio_sometoken"
 
+    def test_oa_05c_fetch_account_normalises_hostile_username(self, monkeypatch):
+        # The display username is replaced (not fatal) when it fails the
+        # Lichess shape — downstream consumers must never see an arbitrary
+        # upstream string in a display slot.
+        _patch_httpx(
+            monkeypatch,
+            _FakeStreamedResponse(
+                200, {"id": "chesswizard", "username": "<script>alert(1)</script>"}
+            ),
+        )
+        account = lichess_client.fetch_account("lio_sometoken")
+        assert account["username"] == "chesswizard"
+
     def test_oa_06_fetch_account_401_raises_oauth_error(self, monkeypatch):
-        _patch_httpx(monkeypatch, _FakeResponse(401))
+        _patch_httpx(monkeypatch, _FakeStreamedResponse(401))
         with pytest.raises(lichess_client.LichessOAuthError):
             lichess_client.fetch_account("lio_sometoken")
 
@@ -281,6 +315,16 @@ class TestOAuthClient:
         monkeypatch.setattr(lichess_client.httpx, "Client", _transport_error)
         lichess_client.revoke_token("lio_sometoken")  # must not raise
         lichess_client.revoke_token("\x00malformed")  # must not raise
+
+    def test_oa_08_oversized_body_aborts_mid_stream(self, monkeypatch):
+        # pylint: disable=protected-access
+        oversized = b"x" * (lichess_client._MAX_OAUTH_BODY_BYTES + 1)
+        _patch_httpx(monkeypatch, _FakeStreamedResponse(200, body=oversized))
+        with pytest.raises(lichess_client.LichessParseError):
+            lichess_client.exchange_authorization_code(VALID_CODE, VALID_VERIFIER)
+        _patch_httpx(monkeypatch, _FakeStreamedResponse(200, body=oversized))
+        with pytest.raises(lichess_client.LichessParseError):
+            lichess_client.fetch_account("lio_sometoken")
 
 
 # ---------------------------------------------------------------------------

@@ -157,6 +157,18 @@ class TestThreatModelConstants:
             code_origin="llm/server.py::_MAX_BODY_BYTES",
         )
 
+    def test_oauth_body_cap(self):
+        """§ T7 — Lichess OAuth response-body cap (hostile-upstream OOM guard)."""
+        # pylint: disable=protected-access
+        from llm.seca.lichess.client import _MAX_OAUTH_BODY_BYTES
+
+        mib = _MAX_OAUTH_BODY_BYTES // (1024 * 1024)
+        _assert_doc_pin(
+            doc=_THREAT_MODEL,
+            needle=f"{mib} MiB cap",
+            code_origin="llm/seca/lichess/client.py::_MAX_OAUTH_BODY_BYTES",
+        )
+
     def test_symmetric_jwt_residual_documented(self):
         """§ T2 — symmetric-JWT residual.
 

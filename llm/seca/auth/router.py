@@ -607,11 +607,15 @@ def _ensure_lichess_link(db: DBSession, player, account: dict) -> None:
     from llm.seca.lichess import import_service as lichess_import_service
     from llm.seca.lichess.models import LinkedAccount
 
+    # Captured before the try: reading player.id on the failure path could
+    # itself raise (expired ORM instance on a dead connection), turning the
+    # warning line into a post-commit 500.
+    player_id = player.id
     try:
         existing = (
             db.query(LinkedAccount)
             .filter(
-                LinkedAccount.player_id == player.id,
+                LinkedAccount.player_id == player_id,
                 LinkedAccount.platform == lichess_import_service.PLATFORM_LICHESS,
             )
             .first()
@@ -621,7 +625,7 @@ def _ensure_lichess_link(db: DBSession, player, account: dict) -> None:
         lichess_import_service.link_account(db, player, str(account["id"]), profile=account)
     except Exception:  # pylint: disable=broad-exception-caught
         db.rollback()
-        logger.warning("lichess auto-link failed for player %s", player.id, exc_info=True)
+        logger.warning("lichess auto-link failed for player %s", player_id, exc_info=True)
 
 
 @router.post("/lichess")
@@ -643,7 +647,14 @@ def login_lichess(request: Request, req: LichessLoginRequest, db: DBSession = De
     """
     try:
         lichess_token = lichess_client.exchange_authorization_code(req.code, req.code_verifier)
-        account = lichess_client.fetch_account(lichess_token)
+        try:
+            account = lichess_client.fetch_account(lichess_token)
+        except lichess_client.LichessClientError:
+            # The exchange succeeded, so a live token exists at Lichess even
+            # though this sign-in is about to fail — don't leave it dangling
+            # until natural expiry.  Best-effort; never raises.
+            lichess_client.revoke_token(lichess_token)
+            raise
     except lichess_client.LichessOAuthError:
         auth_login_total.labels(result="lichess_oauth_failed").inc()
         raise HTTPException(status_code=401, detail="Lichess sign-in failed")

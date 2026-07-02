@@ -166,11 +166,72 @@ _ACCESS_TOKEN_RE = re.compile(r"^[\x21-\x7e]{1,512}$")
 
 _OAUTH_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
 
+# Hard cap on OAuth response bodies (token / account / revoke) — a few KB
+# in practice.  The eager ``response.json()`` pattern used by
+# fetch_user_profile reads the whole body into memory before any size
+# check can run; the OAuth surface runs per sign-in against an upstream we
+# must treat as compromisable, so it streams with this cap instead
+# (mirrors the byte-cap discipline of fetch_user_games' NDJSON reader).
+_MAX_OAUTH_BODY_BYTES = 1 * 1024 * 1024
+
 
 class LichessOAuthError(LichessClientError):
     """Lichess rejected the OAuth grant — invalid / expired / replayed
     code, PKCE verifier mismatch, or a token it no longer accepts.  Maps
     to 401 at the route layer (the client must restart the flow)."""
+
+
+class _BoundedResponse:
+    """Status + headers + size-capped body captured from a streamed request."""
+
+    def __init__(self, status_code: int, headers: dict[str, str], body: bytes) -> None:
+        self.status_code = status_code
+        self.headers = headers
+        self._body = body
+
+    def json(self) -> object:
+        return json.loads(self._body.decode("utf-8"))
+
+
+def _retry_after_seconds(headers: dict[str, str]) -> int | None:
+    retry = headers.get("Retry-After")
+    try:
+        return int(retry) if retry else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _request_json_bounded(
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str],
+    data: dict[str, str] | None = None,
+    context: str,
+) -> _BoundedResponse:
+    """Issue a request in streaming mode, reading at most _MAX_OAUTH_BODY_BYTES.
+
+    Transport failures surface as ``LichessUpstreamError``; an oversized
+    body surfaces as ``LichessParseError`` (fail closed) without ever
+    buffering more than the cap.
+    """
+    try:
+        with httpx.Client(timeout=_OAUTH_TIMEOUT) as client:
+            with client.stream(method, url, headers=headers, data=data) as response:
+                chunks: list[bytes] = []
+                seen = 0
+                for chunk in response.iter_bytes():
+                    seen += len(chunk)
+                    if seen > _MAX_OAUTH_BODY_BYTES:
+                        raise LichessParseError(
+                            f"{context}: response body exceeded {_MAX_OAUTH_BODY_BYTES} bytes"
+                        )
+                    chunks.append(chunk)
+                return _BoundedResponse(
+                    response.status_code, dict(response.headers), b"".join(chunks)
+                )
+    except httpx.HTTPError as exc:
+        raise LichessUpstreamError(f"{context}: request failed: {exc}") from exc
 
 
 def exchange_authorization_code(code: str, code_verifier: str) -> str:
@@ -196,33 +257,27 @@ def exchange_authorization_code(code: str, code_verifier: str) -> str:
     if not isinstance(code_verifier, str) or not CODE_VERIFIER_RE.fullmatch(code_verifier):
         raise LichessOAuthError("malformed code_verifier")
 
-    url = f"{LICHESS_API_BASE}/api/token"
-    try:
-        with httpx.Client(timeout=_OAUTH_TIMEOUT) as client:
-            response = client.post(
-                url,
-                # Deliberately NOT _headers(): the server's optional
-                # LICHESS_OAUTH_TOKEN must never ride along on a token
-                # exchange performed on behalf of a user.
-                headers={"User-Agent": LICHESS_USER_AGENT},
-                data={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "code_verifier": code_verifier,
-                    "redirect_uri": LICHESS_OAUTH_REDIRECT_URI,
-                    "client_id": LICHESS_OAUTH_CLIENT_ID,
-                },
-            )
-    except httpx.HTTPError as exc:
-        raise LichessUpstreamError(f"token exchange failed: {exc}") from exc
+    response = _request_json_bounded(
+        "POST",
+        f"{LICHESS_API_BASE}/api/token",
+        # Deliberately NOT _headers(): the server's optional
+        # LICHESS_OAUTH_TOKEN must never ride along on a token exchange
+        # performed on behalf of a user.
+        headers={"User-Agent": LICHESS_USER_AGENT},
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "code_verifier": code_verifier,
+            "redirect_uri": LICHESS_OAUTH_REDIRECT_URI,
+            "client_id": LICHESS_OAUTH_CLIENT_ID,
+        },
+        context="token exchange",
+    )
 
     if response.status_code == 429:
-        retry = response.headers.get("Retry-After")
-        try:
-            retry_after_int = int(retry) if retry else None
-        except (TypeError, ValueError):
-            retry_after_int = None
-        raise LichessRateLimited("token exchange: rate limited", retry_after=retry_after_int)
+        raise LichessRateLimited(
+            "token exchange: rate limited", retry_after=_retry_after_seconds(response.headers)
+        )
     if response.status_code >= 500:
         raise LichessUpstreamError(f"token exchange: upstream {response.status_code}")
     if response.status_code >= 400:
@@ -254,25 +309,34 @@ def fetch_account(access_token: str) -> dict:
     before returning: it becomes a database identity key downstream
     (``players.lichess_user_id``), so a compromised or spoofed upstream
     must not be able to inject an arbitrary string.  Raises
-    ``LichessParseError`` when absent or malformed (fail closed).
+    ``LichessParseError`` when absent or malformed (fail closed).  The
+    display ``username`` field is normalised the same way but leniently —
+    a malformed value is REPLACED by the canonical id rather than failing
+    the sign-in, so downstream consumers (the /auth/lichess response,
+    link_account's calibration profile) never see an arbitrary upstream
+    string in a display slot.
     """
     if not isinstance(access_token, str) or not _ACCESS_TOKEN_RE.fullmatch(access_token):
         raise LichessOAuthError("malformed access token")
 
-    url = f"{LICHESS_API_BASE}/api/account"
-    headers = {
-        "User-Agent": LICHESS_USER_AGENT,
-        "Authorization": f"Bearer {access_token}",
-    }
-    try:
-        with httpx.Client(timeout=_OAUTH_TIMEOUT) as client:
-            response = client.get(url, headers=headers)
-    except httpx.HTTPError as exc:
-        raise LichessUpstreamError(f"account fetch failed: {exc}") from exc
+    response = _request_json_bounded(
+        "GET",
+        f"{LICHESS_API_BASE}/api/account",
+        headers={
+            "User-Agent": LICHESS_USER_AGENT,
+            "Authorization": f"Bearer {access_token}",
+        },
+        context="account",
+    )
 
     if response.status_code == 401:
         raise LichessOAuthError("account fetch: token rejected")
-    _raise_for_status(response, context="account")
+    if response.status_code == 429:
+        raise LichessRateLimited(
+            "account fetch: rate limited", retry_after=_retry_after_seconds(response.headers)
+        )
+    if response.status_code >= 400:
+        raise LichessUpstreamError(f"account fetch: unexpected status {response.status_code}")
 
     try:
         payload = response.json()
@@ -284,6 +348,10 @@ def fetch_account(access_token: str) -> dict:
     canonical_id = payload.get("id")
     if not isinstance(canonical_id, str) or not _USERNAME_RE.fullmatch(canonical_id):
         raise LichessParseError("account response missing or malformed 'id'")
+
+    display = payload.get("username")
+    if not isinstance(display, str) or not _USERNAME_RE.fullmatch(display):
+        payload["username"] = canonical_id
     return payload
 
 
@@ -298,15 +366,17 @@ def revoke_token(access_token: str) -> None:
     """
     if not isinstance(access_token, str) or not _ACCESS_TOKEN_RE.fullmatch(access_token):
         return
-    url = f"{LICHESS_API_BASE}/api/token"
-    headers = {
-        "User-Agent": LICHESS_USER_AGENT,
-        "Authorization": f"Bearer {access_token}",
-    }
     try:
-        with httpx.Client(timeout=_OAUTH_TIMEOUT) as client:
-            client.delete(url, headers=headers)
-    except httpx.HTTPError:
+        _request_json_bounded(
+            "DELETE",
+            f"{LICHESS_API_BASE}/api/token",
+            headers={
+                "User-Agent": LICHESS_USER_AGENT,
+                "Authorization": f"Bearer {access_token}",
+            },
+            context="token revoke",
+        )
+    except LichessClientError:
         logger.warning("lichess token revocation failed (ignored)", exc_info=True)
 
 

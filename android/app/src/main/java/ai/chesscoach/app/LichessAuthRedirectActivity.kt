@@ -21,9 +21,11 @@ import android.os.Bundle
  * and cold-starts one (`onCreate` with intent data) after process death.
  *
  * Hostile-input note: this activity is `exported` (any app can fire the
- * intent), but it carries no logic — it only re-posts `intent.data` to a
- * non-exported activity that validates the OAuth `state` against the
- * locally-persisted pending value before doing anything with the code.
+ * intent), but it carries no logic — it only re-posts `intent.data` to
+ * [LoginActivity] (itself exported as the LAUNCHER).  The actual defense
+ * against forged redirect intents is LoginActivity's `state` check: the
+ * redirect must carry the value persisted when WE started the flow, and
+ * redirects with no pending attempt are silently dropped.
  */
 class LichessAuthRedirectActivity : Activity() {
 

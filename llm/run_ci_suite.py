@@ -136,6 +136,20 @@ TEST_TARGETS = [
     "llm/tests/test_auth_refresh_header.py",
     "llm/tests/test_auth_sliding_session.py",
     "llm/tests/test_auth_missing_header.py",
+    # "Sign in with Lichess" (OAuth PKCE, POST /auth/lichess): client-layer
+    # exchange/account/revoke error taxonomy + hostile-input rejection
+    # (OA_01..08) and router/service find-or-create, auto-link, and
+    # synthetic-email squat guards (LI_01..13).  Listed so the new
+    # login_with_lichess / _issue_session lines count toward the
+    # auth/service.py + auth/router.py per-module coverage floors.
+    "llm/tests/test_auth_lichess.py",
+    # Lichess ingestion adapter (CL/IS/RT cases: client error taxonomy,
+    # link/unlink/import service semantics, router translation).  The file
+    # predates the OAuth sign-in work but was never registered in any CI
+    # list — "tests exist but never run" debt surfaced by the 2026-07-02
+    # sign-in review.  Registered alongside the OAuth suite since /auth/
+    # lichess now leans on link_account + the shared client error types.
+    "llm/tests/test_lichess_import.py",
     # Sprint 6.C — hashing defensive branches (HASH_01..HASH_07) and
     # events/storage defensive branches (ESTORE_01..ESTORE_04).  Both
     # were sitting below their per-module floor before these tests

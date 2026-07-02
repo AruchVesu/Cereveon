@@ -198,9 +198,7 @@ class AuthService:
                 # request won.  Roll back and use its row.
                 self.db.rollback()
                 player = (
-                    self.db.query(Player)
-                    .filter(Player.lichess_user_id == lichess_user_id)
-                    .first()
+                    self.db.query(Player).filter(Player.lichess_user_id == lichess_user_id).first()
                 )
                 if player is None:  # pragma: no cover — constraint just fired
                     raise
