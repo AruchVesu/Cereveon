@@ -1,7 +1,10 @@
 import functools
 import hashlib
 import hmac
+import secrets
 from datetime import datetime, timedelta
+
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 
 from .models import Player, Session
@@ -90,6 +93,20 @@ class AuthService:
         if needs_rehash(player.password_hash):
             player.password_hash = hash_password(password)
 
+        token = self._issue_session(player, device_info)
+        return token, player
+
+    # ---------------------------
+    # Session issuance (shared tail of login / login_with_lichess)
+    # ---------------------------
+    def _issue_session(self, player: Player, device_info: str | None) -> str:
+        """Create a session row + JWT for an ALREADY-authenticated player.
+
+        Shared by password login and Lichess OAuth sign-in so both paths
+        get identical session semantics: expired-session pruning, the
+        _MAX_SESSIONS cap, and the F-07 token-hash pinning.  Performs no
+        credential checks — callers are responsible for authentication.
+        """
         # Prune expired sessions for this player (H3)
         now = datetime.utcnow()
         self.db.query(Session).filter(
@@ -134,7 +151,64 @@ class AuthService:
         self.db.add(session)
         self.db.commit()
 
-        return token, player
+        return token
+
+    # ---------------------------
+    # Login with Lichess (OAuth)
+    # ---------------------------
+    def login_with_lichess(
+        self, lichess_user_id: str, device_info: str | None = None
+    ) -> tuple[str, Player, bool]:
+        """Find-or-create the player for a VERIFIED Lichess identity and
+        issue a session.
+
+        Trust contract: ``lichess_user_id`` MUST be the canonical ``id``
+        returned by Lichess ``GET /api/account`` for a token this server
+        obtained via the authorization-code exchange
+        (``llm.seca.lichess.client``).  This method performs no further
+        identity checks.
+
+        First sign-in creates the account with:
+
+        * ``email = "lichess:<id>"`` — a synthetic identifier that lives
+          in the unique email column but OUTSIDE the reachable email
+          space: it contains no ``@`` so ``_validate_email_strict``
+          rejects it at /auth/register and /auth/login, which means it
+          can never be squatted or matched by a password flow.
+        * an unusable credential — a random secret hashed and discarded,
+          so ``verify_password`` can never succeed against this row.
+
+        Returns ``(token, player, created)``.
+        """
+        player = self.db.query(Player).filter(Player.lichess_user_id == lichess_user_id).first()
+        created = False
+        if player is None:
+            player = Player(
+                email=f"lichess:{lichess_user_id}",
+                password_hash=hash_password(secrets.token_urlsafe(48)),
+                player_embedding="[]",
+                lichess_user_id=lichess_user_id,
+            )
+            self.db.add(player)
+            try:
+                self.db.commit()
+            except IntegrityError:
+                # Two concurrent first sign-ins raced on the unique
+                # lichess_user_id (or synthetic email) index; the other
+                # request won.  Roll back and use its row.
+                self.db.rollback()
+                player = (
+                    self.db.query(Player)
+                    .filter(Player.lichess_user_id == lichess_user_id)
+                    .first()
+                )
+                if player is None:  # pragma: no cover — constraint just fired
+                    raise
+            else:
+                self.db.refresh(player)
+                created = True
+        token = self._issue_session(player, device_info)
+        return token, player, created
 
     # ---------------------------
     # Validate session

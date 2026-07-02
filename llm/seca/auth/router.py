@@ -5,6 +5,7 @@
 # pylint: disable=unused-argument
 
 import json
+import logging
 import os
 
 import jwt
@@ -34,8 +35,19 @@ from llm.seca.training.models import *  # noqa: F401,F403
 from llm.seca.coach.study_plan.models import *  # noqa: F401,F403
 
 # pylint: enable=wildcard-import,unused-wildcard-import
+
+# Lichess OAuth sign-in (POST /auth/lichess).  Only the HTTP client may be
+# imported at module level: it imports nothing from the auth package.  The
+# link service (llm.seca.lichess.import_service) imports ``engine`` FROM
+# THIS MODULE, so importing it up here would be a circular import that
+# breaks whenever auth.router loads first — it is imported lazily inside
+# ``_ensure_lichess_link`` instead.
+from llm.seca.lichess import client as lichess_client
+
 from .service import AuthService
 from .tokens import create_access_token, decode_token
+
+logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///data/seca.db")
 _is_sqlite = DATABASE_URL.startswith("sqlite")
@@ -125,6 +137,28 @@ def init_schema() -> None:
             "training_xp",
             "INTEGER DEFAULT 0",
         )
+
+        # Player.lichess_user_id — OAuth identity for "Sign in with
+        # Lichess" (POST /auth/lichess).  NULL for password accounts.
+        # The UNIQUE guarantee is added as a separate index because
+        # SQLite's ALTER TABLE ADD COLUMN cannot carry UNIQUE; the index
+        # name matches what the model's ``unique=True, index=True``
+        # produces on fresh ``create_all`` tables, so this statement is a
+        # no-op there.  Multiple NULLs are permitted by unique indexes on
+        # both dialects, so legacy password-only rows are unaffected.
+        _ensure_column(
+            conn,
+            "players",
+            "lichess_user_id",
+            _column_type_for_dialect("TEXT", "VARCHAR"),
+        )
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_players_lichess_user_id "
+                "ON players (lichess_user_id)"
+            )
+        )
+        conn.commit()
 
         # F-07 rotation race grace window — see Session model + service.
         # Sessions table pre-dates these columns on both dialects.
@@ -419,6 +453,44 @@ class LoginRequest(BaseModel):
         return _reject_control_chars("device_info", v)
 
 
+class LichessLoginRequest(BaseModel):
+    """POST /auth/lichess — OAuth authorization-code sign-in.
+
+    The Android app runs the Lichess PKCE authorization flow in the
+    system browser and forwards the resulting one-time ``code`` plus its
+    ``code_verifier`` here.  The SERVER performs the code exchange
+    (``llm.seca.lichess.client.exchange_authorization_code``) so Lichess
+    access tokens never live on the device and tokens minted for other
+    apps cannot be replayed into a Cereveon sign-in.
+    """
+
+    code: str
+    code_verifier: str
+    device_info: str = ""
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, v: str) -> str:
+        v = v.strip()
+        if not lichess_client.AUTH_CODE_RE.fullmatch(v):
+            raise ValueError("malformed authorization code")
+        return v
+
+    @field_validator("code_verifier")
+    @classmethod
+    def validate_code_verifier(cls, v: str) -> str:
+        if not lichess_client.CODE_VERIFIER_RE.fullmatch(v):
+            raise ValueError("malformed code_verifier (RFC 7636 §4.1 shape required)")
+        return v
+
+    @field_validator("device_info")
+    @classmethod
+    def validate_device_info(cls, v: str) -> str:
+        if len(v) > 200:
+            raise ValueError("device_info too long (max 200 chars)")
+        return _reject_control_chars("device_info", v)
+
+
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
@@ -509,6 +581,97 @@ def login(request: Request, req: LoginRequest, db: DBSession = Depends(get_db)):
         "access_token": token,
         "player_id": str(player.id),
         "token_type": "bearer",
+    }
+
+
+def _ensure_lichess_link(db: DBSession, player, account: dict) -> None:
+    """Best-effort auto-link for OAuth sign-ins.
+
+    An OAuth-verified identity is strictly stronger proof of account
+    ownership than the self-asserted username in POST /lichess/link, so
+    the first sign-in creates the game-import link (plus first-link
+    rating calibration) automatically.  Skipped when the player already
+    has ANY lichess link — including one pointing at a different handle —
+    so this path never clobbers import watermarks or moves links between
+    accounts.
+
+    Never raises: a link or calibration failure must not fail a sign-in
+    whose identity is already verified.  The rollback keeps a failed
+    INSERT from poisoning the connection for the caller (Postgres
+    InFailedSqlTransaction cascades otherwise).
+    """
+    # Local import: import_service imports ``engine`` from THIS module, so
+    # a module-level import here would be circular (see the module-level
+    # lichess_client import note).  By request time this module is fully
+    # initialised and the import is a sys.modules lookup.
+    from llm.seca.lichess import import_service as lichess_import_service
+    from llm.seca.lichess.models import LinkedAccount
+
+    try:
+        existing = (
+            db.query(LinkedAccount)
+            .filter(
+                LinkedAccount.player_id == player.id,
+                LinkedAccount.platform == lichess_import_service.PLATFORM_LICHESS,
+            )
+            .first()
+        )
+        if existing is not None:
+            return
+        lichess_import_service.link_account(db, player, str(account["id"]), profile=account)
+    except Exception:  # pylint: disable=broad-exception-caught
+        db.rollback()
+        logger.warning("lichess auto-link failed for player %s", player.id, exc_info=True)
+
+
+@router.post("/lichess")
+@limiter.limit("10/minute")
+def login_lichess(request: Request, req: LichessLoginRequest, db: DBSession = Depends(get_db)):
+    """Sign in — or transparently sign up — with a Lichess account.
+
+    Flow (all Lichess I/O is server-side; see LichessLoginRequest):
+
+    1. Exchange ``code`` + ``code_verifier`` at Lichess (PKCE, public
+       client, pinned client_id / redirect_uri).
+    2. ``GET /api/account`` with the resulting token → verified canonical
+       Lichess user id (shape-validated fail-closed by the client).
+    3. Revoke the Lichess token (best-effort) — identity proven, the
+       credential is not needed again.
+    4. Find-or-create the player keyed on ``players.lichess_user_id`` and
+       issue a session JWT via the same machinery as /auth/login.
+    5. Best-effort game-import auto-link + first-link calibration.
+    """
+    try:
+        lichess_token = lichess_client.exchange_authorization_code(req.code, req.code_verifier)
+        account = lichess_client.fetch_account(lichess_token)
+    except lichess_client.LichessOAuthError:
+        auth_login_total.labels(result="lichess_oauth_failed").inc()
+        raise HTTPException(status_code=401, detail="Lichess sign-in failed")
+    except lichess_client.LichessRateLimited:
+        auth_login_total.labels(result="lichess_rate_limited").inc()
+        raise HTTPException(status_code=503, detail="Lichess is busy; try again shortly")
+    except lichess_client.LichessClientError:
+        auth_login_total.labels(result="lichess_upstream_error").inc()
+        raise HTTPException(status_code=502, detail="Lichess upstream error")
+
+    lichess_client.revoke_token(lichess_token)
+
+    # fetch_account validated the id shape (fail-closed LichessParseError,
+    # mapped to 502 above); from here it is a trusted identity key.
+    lichess_user_id = str(account["id"])
+
+    service = AuthService(db)
+    token, player, created = service.login_with_lichess(lichess_user_id, req.device_info)
+
+    _ensure_lichess_link(db, player, account)
+
+    auth_login_total.labels(result="lichess_success").inc()
+    return {
+        "access_token": token,
+        "player_id": str(player.id),
+        "token_type": "bearer",
+        "created": created,
+        "lichess_username": str(account.get("username") or lichess_user_id),
     }
 
 

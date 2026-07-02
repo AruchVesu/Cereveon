@@ -137,6 +137,179 @@ def _raise_for_status(response: httpx.Response, *, context: str) -> None:
         raise LichessUpstreamError(f"{context}: unexpected status {response.status_code}")
 
 
+# ---------------------------------------------------------------------------
+# OAuth — "Sign in with Lichess" (authorization-code + PKCE, RFC 7636)
+# ---------------------------------------------------------------------------
+
+# Public identifiers for the OAuth client.  Lichess supports unregistered
+# public clients: any client_id is accepted, PKCE (S256) is mandatory, and
+# there is no client secret.  Both values MUST byte-match what the mobile
+# app sent in its authorization request or the code exchange fails; they are
+# env-overridable only for staging against a Lichess test instance.  The
+# Android mirror constants live in ``LichessOAuth.kt``.
+LICHESS_OAUTH_CLIENT_ID = os.getenv("LICHESS_OAUTH_CLIENT_ID", "ai.chesscoach.app")
+LICHESS_OAUTH_REDIRECT_URI = os.getenv(
+    "LICHESS_OAUTH_REDIRECT_URI", "ai.chesscoach.app://lichess-auth"
+)
+
+# RFC 7636 §4.1 code-verifier shape: 43-128 chars of the unreserved set.
+CODE_VERIFIER_RE = re.compile(r"^[A-Za-z0-9\-._~]{43,128}$")
+
+# Authorization codes are opaque strings minted by Lichess; bound to
+# printable ASCII with a hard length cap so a hostile caller cannot smuggle
+# control bytes or megabyte payloads toward the upstream exchange.
+AUTH_CODE_RE = re.compile(r"^[\x21-\x7e]{1,512}$")
+
+# Access tokens returned by the exchange — same defensive shape check
+# before the value is placed into an Authorization header.
+_ACCESS_TOKEN_RE = re.compile(r"^[\x21-\x7e]{1,512}$")
+
+_OAUTH_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
+
+
+class LichessOAuthError(LichessClientError):
+    """Lichess rejected the OAuth grant — invalid / expired / replayed
+    code, PKCE verifier mismatch, or a token it no longer accepts.  Maps
+    to 401 at the route layer (the client must restart the flow)."""
+
+
+def exchange_authorization_code(code: str, code_verifier: str) -> str:
+    """Exchange an OAuth authorization code for a Lichess access token.
+
+    ``POST /api/token`` with the PKCE ``code_verifier`` (public client —
+    no secret).  ``redirect_uri`` and ``client_id`` are the pinned module
+    constants and must match the app's authorization request exactly.
+
+    The exchange happens server-side by design: the mobile app forwards
+    ``code`` + ``code_verifier`` to ``POST /auth/lichess`` instead of
+    exchanging locally, so Lichess access tokens never live on the device
+    and a token minted for a different app cannot be replayed into a
+    sign-in (only a fresh authorization flow for OUR client_id works).
+
+    Returns the access token string.  Raises ``LichessOAuthError`` on a
+    4xx grant rejection, ``LichessRateLimited`` on 429,
+    ``LichessUpstreamError`` on 5xx / transport failure, and
+    ``LichessParseError`` when the token is absent or malformed.
+    """
+    if not isinstance(code, str) or not AUTH_CODE_RE.fullmatch(code):
+        raise LichessOAuthError("malformed authorization code")
+    if not isinstance(code_verifier, str) or not CODE_VERIFIER_RE.fullmatch(code_verifier):
+        raise LichessOAuthError("malformed code_verifier")
+
+    url = f"{LICHESS_API_BASE}/api/token"
+    try:
+        with httpx.Client(timeout=_OAUTH_TIMEOUT) as client:
+            response = client.post(
+                url,
+                # Deliberately NOT _headers(): the server's optional
+                # LICHESS_OAUTH_TOKEN must never ride along on a token
+                # exchange performed on behalf of a user.
+                headers={"User-Agent": LICHESS_USER_AGENT},
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "code_verifier": code_verifier,
+                    "redirect_uri": LICHESS_OAUTH_REDIRECT_URI,
+                    "client_id": LICHESS_OAUTH_CLIENT_ID,
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise LichessUpstreamError(f"token exchange failed: {exc}") from exc
+
+    if response.status_code == 429:
+        retry = response.headers.get("Retry-After")
+        try:
+            retry_after_int = int(retry) if retry else None
+        except (TypeError, ValueError):
+            retry_after_int = None
+        raise LichessRateLimited("token exchange: rate limited", retry_after=retry_after_int)
+    if response.status_code >= 500:
+        raise LichessUpstreamError(f"token exchange: upstream {response.status_code}")
+    if response.status_code >= 400:
+        # Grant rejection (invalid_grant & friends).  The body names the
+        # OAuth error; don't propagate detail to callers — a per-reason
+        # message would hand probing clients an oracle.
+        raise LichessOAuthError(f"token exchange rejected ({response.status_code})")
+
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise LichessParseError(f"token response was not JSON: {exc}") from exc
+    token = payload.get("access_token") if isinstance(payload, dict) else None
+    if not isinstance(token, str) or not _ACCESS_TOKEN_RE.fullmatch(token):
+        raise LichessParseError("token response missing or malformed access_token")
+    return token
+
+
+def fetch_account(access_token: str) -> dict:
+    """Fetch the authenticated Lichess account for an OAuth access token.
+
+    ``GET /api/account`` with the USER's token (never the server's
+    optional ``LICHESS_OAUTH_TOKEN``).  The response is the same
+    public-profile shape as :func:`fetch_user_profile`, so the OAuth
+    sign-in flow can hand it to ``import_service.link_account`` as a
+    pre-fetched profile.
+
+    The ``id`` field is validated against the Lichess username shape
+    before returning: it becomes a database identity key downstream
+    (``players.lichess_user_id``), so a compromised or spoofed upstream
+    must not be able to inject an arbitrary string.  Raises
+    ``LichessParseError`` when absent or malformed (fail closed).
+    """
+    if not isinstance(access_token, str) or not _ACCESS_TOKEN_RE.fullmatch(access_token):
+        raise LichessOAuthError("malformed access token")
+
+    url = f"{LICHESS_API_BASE}/api/account"
+    headers = {
+        "User-Agent": LICHESS_USER_AGENT,
+        "Authorization": f"Bearer {access_token}",
+    }
+    try:
+        with httpx.Client(timeout=_OAUTH_TIMEOUT) as client:
+            response = client.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        raise LichessUpstreamError(f"account fetch failed: {exc}") from exc
+
+    if response.status_code == 401:
+        raise LichessOAuthError("account fetch: token rejected")
+    _raise_for_status(response, context="account")
+
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise LichessParseError(f"account body was not JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise LichessParseError("account body was not a JSON object")
+
+    canonical_id = payload.get("id")
+    if not isinstance(canonical_id, str) or not _USERNAME_RE.fullmatch(canonical_id):
+        raise LichessParseError("account response missing or malformed 'id'")
+    return payload
+
+
+def revoke_token(access_token: str) -> None:
+    """Best-effort ``DELETE /api/token`` — revoke an OAuth access token.
+
+    The sign-in flow only needs the token long enough to prove identity;
+    holding a live credential we never use again is pure liability, so
+    the auth route revokes immediately after the account fetch.  Never
+    raises: revocation failure must not fail a sign-in whose identity is
+    already verified.
+    """
+    if not isinstance(access_token, str) or not _ACCESS_TOKEN_RE.fullmatch(access_token):
+        return
+    url = f"{LICHESS_API_BASE}/api/token"
+    headers = {
+        "User-Agent": LICHESS_USER_AGENT,
+        "Authorization": f"Bearer {access_token}",
+    }
+    try:
+        with httpx.Client(timeout=_OAUTH_TIMEOUT) as client:
+            client.delete(url, headers=headers)
+    except httpx.HTTPError:
+        logger.warning("lichess token revocation failed (ignored)", exc_info=True)
+
+
 def fetch_user_profile(username: str) -> dict:
     """Fetch a single Lichess user's public profile.
 

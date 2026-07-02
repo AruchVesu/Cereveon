@@ -693,6 +693,77 @@ Same shape as §15.
 
 ---
 
+## 16a. `POST /auth/lichess`
+
+**Host:** `llm/seca/auth/router.py`
+**Auth:** none (consumes an OAuth authorization code)
+**Rate limit:** 10 / minute
+
+"Sign in with Lichess" — OAuth 2.0 authorization-code + PKCE (RFC 7636).
+The Android client runs the authorization step in the system browser
+(`LichessOAuth.kt` builds the `https://lichess.org/oauth` URL; the
+redirect lands on `ai.chesscoach.app://lichess-auth`), then forwards the
+one-time `code` + its `code_verifier` here.  The **server** performs the
+code exchange and account fetch
+(`llm/seca/lichess/client.py::exchange_authorization_code` /
+`fetch_account`), so Lichess access tokens never live on the device and a
+token minted for a different app cannot be replayed into a sign-in.  The
+pinned OAuth identifiers (`client_id = ai.chesscoach.app`, `redirect_uri =
+ai.chesscoach.app://lichess-auth`) must byte-match between
+`LichessOAuth.kt` and `llm/seca/lichess/client.py`; Lichess accepts
+unregistered public clients, so no upstream registration exists to catch a
+drift.  No scopes are requested — public identity only.
+
+### Request body
+
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `code` | `string` | 1–512 printable-ASCII chars (opaque Lichess authorization code; single-use). |
+| `code_verifier` | `string` | RFC 7636 §4.1 shape: 43–128 chars of `[A-Za-z0-9\-._~]`. |
+| `device_info` | `string` | Optional, ≤ 200 chars, no control characters — same rules as §16. |
+
+### Response
+
+```json
+{
+  "access_token":     <string>,
+  "player_id":        <string>,
+  "token_type":       "bearer",
+  "created":          <bool>,     // true when this sign-in created the account
+  "lichess_username": <string>    // display-cased handle from /api/account
+}
+```
+
+Superset of the §15/§16 shape — the Android client deserialises it as
+`LoginResponse` (`ignoreUnknownKeys`).
+
+### Semantics
+
+- The player row is keyed on `players.lichess_user_id` (the canonical
+  lowercase id from `GET /api/account`, shape-validated fail-closed).
+- First sign-in creates the account with a synthetic
+  `email = "lichess:<id>"` — outside the reachable email space (`_EMAIL_RE`
+  rejects it at §15/§16, so the namespace cannot be squatted;
+  `test_auth_lichess.py::LI_10`) — and an unusable random password hash.
+- The Lichess access token is revoked (best-effort `DELETE /api/token`)
+  immediately after the account fetch.
+- Best-effort auto-link: when the player has no `/lichess` link yet, the
+  game-import link (§27) + first-link calibration are created from the
+  already-fetched account profile.  Link failure (including a cross-player
+  409 conflict) never fails the sign-in, and an existing link — even to a
+  different handle — is never modified.
+
+### Errors
+
+- `401` — Lichess rejected the grant (invalid / expired / replayed code, or
+  PKCE verifier mismatch).  The client must restart the authorization flow.
+- `422` — request-shape validation (malformed `code` / `code_verifier`).
+- `502` — Lichess upstream error or malformed upstream response.
+- `503` — Lichess rate-limited the exchange; retry later.
+- `429` — our rate limit (10 / min per client IP).
+
+---
+
 ## 17. `POST /auth/logout`
 
 **Host:** `llm/seca/auth/router.py`

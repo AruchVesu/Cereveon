@@ -63,6 +63,28 @@ interface AuthApiClient {
         ApiResult.HttpError(501)
 
     /**
+     * POST /auth/lichess — "Sign in with Lichess" (OAuth PKCE).
+     *
+     * Forwards the one-time authorization [code] from the Lichess
+     * redirect plus the PKCE [codeVerifier] that [LichessOAuth] minted
+     * for this attempt; the backend performs the code exchange and
+     * returns the same token shape as [login] (`docs/API_CONTRACTS.md`
+     * §16a).  Transparently creates the account on first sign-in.
+     *
+     * Default implementation returns [ApiResult.HttpError(501)] so test
+     * fakes do not need to override this method.
+     *
+     * @return [ApiResult.Success] with [LoginResponse] on HTTP 200;
+     *         [ApiResult.HttpError(401)] when Lichess rejected the grant
+     *         (restart the authorization flow); (502)/(503) on Lichess
+     *         upstream / rate-limit; transport variants otherwise.
+     */
+    suspend fun loginWithLichess(
+        code: String,
+        codeVerifier: String,
+    ): ApiResult<LoginResponse> = ApiResult.HttpError(501)
+
+    /**
      * POST /auth/change-password.
      *
      * Requires a valid [token] (Bearer). Returns [ApiResult.HttpError(400)] when
@@ -138,6 +160,7 @@ class HttpAuthApiClient(
         const val DEFAULT_CONNECT_TIMEOUT_MS = BaseHttpClient.DEFAULT_CONNECT_TIMEOUT_MS
         const val DEFAULT_READ_TIMEOUT_MS = BaseHttpClient.DEFAULT_READ_TIMEOUT_MS
         private const val LOGIN_PATH = "/auth/login"
+        private const val LICHESS_LOGIN_PATH = "/auth/lichess"
         private const val LOGOUT_PATH = "/auth/logout"
         private const val ME_PATH = "/auth/me"
         private const val REGISTER_PATH = "/auth/register"
@@ -160,6 +183,18 @@ class HttpAuthApiClient(
         method = "POST",
         body = ApiJson.encodeToString(
             LoginRequest(email = email, password = password, deviceInfo = "android")
+        ),
+        parse = { body -> ApiJson.decodeFromString<LoginResponse>(body) },
+    )
+
+    override suspend fun loginWithLichess(
+        code: String,
+        codeVerifier: String,
+    ): ApiResult<LoginResponse> = http.request(
+        path = LICHESS_LOGIN_PATH,
+        method = "POST",
+        body = ApiJson.encodeToString(
+            LichessLoginRequest(code = code, codeVerifier = codeVerifier, deviceInfo = "android")
         ),
         parse = { body -> ApiJson.decodeFromString<LoginResponse>(body) },
     )

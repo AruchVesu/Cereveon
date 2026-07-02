@@ -41,6 +41,19 @@ class Player(Base):
     # surface changes.
     training_xp: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # OAuth identity for "Sign in with Lichess" (POST /auth/lichess): the
+    # canonical lowercase Lichess user id, verified server-side via the
+    # authorization-code exchange + GET /api/account.  NULL for password
+    # accounts.  Unique so one Lichess identity maps to exactly one player;
+    # ``unique + index`` yields the conventionally-named
+    # ``ix_players_lichess_user_id`` unique index, matching the idempotent
+    # DDL that ``init_schema`` emits for pre-existing tables (SQLite's
+    # ALTER TABLE ADD COLUMN cannot carry UNIQUE, so the migration adds a
+    # plain column + this index).
+    lichess_user_id: Mapped[str | None] = mapped_column(
+        String, unique=True, index=True, nullable=True
+    )
+
     sessions: Mapped[list["Session"]] = relationship("Session", back_populates="player")
 
 
