@@ -603,9 +603,10 @@ def _ensure_lichess_link(db: DBSession, player, account: dict) -> None:
     # Local import: import_service imports ``engine`` from THIS module, so
     # a module-level import here would be circular (see the module-level
     # lichess_client import note).  By request time this module is fully
-    # initialised and the import is a sys.modules lookup.
+    # initialised and the import is a sys.modules lookup.  ``LinkedAccount``
+    # needs no import — the load-bearing models wildcard at the top of this
+    # file already binds it at module scope.
     from llm.seca.lichess import import_service as lichess_import_service
-    from llm.seca.lichess.models import LinkedAccount
 
     # Captured before the try: reading player.id on the failure path could
     # itself raise (expired ORM instance on a dead connection), turning the
