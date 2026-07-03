@@ -68,6 +68,7 @@ os.environ.setdefault("SECRET_KEY", "ci-secret-key-that-is-32-chars-long!!")
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from starlette.requests import Request as StarletteRequest
 
 # Import all model modules so Base.metadata sees every table.
@@ -79,7 +80,12 @@ import llm.seca.lichess.models  # noqa: F401
 
 from llm.seca.analysis.historical_pipeline import HistoricalAnalysisPipeline
 from llm.seca.auth.models import Base, Player
-from llm.seca.auth.router import LichessLoginRequest, login_lichess
+from llm.seca.auth.router import (
+    LichessLoginRequest,
+    _maybe_backfill_lichess_import,
+    login_lichess,
+    me,
+)
 from llm.seca.events.models import GameEvent
 from llm.seca.lichess import analysis_service
 from llm.seca.lichess import client as lichess_client
@@ -191,7 +197,15 @@ class _CancellingPool:
 
 @pytest.fixture()
 def db_session():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    # StaticPool = one shared connection across threads, so the in-memory
+    # DB (and its tables) is visible from the TestClient worker thread in
+    # BF_05 — without it, SQLite's default per-thread connection gives the
+    # request thread a fresh, empty database ("no such table").
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(bind=engine)
     Session = sessionmaker(bind=engine)
     session = Session()
@@ -633,3 +647,139 @@ class TestSignInAutoImport:
             )
         assert result["created"] is True
         assert db_session.query(LichessImportJob).count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Cold-start one-time backfill (GET /auth/me) for pre-existing links
+# ---------------------------------------------------------------------------
+
+
+class TestColdStartBackfill:
+    """`_maybe_backfill_lichess_import` — the /auth/me hook that pulls
+    history for accounts linked before auto-import-on-sign-in shipped.
+
+    BF_01  linked + zero imported games -> kicks a one-time import.
+    BF_02  linked + >=1 imported game    -> no kick (one-time gate).
+    BF_03  not linked                    -> no kick.
+    BF_04  me(player=...) still returns the profile by direct call — the
+           backfill is a route DEPENDENCY, so it never runs on the direct
+           call that test_api_contract_validation / test_auth_update_me
+           rely on.
+    BF_05  a real GET /auth/me request (TestClient) actually fires the
+           dependency for a linked, zero-games player — proving the wiring
+           end-to-end, not just the directly-called helper.
+    """
+
+    def _link(self, db, player):
+        db.add(
+            LinkedAccount(
+                player_id=player.id,
+                platform=import_service.PLATFORM_LICHESS,
+                external_username="backfilluser",
+            )
+        )
+        db.commit()
+
+    def test_bf_01_linked_zero_games_kicks_backfill(self, db_session, player, monkeypatch):
+        import llm.seca.lichess.router as lichess_router
+
+        fake_executor = _FakeExecutor()
+        monkeypatch.setattr(lichess_router, "_executor", fake_executor)
+        self._link(db_session, player)
+
+        _maybe_backfill_lichess_import(db_session, player, _request_with_app_state())
+
+        job = db_session.query(LichessImportJob).filter_by(player_id=player.id).one()
+        assert job.status == JOB_STATUS_QUEUED
+        assert len(fake_executor.submits) == 1
+        fn, args, kwargs = fake_executor.submits[0]
+        assert fn is import_service.run_import_job
+        assert args == (job.id,)
+        assert kwargs["engine_pool"] == "POOL-SENTINEL"
+
+    def test_bf_02_existing_games_skip_backfill(self, db_session, player, monkeypatch):
+        import llm.seca.lichess.router as lichess_router
+
+        fake_executor = _FakeExecutor()
+        monkeypatch.setattr(lichess_router, "_executor", fake_executor)
+        self._link(db_session, player)
+        # One already-imported Lichess game -> the one-time gate must hold.
+        db_session.add(
+            GameEvent(
+                player_id=player.id,
+                pgn=_VALID_PGN,
+                result="win",
+                accuracy=0.5,
+                weaknesses_json="{}",
+                source=import_service.PLATFORM_LICHESS,
+                external_game_id="already-1",
+            )
+        )
+        db_session.commit()
+
+        _maybe_backfill_lichess_import(db_session, player, _request_with_app_state())
+
+        assert db_session.query(LichessImportJob).count() == 0
+        assert len(fake_executor.submits) == 0
+
+    def test_bf_03_unlinked_skips_backfill(self, db_session, player, monkeypatch):
+        import llm.seca.lichess.router as lichess_router
+
+        fake_executor = _FakeExecutor()
+        monkeypatch.setattr(lichess_router, "_executor", fake_executor)
+        # No LinkedAccount for this player.
+
+        _maybe_backfill_lichess_import(db_session, player, _request_with_app_state())
+
+        assert db_session.query(LichessImportJob).count() == 0
+        assert len(fake_executor.submits) == 0
+
+    def test_bf_04_me_direct_call_still_returns_profile(self):
+        # The backfill is wired as a route dependency, so a direct
+        # me(player=...) call (no request/db) must keep working — this is
+        # the shape test_api_contract_validation & friends rely on.
+        player = SimpleNamespace(
+            id="p-direct",
+            email="direct@test.com",
+            rating=1234.0,
+            confidence=0.5,
+            skill_vector_json="{}",
+            training_xp=7,
+        )
+        result = me(player=player)
+        assert result["id"] == "p-direct"
+        assert result["email"] == "direct@test.com"
+        assert result["training_xp"] == 7
+
+    def test_bf_05_get_me_request_fires_backfill_via_dependency(
+        self, db_session, player, monkeypatch
+    ):
+        # Proves the novel wiring: FastAPI runs `_cold_start_lichess_backfill`
+        # (the route dependency) on a real GET /auth/me — not just the
+        # helper that BF_01 calls directly.  get_current_player + get_db are
+        # overridden so the request reaches the handler; the dependency and
+        # the route share the same overridden get_current_player via FastAPI's
+        # per-request cache.
+        import llm.seca.lichess.router as lichess_router
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from llm.seca.auth.router import get_current_player, get_db
+        from llm.seca.auth.router import router as auth_router
+
+        fake_executor = _FakeExecutor()
+        monkeypatch.setattr(lichess_router, "_executor", fake_executor)
+        self._link(db_session, player)
+
+        app = FastAPI()
+        app.include_router(auth_router)
+        app.dependency_overrides[get_db] = lambda: db_session
+        app.dependency_overrides[get_current_player] = lambda: player
+        client = TestClient(app)
+
+        resp = client.get("/auth/me")
+        assert resp.status_code == 200
+        assert resp.json()["id"] == player.id
+        # The dependency fired the backfill through the real request stack.
+        job = db_session.query(LichessImportJob).filter_by(player_id=player.id).one()
+        assert job.status == JOB_STATUS_QUEUED
+        assert len(fake_executor.submits) == 1
