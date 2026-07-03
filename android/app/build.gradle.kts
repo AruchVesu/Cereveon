@@ -153,6 +153,10 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.12.2")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation(libs.kotlinx.serialization.json)
+    // Google Play Billing — paywall purchase flow (PaywallActivity).
+    // Entitlement still comes from the SERVER (/billing/google/verify);
+    // the library only produces the purchase token we send there.
+    implementation("com.android.billingclient:billing-ktx:7.1.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
