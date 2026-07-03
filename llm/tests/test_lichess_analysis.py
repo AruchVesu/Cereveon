@@ -656,6 +656,9 @@ class TestColdStartBackfill:
            backfill is a route DEPENDENCY, so it never runs on the direct
            call that test_api_contract_validation / test_auth_update_me
            rely on.
+    BF_05  a real GET /auth/me request (TestClient) actually fires the
+           dependency for a linked, zero-games player — proving the wiring
+           end-to-end, not just the directly-called helper.
     """
 
     def _link(self, db, player):
@@ -738,3 +741,36 @@ class TestColdStartBackfill:
         assert result["id"] == "p-direct"
         assert result["email"] == "direct@test.com"
         assert result["training_xp"] == 7
+
+    def test_bf_05_get_me_request_fires_backfill_via_dependency(
+        self, db_session, player, monkeypatch
+    ):
+        # Proves the novel wiring: FastAPI runs `_cold_start_lichess_backfill`
+        # (the route dependency) on a real GET /auth/me — not just the
+        # helper that BF_01 calls directly.  get_current_player + get_db are
+        # overridden so the request reaches the handler; the dependency and
+        # the route share the same overridden get_current_player via FastAPI's
+        # per-request cache.
+        import llm.seca.lichess.router as lichess_router
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from llm.seca.auth.router import get_current_player, get_db
+        from llm.seca.auth.router import router as auth_router
+
+        fake_executor = _FakeExecutor()
+        monkeypatch.setattr(lichess_router, "_executor", fake_executor)
+        self._link(db_session, player)
+
+        app = FastAPI()
+        app.include_router(auth_router)
+        app.dependency_overrides[get_db] = lambda: db_session
+        app.dependency_overrides[get_current_player] = lambda: player
+        client = TestClient(app)
+
+        resp = client.get("/auth/me")
+        assert resp.status_code == 200
+        assert resp.json()["id"] == player.id
+        # The dependency fired the backfill through the real request stack.
+        job = db_session.query(LichessImportJob).filter_by(player_id=player.id).one()
+        assert job.status == JOB_STATUS_QUEUED
+        assert len(fake_executor.submits) == 1
