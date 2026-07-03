@@ -37,6 +37,12 @@ interface LiveMoveClient {
         uci: String,
         playerId: String = "demo",
         fenBefore: String? = null,
+        /**
+         * Server game id (``games.id``) for the free-tier coached-game
+         * admission — see [LiveMoveRequest.gameId].  Null keeps today's
+         * behaviour (server fails open, never degrades).
+         */
+        gameId: String? = null,
     ): ApiResult<LiveMoveResponse>
 }
 
@@ -101,6 +107,7 @@ class HttpLiveMoveClient(
         uci: String,
         playerId: String,
         fenBefore: String?,
+        gameId: String?,
     ): ApiResult<LiveMoveResponse> = http.request(
         path = LIVE_MOVE_PATH,
         method = "POST",
@@ -109,7 +116,13 @@ class HttpLiveMoveClient(
             tokenProvider.invoke()?.let { put("Authorization", "Bearer $it") }
         },
         body = ApiJson.encodeToString(
-            LiveMoveRequest(fen = fen, uci = uci, playerId = playerId, fenBefore = fenBefore)
+            LiveMoveRequest(
+                fen = fen,
+                uci = uci,
+                playerId = playerId,
+                fenBefore = fenBefore,
+                gameId = gameId,
+            )
         ),
         onResponse = { conn -> consumeRefreshedToken(conn, tokenSink) },
         parse = { body -> ApiJson.decodeFromString<LiveMoveResponse>(body) },

@@ -274,6 +274,28 @@
             </LinearLayout>
 
             <!--
+                Entitlements limit chip — shown when /live/move answers
+                coach_tier.degraded=true (free plan's daily coached-game
+                quota reached; hints continue from the deterministic
+                coach).  Tap opens PaywallActivity.  Mirrors the
+                txtNextTrainingChip treatment above.
+            -->
+            <TextView
+                android:id="@+id/txtUpgradeChip"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/Atrium.Kicker.Cyan"
+                android:paddingStart="@dimen/atrium_space_8"
+                android:paddingEnd="@dimen/atrium_space_8"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:layout_marginTop="@dimen/atrium_space_8"
+                android:background="@color/atrium_bg_surface"
+                android:text="DAILY COACH LIMIT · UPGRADE FOR FULL HINTS"
+                android:visibility="gone"
+                tools:visibility="visible" />
+
+            <!--
                 Footer divider + kicker row.  Reuses the original
                 scoreRow / txtMistakeCategory / txtEngineScore IDs:
                 txtMistakeCategory takes the THEME · X kicker slot

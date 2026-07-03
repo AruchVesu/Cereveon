@@ -53,6 +53,16 @@ class ChessViewModel(
     var secaSafetyGate: SecaSafetyGate? = null,
 ) : ViewModel() {
 
+    /**
+     * Supplier of the current SERVER game id (``games.id`` from
+     * POST /game/start) for the free-tier coached-game admission —
+     * threaded into every /live/move call as ``game_id``
+     * (API_CONTRACTS.md §4).  MainActivity wires this to
+     * ``currentGameId()``; null (unwired, or no server game yet) keeps
+     * today's behaviour — the server fails open and never degrades.
+     */
+    var serverGameIdProvider: (() -> String?)? = null
+
     private var turn: Turn = Turn.HUMAN
     private var aiThinking = false
 
@@ -316,7 +326,12 @@ $moves"""
         viewModelScope.launch(ioDispatcher) {
             val liveResult =
                 if (uci.length in 4..5) {
-                    liveClient.getLiveCoaching(fen, uci, fenBefore = fenBefore)
+                    liveClient.getLiveCoaching(
+                        fen,
+                        uci,
+                        fenBefore = fenBefore,
+                        gameId = serverGameIdProvider?.invoke(),
+                    )
                 } else {
                     null
                 }
@@ -339,6 +354,9 @@ $moves"""
                     classificationOverride = backendClassification,
                     engineSignal = liveEngineSignal,
                     isHumanMoveCoachUpdate = true,
+                    // Entitlements posture: over-quota games get the
+                    // deterministic hint; surface the chip driver.
+                    coachDegraded = liveSuccess?.data?.coachTier?.degraded == true,
                 )
                 onQuickCoachUpdate?.invoke(update)
             }

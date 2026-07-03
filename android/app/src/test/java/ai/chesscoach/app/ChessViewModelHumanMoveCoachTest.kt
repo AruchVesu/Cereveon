@@ -48,17 +48,20 @@ class ChessViewModelHumanMoveCoachTest {
         var lastFen: String? = null
         var lastUci: String? = null
         var lastFenBefore: String? = null
+        var lastGameId: String? = null
 
         override suspend fun getLiveCoaching(
             fen: String,
             uci: String,
             playerId: String,
             fenBefore: String?,
+            gameId: String?,
         ): ApiResult<LiveMoveResponse> {
             callCount++
             lastFen = fen
             lastUci = uci
             lastFenBefore = fenBefore
+            lastGameId = gameId
             return result
         }
     }
@@ -353,5 +356,95 @@ class ChessViewModelHumanMoveCoachTest {
         // The engine score update should NOT carry the hint from the first game
         val engineScoreUpdate = vm2Updates.lastOrNull { !it.isHumanMoveCoachUpdate }
         assertNotEquals("First move hint.", engineScoreUpdate?.explanation)
+    }
+
+    // ------------------------------------------------------------------
+    // 11. Entitlements: serverGameIdProvider threads game_id into
+    //     getLiveCoaching (API_CONTRACTS.md §4 coached-game admission)
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `serverGameIdProvider value reaches getLiveCoaching as gameId`() {
+        val liveClient = RecordingLiveClient(liveSuccess())
+        val vm = ChessViewModel(FakeEngine(), testDispatcher, NeutralEvalClient())
+        vm.liveCoachClient = liveClient
+        vm.serverGameIdProvider = { "srv-game-77" }
+
+        playMove(vm)
+        vm.viewModelScope.cancel(); scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "the current server game id must ride every /live/move call",
+            "srv-game-77",
+            liveClient.lastGameId,
+        )
+    }
+
+    @Test
+    fun `gameId is null when no provider is wired`() {
+        val liveClient = RecordingLiveClient(liveSuccess())
+        val vm = ChessViewModel(FakeEngine(), testDispatcher, NeutralEvalClient())
+        vm.liveCoachClient = liveClient
+
+        playMove(vm)
+        vm.viewModelScope.cancel(); scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "unwired provider must send null (server fails open, never degrades)",
+            null,
+            liveClient.lastGameId,
+        )
+    }
+
+    // ------------------------------------------------------------------
+    // 12. Entitlements: coach_tier.degraded lands on the human-move
+    //     update (drives MainActivity's upgrade/limit chip)
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `coach_tier degraded=true sets coachDegraded on the human-move update`() {
+        val degradedResponse = ApiResult.Success(
+            LiveMoveResponse(
+                status = "ok",
+                hint = "Solid choice.",
+                moveQuality = "GOOD",
+                mode = "LIVE_V1",
+                coachTier = CoachTierDto(plan = "free", degraded = true, remaining = 0),
+            ),
+        )
+        val liveClient = RecordingLiveClient(degradedResponse)
+        val vm = ChessViewModel(FakeEngine(), testDispatcher, NeutralEvalClient())
+        vm.liveCoachClient = liveClient
+
+        val updates = mutableListOf<QuickCoachUpdate>()
+        vm.onQuickCoachUpdate = { updates.add(it) }
+        playMove(vm)
+        vm.viewModelScope.cancel(); scheduler.advanceUntilIdle()
+
+        val humanUpdate = updates.firstOrNull { it.isHumanMoveCoachUpdate }
+        assertNotNull("Expected a human-move coach update", humanUpdate)
+        assertTrue(
+            "coach_tier.degraded must surface as coachDegraded=true",
+            humanUpdate!!.coachDegraded,
+        )
+    }
+
+    @Test
+    fun `coachDegraded defaults to false without coach_tier`() {
+        val liveClient = RecordingLiveClient(liveSuccess())
+        val vm = ChessViewModel(FakeEngine(), testDispatcher, NeutralEvalClient())
+        vm.liveCoachClient = liveClient
+
+        val updates = mutableListOf<QuickCoachUpdate>()
+        vm.onQuickCoachUpdate = { updates.add(it) }
+        playMove(vm)
+        vm.viewModelScope.cancel(); scheduler.advanceUntilIdle()
+
+        val humanUpdate = updates.firstOrNull { it.isHumanMoveCoachUpdate }
+        assertNotNull(humanUpdate)
+        assertTrue(
+            "a pre-entitlements / not-metered response must never show the chip",
+            !humanUpdate!!.coachDegraded,
+        )
     }
 }

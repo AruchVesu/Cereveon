@@ -33,6 +33,31 @@ data class LiveMoveRequest(
     val uci: String,
     @SerialName("player_id") val playerId: String = "demo",
     @SerialName("fen_before") val fenBefore: String? = null,
+    // Distinct-game key for the free-tier entitlements admission
+    // (API_CONTRACTS.md §4): the server meters LLM-coached GAMES per
+    // day, not moves, keyed on this id.  Null (older flows / no server
+    // game yet) is dropped from the wire by ``encodeDefaults=false``
+    // and the server fails OPEN — the hint stays on the LLM path.
+    @SerialName("game_id") val gameId: String? = null,
+)
+
+/**
+ * Entitlements posture attached to POST /live/move responses
+ * (API_CONTRACTS.md §4, additive 2026-07).
+ *
+ * [plan]       "free" / "pro".
+ * [degraded]   True when this hint came from the deterministic coach
+ *              because the game is over the plan's daily coached-game
+ *              quota — the UI shows its upgrade/limit chip.  Engine
+ *              analysis is unaffected; only the hint source changes.
+ * [remaining]  Distinct coached games left today; null while metering
+ *              is dormant ("not metered", distinct from 0).
+ */
+@Serializable
+data class CoachTierDto(
+    val plan: String = "free",
+    val degraded: Boolean = false,
+    val remaining: Int? = null,
 )
 
 /**
@@ -53,4 +78,7 @@ data class LiveMoveResponse(
     @SerialName("move_quality") val moveQuality: String = "unknown",
     val mode: String = "LIVE_V1",
     @SerialName("engine_signal") val engineSignal: EngineSignalDto? = null,
+    // Null when the server pre-dates entitlements (ignoreUnknownKeys
+    // covers the reverse direction) — treated as "not metered".
+    @SerialName("coach_tier") val coachTier: CoachTierDto? = null,
 )

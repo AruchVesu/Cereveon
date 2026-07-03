@@ -67,4 +67,12 @@ data class QuickCoachUpdate(
      * Only human-move updates should be added to the move classification history.
      */
     val isHumanMoveCoachUpdate: Boolean = false,
+    /**
+     * True when /live/move answered with `coach_tier.degraded` — the hint came
+     * from the deterministic coach because this game is over the plan's daily
+     * coached-game quota (API_CONTRACTS.md §4).  Drives the upgrade/limit chip
+     * in the coach dock.  Only meaningful on human-move updates; engine
+     * analysis is unaffected by degradation.
+     */
+    val coachDegraded: Boolean = false,
 )

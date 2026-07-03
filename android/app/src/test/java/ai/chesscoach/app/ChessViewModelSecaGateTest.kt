@@ -50,6 +50,7 @@ class ChessViewModelSecaGateTest {
             uci: String,
             playerId: String,
             fenBefore: String?,
+            gameId: String?,
         ): ApiResult<LiveMoveResponse> {
             callCount++
             return ApiResult.Success(

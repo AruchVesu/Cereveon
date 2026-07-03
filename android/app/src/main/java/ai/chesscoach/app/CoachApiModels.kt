@@ -160,9 +160,65 @@ data class ChatHistoryResponseBody(
  */
 sealed class ApiResult<out T> {
     data class Success<out T>(val data: T) : ApiResult<T>()
-    data class HttpError(val code: Int) : ApiResult<Nothing>()
+
+    /**
+     * Server returned a non-success status code.  [body] carries the
+     * error response body (bounded; null when absent/unreadable) so
+     * callers can act on STRUCTURED error contracts — e.g. the 402
+     * chat-quota body (`{"error": "chat_daily_limit", ...}`, see
+     * API_CONTRACTS.md "Error responses") — instead of only the code.
+     * Additive: every pre-existing `HttpError(code)` construction and
+     * `.code` read is untouched.
+     */
+    data class HttpError(val code: Int, val body: String? = null) : ApiResult<Nothing>()
     data class NetworkError(val cause: Throwable) : ApiResult<Nothing>()
     object Timeout : ApiResult<Nothing>()
+}
+
+/**
+ * Parsed body of the entitlements 402 on POST /chat and /chat/stream
+ * (API_CONTRACTS.md §5 "Errors"): the caller's plan and quota so the
+ * paywall surface can say exactly what ran out.
+ *
+ * `upgrade.product` is intentionally not modelled — the client's Play
+ * catalogue is [PaywallActivity.PLAY_PRODUCT_IDS]; the server hint is
+ * advisory.
+ */
+@Serializable
+data class ChatLimitNotice(
+    val error: String = "",
+    val plan: String = "",
+    val limit: Int = 0,
+    val used: Int = 0,
+) {
+    companion object {
+        private const val ERROR_KEY = "chat_daily_limit"
+
+        /** Parse a raw HTTP error body; null unless it IS the chat-quota contract. */
+        fun fromBody(body: String?): ChatLimitNotice? {
+            if (body.isNullOrBlank()) return null
+            val parsed = try {
+                ApiJson.decodeFromString<ChatLimitNotice>(body)
+            } catch (_: Exception) {
+                return null
+            }
+            return parsed.takeIf { it.error == ERROR_KEY }
+        }
+
+        /**
+         * Parse a [StreamChunk.StreamError] message of the shape
+         * `"HTTP 402: {json body}"` (the stream client appends the error
+         * body to the status line — see [HttpCoachApiClient.chatStream]).
+         * Null for any other status or a body that isn't the quota
+         * contract, so callers can probe every stream error safely.
+         */
+        fun fromStreamErrorMessage(message: String): ChatLimitNotice? {
+            if (!message.startsWith("HTTP 402")) return null
+            val jsonStart = message.indexOf('{')
+            if (jsonStart < 0) return null
+            return fromBody(message.substring(jsonStart))
+        }
+    }
 }
 
 /**
