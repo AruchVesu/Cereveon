@@ -1898,7 +1898,7 @@ service-account credentials from env (`GOOGLE_PLAY_PACKAGE_NAME` /
 | Field | Type | Constraints |
 |-------|------|-------------|
 | `purchase_token` | `string` | The token from Play Billing's `Purchase.getPurchaseToken()`. Non-empty, ≤600 chars, no control characters. |
-| `product_id` | `string` | Play product id. Non-empty, ≤64 chars. Must be a product the server knows (`pro_monthly` → plan `pro`); unknown ids → `400` **before** any Google call. Matches the `upgrade.product` hint in the chat 402 body (§5). |
+| `product_id` | `string` | Play product id. Non-empty, ≤64 chars. Must be a product the server knows (`pro_monthly` → plan `pro`, `pro_yearly` → plan `pro` — both grant the same plan; the billing period is Play-side pricing, not an entitlement distinction); unknown ids → `400` **before** any Google call. `pro_monthly` matches the `upgrade.product` hint in the chat 402 body (§5). |
 
 ### Response (200)
 
