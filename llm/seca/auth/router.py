@@ -718,6 +718,70 @@ def _kick_lichess_import(db: DBSession, player, request: Request) -> None:
         logger.warning("lichess auto-import kick failed for player %s", player_id, exc_info=True)
 
 
+def _maybe_backfill_lichess_import(db: DBSession, player, request: Request) -> None:
+    """Best-effort ONE-TIME Lichess history backfill for a linked player
+    who has no imported games.
+
+    Covers accounts that linked Lichess BEFORE auto-import-on-sign-in
+    shipped (2026-07-03): they hold a ``linked_accounts`` row but have
+    zero ``source='lichess'`` GameEvents, and — because they stay logged
+    in — the /auth/lichess sign-in kick never fires for them again.
+    Hooked into the cold-start GET /auth/me so their history flows in on
+    the next app open, with no re-sign-in and no client change.
+
+    Gated on ZERO imported games so it runs at most once per account: the
+    moment the import inserts its first row, every later /auth/me
+    short-circuits at the ``already_imported`` check.  Coalescing in
+    ``start_import_job`` keeps two cold starts inside the pre-first-row
+    window from spawning duplicate jobs.
+
+    ``LinkedAccount`` / ``GameEvent`` are already bound at module scope by
+    the load-bearing model wildcards at the top of this file, so they
+    need no local import; only ``import_service`` is imported lazily (the
+    circular-import guard shared with ``_kick_lichess_import``).
+
+    Accepted edge: a linked account with genuinely zero importable games
+    (e.g. no rated blitz/rapid/classical) never leaves the zero-games
+    state, so each cold start re-kicks a no-op import.  Bounded by
+    coalescing (one active job at a time) and cheap (Lichess returns an
+    empty stream fast, no analysis runs); rare enough not to warrant a
+    persisted "attempted" marker for v1.
+
+    Never raises — GET /auth/me must return the profile regardless.
+    """
+    from llm.seca.lichess import import_service as lichess_import_service
+
+    player_id = player.id
+    try:
+        linked = (
+            db.query(LinkedAccount.id)
+            .filter(
+                LinkedAccount.player_id == player_id,
+                LinkedAccount.platform == lichess_import_service.PLATFORM_LICHESS,
+            )
+            .first()
+        )
+        if linked is None:
+            return  # password account or unlinked — nothing to backfill
+        already_imported = (
+            db.query(GameEvent.id)
+            .filter(
+                GameEvent.player_id == player_id,
+                GameEvent.source == lichess_import_service.PLATFORM_LICHESS,
+            )
+            .first()
+        )
+        if already_imported is not None:
+            return  # one-time only — games already present
+    except Exception:  # pylint: disable=broad-exception-caught
+        db.rollback()
+        logger.warning("lichess backfill precheck failed for player %s", player_id, exc_info=True)
+        return
+
+    # Reuse the sign-in kick (coalesces against any active job).
+    _kick_lichess_import(db, player, request)
+
+
 @router.post("/lichess")
 @limiter.limit("10/minute")
 def login_lichess(request: Request, req: LichessLoginRequest, db: DBSession = Depends(get_db)):
@@ -827,8 +891,30 @@ def _serialise_player(player) -> dict:
     }
 
 
+def _cold_start_lichess_backfill(
+    request: Request,
+    player=Depends(get_current_player),
+    db: DBSession = Depends(get_db),
+) -> None:
+    """Route dependency wiring the cold-start Lichess backfill onto
+    GET /auth/me — the client's launch-time profile sync (HomeActivity +
+    MainActivity both call it).
+
+    Runs as a dependency, NOT in the ``me`` body, so ``me`` keeps its
+    ``me(player=...)`` shape for the tests that call it directly
+    (test_api_contract_validation / test_auth_update_me /
+    test_full_loop_integration).  ``get_current_player`` is shared with
+    ``me`` via FastAPI's per-request dependency cache, so the token
+    rotation it performs still runs exactly once.
+    """
+    _maybe_backfill_lichess_import(db, player, request)
+
+
 @router.get("/me")
-def me(player=Depends(get_current_player)):
+def me(
+    player=Depends(get_current_player),
+    _backfill: None = Depends(_cold_start_lichess_backfill),
+):
     return _serialise_player(player)
 
 

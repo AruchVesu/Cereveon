@@ -79,7 +79,12 @@ import llm.seca.lichess.models  # noqa: F401
 
 from llm.seca.analysis.historical_pipeline import HistoricalAnalysisPipeline
 from llm.seca.auth.models import Base, Player
-from llm.seca.auth.router import LichessLoginRequest, login_lichess
+from llm.seca.auth.router import (
+    LichessLoginRequest,
+    _maybe_backfill_lichess_import,
+    login_lichess,
+    me,
+)
 from llm.seca.events.models import GameEvent
 from llm.seca.lichess import analysis_service
 from llm.seca.lichess import client as lichess_client
@@ -633,3 +638,103 @@ class TestSignInAutoImport:
             )
         assert result["created"] is True
         assert db_session.query(LichessImportJob).count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Cold-start one-time backfill (GET /auth/me) for pre-existing links
+# ---------------------------------------------------------------------------
+
+
+class TestColdStartBackfill:
+    """`_maybe_backfill_lichess_import` — the /auth/me hook that pulls
+    history for accounts linked before auto-import-on-sign-in shipped.
+
+    BF_01  linked + zero imported games -> kicks a one-time import.
+    BF_02  linked + >=1 imported game    -> no kick (one-time gate).
+    BF_03  not linked                    -> no kick.
+    BF_04  me(player=...) still returns the profile by direct call — the
+           backfill is a route DEPENDENCY, so it never runs on the direct
+           call that test_api_contract_validation / test_auth_update_me
+           rely on.
+    """
+
+    def _link(self, db, player):
+        db.add(
+            LinkedAccount(
+                player_id=player.id,
+                platform=import_service.PLATFORM_LICHESS,
+                external_username="backfilluser",
+            )
+        )
+        db.commit()
+
+    def test_bf_01_linked_zero_games_kicks_backfill(self, db_session, player, monkeypatch):
+        import llm.seca.lichess.router as lichess_router
+
+        fake_executor = _FakeExecutor()
+        monkeypatch.setattr(lichess_router, "_executor", fake_executor)
+        self._link(db_session, player)
+
+        _maybe_backfill_lichess_import(db_session, player, _request_with_app_state())
+
+        job = db_session.query(LichessImportJob).filter_by(player_id=player.id).one()
+        assert job.status == JOB_STATUS_QUEUED
+        assert len(fake_executor.submits) == 1
+        fn, args, kwargs = fake_executor.submits[0]
+        assert fn is import_service.run_import_job
+        assert args == (job.id,)
+        assert kwargs["engine_pool"] == "POOL-SENTINEL"
+
+    def test_bf_02_existing_games_skip_backfill(self, db_session, player, monkeypatch):
+        import llm.seca.lichess.router as lichess_router
+
+        fake_executor = _FakeExecutor()
+        monkeypatch.setattr(lichess_router, "_executor", fake_executor)
+        self._link(db_session, player)
+        # One already-imported Lichess game -> the one-time gate must hold.
+        db_session.add(
+            GameEvent(
+                player_id=player.id,
+                pgn=_VALID_PGN,
+                result="win",
+                accuracy=0.5,
+                weaknesses_json="{}",
+                source=import_service.PLATFORM_LICHESS,
+                external_game_id="already-1",
+            )
+        )
+        db_session.commit()
+
+        _maybe_backfill_lichess_import(db_session, player, _request_with_app_state())
+
+        assert db_session.query(LichessImportJob).count() == 0
+        assert len(fake_executor.submits) == 0
+
+    def test_bf_03_unlinked_skips_backfill(self, db_session, player, monkeypatch):
+        import llm.seca.lichess.router as lichess_router
+
+        fake_executor = _FakeExecutor()
+        monkeypatch.setattr(lichess_router, "_executor", fake_executor)
+        # No LinkedAccount for this player.
+
+        _maybe_backfill_lichess_import(db_session, player, _request_with_app_state())
+
+        assert db_session.query(LichessImportJob).count() == 0
+        assert len(fake_executor.submits) == 0
+
+    def test_bf_04_me_direct_call_still_returns_profile(self):
+        # The backfill is wired as a route dependency, so a direct
+        # me(player=...) call (no request/db) must keep working — this is
+        # the shape test_api_contract_validation & friends rely on.
+        player = SimpleNamespace(
+            id="p-direct",
+            email="direct@test.com",
+            rating=1234.0,
+            confidence=0.5,
+            skill_vector_json="{}",
+            training_xp=7,
+        )
+        result = me(player=player)
+        assert result["id"] == "p-direct"
+        assert result["email"] == "direct@test.com"
+        assert result["training_xp"] == 7

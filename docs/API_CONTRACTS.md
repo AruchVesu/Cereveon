@@ -498,6 +498,20 @@ screen; `rating` and `confidence` are still returned but are no longer shown
 to the user — they continue to drive adaptive opponent selection internally.
 Defaults to `0` for legacy rows.
 
+#### Side effect — cold-start Lichess backfill *(2026-07-03)*
+
+`GET /auth/me` is the Android client's launch-time profile sync (both
+`HomeActivity` and `MainActivity` call it at cold start).  As a best-effort
+side effect it runs a **one-time Lichess history backfill**: if the
+authenticated player has a `/lichess` link but **zero** imported
+(`source='lichess'`) games, it kicks the same v2 import job §16a starts on
+sign-in.  This covers accounts that linked Lichess *before* auto-import-on-sign-in
+shipped — their history flows in on the next app open, with no re-sign-in and
+no client change.  Gated on zero imported games, so it fires at most once per
+account (coalescing prevents duplicate jobs in the pre-first-row window).  The
+backfill never affects the response: `/auth/me` returns the profile above
+regardless of import outcome.
+
 ### `PATCH /auth/me`
 
 Partial profile update — used by the Onboarding flow + the Settings
@@ -791,7 +805,9 @@ Superset of the §15/§16 shape — the Android client deserialises it as
   player's game history into Cereveon's analysis with no manual Import
   tap.  Failure here never fails the sign-in;
   `GET /lichess/status.active_import_job_id` (§29) exposes the job to
-  clients that want progress.
+  clients that want progress.  Accounts that linked *before* this shipped
+  are covered by the complementary cold-start backfill on `GET /auth/me`
+  (§10) — no re-sign-in needed.
 
 ### Errors
 
