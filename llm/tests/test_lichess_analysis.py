@@ -631,6 +631,8 @@ class TestSignInAutoImport:
         assert fn is import_service.run_import_job
         assert args == (job.id,)
         assert kwargs["engine_pool"] == "POOL-SENTINEL"
+        # Auto-import includes casual games (rated=False => no rated filter).
+        assert kwargs["rated"] is False
 
     def test_an_10_kick_failure_never_fails_sign_in(self, db_session, monkeypatch):
         _patch_oauth_success(monkeypatch)
@@ -696,6 +698,8 @@ class TestColdStartBackfill:
         assert fn is import_service.run_import_job
         assert args == (job.id,)
         assert kwargs["engine_pool"] == "POOL-SENTINEL"
+        # Auto-import includes casual games (rated=False => no rated filter).
+        assert kwargs["rated"] is False
 
     def test_bf_02_existing_games_skip_backfill(self, db_session, player, monkeypatch):
         import llm.seca.lichess.router as lichess_router

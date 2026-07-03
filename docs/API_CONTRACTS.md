@@ -807,11 +807,14 @@ Superset of the §15/§16 shape — the Android client deserialises it as
   same-human / two-logins case (handle linked on a password account,
   OAuth sign-in on another that could otherwise never link).
 - Best-effort auto-import *(2026-07-03)*: after the link step, the same
-  v2 background job as §31 is started (`max_games=50`, rated only,
+  v2 background job as §31 is started (`max_games=50`, **rated + casual**,
   watermark-incremental, per-player coalescing), including its
   post-stream engine analysis — so signing in with Lichess feeds the
   player's game history into Cereveon's analysis with no manual Import
-  tap.  Failure here never fails the sign-in;
+  tap.  (The auto-import passes `rated=false`, i.e. no rated filter, so
+  casual games come through too; calibration reads perf ratings from the
+  profile, not individual games, so casual games don't skew it, and the
+  import never runs SkillUpdater.)  Failure here never fails the sign-in;
   `GET /lichess/status.active_import_job_id` (§29) exposes the job to
   clients that want progress.  Accounts that linked *before* this shipped
   are covered by the complementary cold-start backfill on `GET /auth/me`

@@ -680,6 +680,15 @@ def _ensure_lichess_link(db: DBSession, player, account: dict) -> None:
 # LinkedAccount watermark, so repeat sign-ins only pull new games.
 _SIGNIN_IMPORT_MAX_GAMES = 50
 
+# Include CASUAL games as well as rated in the auto-import.  ``rated`` on
+# the Lichess client is a filter, not a category: ``rated=False`` sends no
+# ``rated`` param, so Lichess returns rated + casual.  We want everything
+# for the analysis surface — a mistake in a casual game is still a mistake,
+# and calibration reads perf RATINGS from the profile (not individual
+# games), so casual games don't skew it.  The import path never runs
+# SkillUpdater on imported games, so there's no live-rating impact either.
+_SIGNIN_IMPORT_RATED = False
+
 
 def _kick_lichess_import(db: DBSession, player, request: Request) -> None:
     """Best-effort: start an incremental history import after OAuth sign-in.
@@ -722,7 +731,7 @@ def _kick_lichess_import(db: DBSession, player, request: Request) -> None:
                 lichess_import_service.run_import_job,
                 job_id,
                 max_games=_SIGNIN_IMPORT_MAX_GAMES,
-                rated=True,
+                rated=_SIGNIN_IMPORT_RATED,
                 engine_pool=pool,
             ),
         )
