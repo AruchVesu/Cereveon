@@ -441,7 +441,7 @@ def start_import_job(
     player: Player,
     *,
     max_games: int,
-    dispatch: Callable[[str], None] | None = None,
+    dispatch: Callable[[str], object] | None = None,
 ) -> LichessImportJob:
     """Create-or-coalesce an import job for the player (v2 async).
 
