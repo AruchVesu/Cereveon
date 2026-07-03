@@ -367,6 +367,17 @@ Mitigation:
 - **Token hygiene.** The Lichess token is revoked best-effort immediately
   after the account fetch, on both the success and the
   fetch-failed-after-exchange paths.
+- **Verified-owner link claim (2026-07-03).** OAuth sign-in may *claim* a
+  Lichess handle already linked to a different Cereveon account
+  (`link_account(claim_from_other_player=True)`), removing that account's
+  link row. This is safe because reaching the OAuth path *requires
+  controlling the Lichess account* (the authorization-code exchange), so
+  the claimant is the true owner; it can only take a link from a
+  **self-asserted** `/lichess/link` (a typed-in username, never verified).
+  The manual `/lichess/link` route keeps rejecting cross-player conflicts
+  with 409 — an unverified caller can never move a link. The claim deletes
+  only the losing account's `linked_accounts` row (its imported
+  `game_events` stay as history) and cancels its in-flight import jobs.
 
 Residual risk (accepted, documented — the §5 "new auth path" trigger for
 this section): **unregistered-public-client impersonation by A7.**

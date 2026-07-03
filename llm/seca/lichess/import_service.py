@@ -140,7 +140,12 @@ class LichessNotLinkedError(LichessImportError):
 
 
 def link_account(
-    db: DBSession, player: Player, lichess_username: str, *, profile: dict | None = None
+    db: DBSession,
+    player: Player,
+    lichess_username: str,
+    *,
+    profile: dict | None = None,
+    claim_from_other_player: bool = False,
 ) -> dict:
     """Attach a Lichess handle to the given player.
 
@@ -153,9 +158,21 @@ def link_account(
        (``POST /auth/lichess``) already holds the ``GET /api/account``
        response, which is a superset of the public-profile shape, and
        its identity is verified rather than self-asserted.
-    2. Reject if that canonical id is already linked to a *different*
-       player (raises ``LichessAlreadyLinkedError``, surfaced as 409
-       by the router).
+    2. Handle a *different* player already owning that canonical id:
+       - Default (``claim_from_other_player=False`` — the self-asserted
+         ``POST /lichess/link`` path): reject with
+         ``LichessAlreadyLinkedError`` (409).  A user who merely typed a
+         username must not be able to steal another account's link.
+       - ``claim_from_other_player=True`` (the OAuth sign-in path, where
+         the caller PROVED ownership via the authorization-code
+         exchange): take the link over — delete the other player's link
+         row.  Verified ownership overrides a self-asserted claim, and
+         it's the only claim that can (an attacker would have to actually
+         control the Lichess account to reach this path).  The other
+         account's imported ``game_events`` are left as history; only its
+         ``linked_accounts`` row is removed.  Fixes the same-human /
+         two-Cereveon-logins case where the handle was manually linked on
+         one account and OAuth sign-in on the other could never link.
     3. Delete any existing link this player has on the Lichess
        platform (re-link replaces; we never accumulate stale rows).
     4. Insert the fresh ``linked_accounts`` row.
@@ -181,9 +198,26 @@ def link_account(
         .first()
     )
     if conflict is not None:
-        raise LichessAlreadyLinkedError(
-            f"Lichess account '{canonical_id}' is linked to another player"
+        if not claim_from_other_player:
+            raise LichessAlreadyLinkedError(
+                f"Lichess account '{canonical_id}' is linked to another player"
+            )
+        # Verified OAuth ownership claims the handle from the other
+        # account's self-asserted link.  Cancel that account's in-flight
+        # import jobs first (same ordering as unlink_account) so no
+        # worker is left running against a link that's about to vanish.
+        db.query(LichessImportJob).filter(
+            LichessImportJob.player_id == conflict.player_id,
+            LichessImportJob.status.in_(JOB_STATUS_ACTIVE),
+        ).update(
+            {
+                LichessImportJob.status: JOB_STATUS_FAILED,
+                LichessImportJob.error_message: "lichess handle claimed by verified owner",
+            },
+            synchronize_session=False,
         )
+        db.delete(conflict)
+        db.flush()
 
     # Step 3: replace any prior link for this player.
     existing = (

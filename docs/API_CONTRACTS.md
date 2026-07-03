@@ -795,9 +795,17 @@ Superset of the §15/§16 shape — the Android client deserialises it as
   fails after a successful exchange, so no live token is left dangling.
 - Best-effort auto-link: when the player has no `/lichess` link yet, the
   game-import link (§27) + first-link calibration are created from the
-  already-fetched account profile.  Link failure (including a cross-player
-  409 conflict) never fails the sign-in, and an existing link — even to a
-  different handle — is never modified.
+  already-fetched account profile.  Link failure never fails the sign-in,
+  and *this* player's existing link is never modified.  When the handle is
+  linked to a **different** Cereveon account, OAuth sign-in **claims** it
+  (*2026-07-03*): verified OAuth ownership overrides another account's
+  self-asserted `/lichess/link`.  `link_account`'s
+  `claim_from_other_player` flag is set only on this verified path — the
+  manual `/lichess/link` route (§27) still rejects conflicts with 409.
+  The losing account's active import jobs are cancelled and its link row
+  removed; its imported games remain as history.  This resolves the
+  same-human / two-logins case (handle linked on a password account,
+  OAuth sign-in on another that could otherwise never link).
 - Best-effort auto-import *(2026-07-03)*: after the link step, the same
   v2 background job as §31 is started (`max_games=50`, rated only,
   watermark-incremental, per-player coalescing), including its

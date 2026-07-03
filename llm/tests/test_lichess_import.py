@@ -33,6 +33,8 @@ IS_01  link_account inserts a LinkedAccount row.
 IS_02  link_account stores Lichess canonical lowercase id, not the raw input.
 IS_03  link_account second call with same handle replaces (no duplicate).
 IS_04  link_account rejects when another player already owns the handle.
+IS_04b link_account with claim_from_other_player=True takes the link over
+       (OAuth-verified owner) and cancels the losing account's jobs.
 IS_05  First-link calibration fires on default-rated player.
 IS_06  First-link calibration is skipped for a non-default player.
 IS_07  unlink_account removes the row; imported GameEvents are retained.
@@ -526,6 +528,40 @@ class TestLinkAccount:
         import_service.link_account(db_session, other_player, "alice")
         with pytest.raises(LichessAlreadyLinkedError):
             import_service.link_account(db_session, player, "alice")
+
+    # IS_04b — verified-owner (OAuth) claim takes the link over instead of
+    # rejecting, and cancels the losing account's active import jobs.
+    def test_link_claim_takes_over_from_another_player(
+        self, db_session, player, other_player, monkeypatch
+    ):
+        from llm.seca.lichess.models import (
+            JOB_STATUS_FAILED,
+            JOB_STATUS_RUNNING,
+            LichessImportJob,
+        )
+
+        _stub_profile(monkeypatch, profile={"id": "alice", "perfs": {}})
+        import_service.link_account(db_session, other_player, "alice")
+        db_session.add(
+            LichessImportJob(
+                player_id=other_player.id,
+                status=JOB_STATUS_RUNNING,
+                target_max_games=50,
+            )
+        )
+        db_session.commit()
+
+        _stub_profile(monkeypatch, profile={"id": "alice", "perfs": {}})
+        import_service.link_account(
+            db_session, player, "alice", claim_from_other_player=True
+        )
+
+        rows = db_session.query(LinkedAccount).filter_by(external_username="alice").all()
+        assert len(rows) == 1
+        assert rows[0].player_id == player.id  # link moved to the OAuth owner
+        # The losing account's in-flight import job was cancelled.
+        job = db_session.query(LichessImportJob).filter_by(player_id=other_player.id).one()
+        assert job.status == JOB_STATUS_FAILED
 
     # IS_05 — default-rated player gets calibrated.
     def test_first_link_calibrates_default_player(self, db_session, player, monkeypatch):

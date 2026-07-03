@@ -38,8 +38,8 @@ LI_04  Lichess rate limit → 503; upstream / parse failure → 502.
 LI_05  Schema rejects a non-RFC-7636 code_verifier.
 LI_06  Schema rejects control characters in the authorization code.
 LI_07  Auto-link creates the LinkedAccount row + first-link calibration.
-LI_08  Cross-player link conflict: sign-in still succeeds, the existing
-       owner keeps the link.
+LI_08  Cross-player conflict: OAuth-verified sign-in CLAIMS the handle
+       from another account's self-asserted link (verified beats typed-in).
 LI_09  An existing link (even to a different handle) is never clobbered.
 LI_10  The synthetic email shape is rejected by the /auth/register email
        validator — the lichess: namespace cannot be squatted.
@@ -412,7 +412,12 @@ class TestLichessSignIn:
         # First-link calibration from the rapid perf in ACCOUNT_JSON.
         assert player.rating == pytest.approx(1907.0)
 
-    def test_li_08_cross_player_conflict_does_not_block_sign_in(self, db_session, monkeypatch):
+    def test_li_08_oauth_claims_link_from_another_account(self, db_session, monkeypatch):
+        # A different Cereveon account holds the handle via a self-asserted
+        # (manual) link.  OAuth-verified sign-in now CLAIMS it: verified
+        # ownership overrides the typed-in claim.  (Superseded the earlier
+        # "squatter keeps the link" policy — see link_account's
+        # claim_from_other_player rationale.)
         squatter = Player(
             email="squatter@test.com",
             password_hash="dummy",
@@ -431,15 +436,15 @@ class TestLichessSignIn:
 
         result = _sign_in(db_session, monkeypatch)
         assert result["created"] is True
-        # The squatter keeps the link; the OAuth player gets none (v1
-        # policy: never move links between accounts during sign-in).
+        # Exactly one link for the handle, now owned by the OAuth player.
         rows = (
             db_session.query(LinkedAccount)
             .filter_by(platform=PLATFORM_LICHESS, external_username="chesswizard")
             .all()
         )
         assert len(rows) == 1
-        assert rows[0].player_id == squatter.id
+        assert rows[0].player_id == result["player_id"]
+        assert rows[0].player_id != squatter.id
 
     def test_li_09_existing_link_never_clobbered(self, db_session, monkeypatch):
         first = _sign_in(db_session, monkeypatch)
