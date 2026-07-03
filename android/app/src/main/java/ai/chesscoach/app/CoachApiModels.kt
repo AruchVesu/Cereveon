@@ -222,6 +222,39 @@ data class ChatLimitNotice(
 }
 
 /**
+ * Parsed body of the entitlements 402 on POST /game/start
+ * (API_CONTRACTS.md §11 "Errors"): the free tier is 1 coached game/day,
+ * hard-blocked.  The client renders this as a non-dismissible paywall
+ * ("come back tomorrow") and does NOT enter a game.
+ *
+ * Same Shape B envelope as [ChatLimitNotice] with a distinct `error`
+ * discriminator so the game gate is never confused with the chat gate
+ * (or any other 402, e.g. the billing-endpoint Shape A body).
+ */
+@Serializable
+data class GameLimitNotice(
+    val error: String = "",
+    val plan: String = "",
+    val limit: Int = 0,
+    val used: Int = 0,
+) {
+    companion object {
+        private const val ERROR_KEY = "game_daily_limit"
+
+        /** Parse a raw HTTP error body; null unless it IS the game-limit contract. */
+        fun fromBody(body: String?): GameLimitNotice? {
+            if (body.isNullOrBlank()) return null
+            val parsed = try {
+                ApiJson.decodeFromString<GameLimitNotice>(body)
+            } catch (_: Exception) {
+                return null
+            }
+            return parsed.takeIf { it.error == ERROR_KEY }
+        }
+    }
+}
+
+/**
  * Discriminated union for a single Server-Sent Event from POST /chat/stream.
  *
  *  - [Chunk]       A partial text fragment to be appended to the assistant message.

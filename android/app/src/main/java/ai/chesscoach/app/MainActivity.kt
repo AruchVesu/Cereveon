@@ -1125,7 +1125,22 @@ class MainActivity : AppCompatActivity() {
                         .apply()
                     Log.d("GAME", "Session started: ${r.data.gameId}")
                 }
-                is ApiResult.HttpError -> Log.w("GAME", "startGame HTTP ${r.code}")
+                is ApiResult.HttpError -> {
+                    // Free-tier daily game limit (1 game/day) → hard block.
+                    // The server returned no game_id, so there is no playable
+                    // game: surface the paywall and leave MainActivity so the
+                    // user lands back on Home ("come back tomorrow").  Any
+                    // other HTTP error is the pre-existing best-effort no-op
+                    // (the local board still works; /game/finish tolerates a
+                    // null server game id).
+                    if (r.code == 402 && GameLimitNotice.fromBody(r.body) != null) {
+                        Log.d("GAME", "startGame blocked — daily game limit")
+                        startActivity(Intent(this@MainActivity, PaywallActivity::class.java))
+                        finish()
+                    } else {
+                        Log.w("GAME", "startGame HTTP ${r.code}")
+                    }
+                }
                 is ApiResult.NetworkError -> Log.w("GAME", "startGame network error", r.cause)
                 ApiResult.Timeout -> Log.w("GAME", "startGame timed out")
             }
