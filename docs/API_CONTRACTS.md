@@ -1871,6 +1871,67 @@ puzzle — or the week-complete state — without a second round-trip.
 
 ---
 
+## 36. `POST /billing/google/verify`
+
+**Host:** `llm/seca/billing/router.py`
+**Auth:** `Authorization: Bearer <token>` required
+**Rate limit:** 10 / minute
+
+Verify a Google Play purchase token server-side and activate the
+purchased plan for the **authenticated player** (owner-scoped by
+construction — the body carries no player identity). The client's
+claim is never trusted: entitlement comes only from the Google Play
+Developer API (`purchases.subscriptionsv2.get`), reached with
+service-account credentials from env (`GOOGLE_PLAY_PACKAGE_NAME` /
+`GOOGLE_PLAY_SA_EMAIL` / `GOOGLE_PLAY_SA_PRIVATE_KEY` — see
+`.env.example`).
+
+### Request body
+
+```json
+{
+  "purchase_token": <string>,
+  "product_id":     <string>
+}
+```
+
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `purchase_token` | `string` | The token from Play Billing's `Purchase.getPurchaseToken()`. Non-empty, ≤600 chars, no control characters. |
+| `product_id` | `string` | Play product id. Non-empty, ≤64 chars. Must be a product the server knows (`pro_monthly` → plan `pro`); unknown ids → `400` **before** any Google call. Matches the `upgrade.product` hint in the chat 402 body (§5). |
+
+### Response (200)
+
+```json
+{
+  "plan":       "pro",
+  "product_id": "pro_monthly",
+  "state":      "SUBSCRIPTION_STATE_ACTIVE"
+}
+```
+
+Returned **only after** the plan flip is committed — `set_plan`
+re-raises on persistence failure, so a 200 is never a fake success.
+`state` is Google's `subscriptionState` verbatim.
+`SUBSCRIPTION_STATE_ACTIVE`, `_IN_GRACE_PERIOD`, and `_CANCELED`
+(auto-renew off, paid period still running) all count as entitled;
+`_EXPIRED` does not. Expiry-driven automatic downgrade is a deferred
+follow-up (Play RTDN webhook).
+
+### Errors
+
+| Status | Cause |
+|--------|-------|
+| `400`  | Unknown `product_id` (Shape A: `{"detail": "unknown product_id"}`). |
+| `401`  | Missing or invalid `Authorization` header. |
+| `402`  | Google answered, and the token carries no entitlement — expired / refunded / revoked / never real (Shape A: `{"detail": "purchase not active (<state>)"}`). The plan is **not** flipped. |
+| `422`  | Body validation failed. |
+| `429`  | Rate limit exceeded. |
+| `502`  | Google OAuth / Play API unreachable or answered abnormally — no verdict exists; the client should retry later. Plan unchanged. |
+| `503`  | Server has no `GOOGLE_PLAY_*` credentials configured (deploys without billing stay safe and loud, never fake-success). |
+
+---
+
 ## Error responses
 
 The API emits **two distinct error-body shapes** that any client (the
@@ -1929,6 +1990,9 @@ Used only by three surfaces, all of which return a constructed
 | 400 | B | `{"error": "Invalid Content-Length"}` | `_LimitBodySize` middleware: Content-Length header doesn't parse as int. |
 | 401 | A | `{"detail": "Invalid or expired token"}` / `{"detail": "Missing token"}` / `{"detail": "Invalid credentials"}` | `get_current_player` / `logout` / `login` failures; raw `Authorization` header parse on `/auth/logout`. |
 | 402 | B | `{"error": "chat_daily_limit", "plan": "free", "limit": 3, "used": 3, "upgrade": {"product": "pro_monthly"}}` | Entitlements chat quota exhausted on `/chat` / `/chat/stream` (only when `SECA_ENTITLEMENTS_ENFORCED` is on). The extra keys are contract, not decoration — the paywall sheet renders them. No `X-Auth-Token` header (non-2xx). |
+| 402 | A | `{"detail": "purchase not active (SUBSCRIPTION_STATE_EXPIRED)"}` | `/billing/google/verify` (§36): Google's verdict is that the token carries no entitlement. Plan not flipped. |
+| 502 | A | `{"detail": "purchase verification temporarily unavailable"}` | `/billing/google/verify` (§36): Google OAuth / Play API unreachable or abnormal — retry later. |
+| 503 | A | `{"detail": "purchase verification not configured"}` | `/billing/google/verify` (§36): `GOOGLE_PLAY_*` service-account env vars unset on this deploy. |
 | 403 | A | `{"detail": "not your game"}` | Authenticated player operating on another player's resource (game lifecycle). |
 | 404 | A | `{"detail": "no active game"}` / `{"detail": "game not found"}` / `{"detail": "opening not found"}` | Resource-not-found across `/game/*`, `/repertoire/*`. |
 | 409 | A | `{"detail": "game already finished"}` | Game-lifecycle conflict (checkpointing a finished game). |

@@ -41,6 +41,7 @@ from llm.seca.training.router import router as training_router
 from llm.seca.mistakes.router import router as mistakes_router
 from llm.seca.coach.study_plan.router import router as study_plan_router
 from llm.seca.entitlements import service as entitlements
+from llm.seca.billing.router import router as billing_router
 
 # register SECA models
 import llm.seca.events.models
@@ -783,6 +784,7 @@ app.include_router(lichess_router)
 app.include_router(training_router)
 app.include_router(mistakes_router)
 app.include_router(study_plan_router)
+app.include_router(billing_router)
 app.include_router(
     inference_router,
     prefix="/seca",
