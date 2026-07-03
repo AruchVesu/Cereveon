@@ -1106,7 +1106,7 @@ class TestRouter:
 import threading
 import time
 
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool
 
 from llm.seca.lichess import _locks_guard, _player_import_locks
 from llm.seca.lichess.models import (
@@ -1320,15 +1320,24 @@ class TestImportJobLifecycle:
 class TestCoalesce:
     """IJ_02 — real two-thread race against the per-player lock."""
 
-    def test_coalesce_concurrent_starts_same_player(self, cleared_player_locks):
-        # Shared engine across threads (StaticPool keeps the single
-        # SQLite :memory: DB shared).  The default per-test fixture
-        # uses NullPool which gives each connection a fresh DB —
-        # useless for a multi-thread race test.
+    def test_coalesce_concurrent_starts_same_player(self, cleared_player_locks, tmp_path):
+        # A real on-disk temp DB with per-connection pooling — NOT
+        # ``:memory:`` + StaticPool.  The race under test is the
+        # APPLICATION-level per-player lock inside ``start_import_job``
+        # (``get_player_import_lock``), but StaticPool hands both worker
+        # threads the SAME ``sqlite3`` connection object, adding a
+        # DRIVER-level race the lock never claimed to cover: under CI
+        # load the interleaved cursor use threw
+        # ``InterfaceError('bad parameter or other API misuse')`` in one
+        # worker and ``BrokenBarrierError`` in the other (main run
+        # 28672672287, 2026-07-03) even though the coalesce logic was
+        # correct.  NullPool gives every session its own connection to
+        # the shared file, so the only concurrency left is exactly the
+        # one this test exists to exercise; sqlite3's default 5 s busy
+        # timeout absorbs the brief window where both connections write.
         engine = create_engine(
-            "sqlite:///:memory:",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
+            "sqlite:///" + (tmp_path / "coalesce.db").as_posix(),
+            poolclass=NullPool,
         )
         Base.metadata.create_all(bind=engine)
         SessionFactory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -1384,6 +1393,10 @@ class TestCoalesce:
         with SessionFactory() as db:
             n = db.query(LichessImportJob).filter_by(player_id=player_id).count()
             assert n == 1, f"expected exactly 1 row, got {n}"
+
+        # NullPool closes connections on session close, but dispose
+        # explicitly so the tmp file is releasable on Windows runs.
+        engine.dispose()
 
 
 class TestUnlinkTerminatesRunning:
