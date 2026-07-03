@@ -202,13 +202,28 @@ llm_errors_total = Counter(
 )
 
 
-# DeepSeek pricing as of 2026-05.  Tuple is (prompt_per_1k, completion_per_1k)
-# in USD.  Revisit on every COACH_DEEPSEEK_MODEL bump or annually,
-# whichever comes first.
+# DeepSeek pricing, verified against the official page 2026-07-03.
+# Tuple is (prompt_per_1k, completion_per_1k) in USD, billed at the
+# cache-MISS input rate (the cache-hit discount is not modelled, so the
+# cost metric slightly OVERSTATES true spend — acceptable: conservative).
 # Source: https://api-docs.deepseek.com/quick_start/pricing
-# revisit: 2026-08
+#
+# revisit: 2026-07-15 — TWO dated events, both before the old 2026-08
+# note would have fired:
+#   1. Mid-July 2026: DeepSeek has announced a price increase (~2x per
+#      token).  Update BOTH rows when it lands; the freemium margins
+#      were checked at 2x and hold (see the unit-economics memory /
+#      PaywallActivityTest launch-pricing rationale).
+#   2. 2026-07-24: the model NAMES deepseek-chat / deepseek-reasoner are
+#      deprecated in favour of deepseek-v4-flash (non-thinking /
+#      thinking).  The v4-flash row below exists so bumping
+#      COACH_DEEPSEEK_MODEL does not silently zero the cost metric
+#      (_cost_for returns 0.0 for unknown model names).
 _PRICE_PER_1K: dict[str, tuple[float, float]] = {
     "deepseek-chat": (0.00014, 0.00028),
+    # Same engine as deepseek-chat post-V4 (the legacy name is an alias
+    # for v4-flash non-thinking); priced identically today.
+    "deepseek-v4-flash": (0.00014, 0.00028),
     # deepseek-reasoner is ~4x; price-listed as cache-miss input + reasoning output.
     "deepseek-reasoner": (0.00055, 0.00219),
 }

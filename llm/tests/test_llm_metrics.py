@@ -103,6 +103,25 @@ def test_llm_met_01_cost_matches_price_table():
     assert cost == pytest.approx(expected, rel=1e-6)
 
 
+def test_llm_met_01b_v4_flash_priced_same_as_deepseek_chat():
+    """LLM_MET_01b: deepseek-v4-flash must have a price row.
+
+    The legacy name deepseek-chat is deprecated 2026-07-24 in favour of
+    deepseek-v4-flash (same engine, non-thinking mode).  Without this
+    row, bumping COACH_DEEPSEEK_MODEL would silently zero the cost
+    metric (unknown models cost 0.0 by design — LLM_MET_02).  Priced
+    identically to deepseek-chat today; when DeepSeek's announced
+    mid-July 2026 increase (~2x) lands, update BOTH rows and BOTH
+    pins together.
+    """
+    from llm import observability
+
+    assert observability.cost_for_call(
+        "deepseek-v4-flash", 1000, 500
+    ) == pytest.approx(observability.cost_for_call("deepseek-chat", 1000, 500), rel=1e-9)
+    assert observability.cost_for_call("deepseek-v4-flash", 1000, 500) > 0.0
+
+
 def test_llm_met_02_unknown_model_returns_zero_and_does_not_raise():
     """LLM_MET_02: An unknown model logs a warning but never raises.
     Cost is an observability signal, not a control signal."""
