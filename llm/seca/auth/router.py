@@ -33,6 +33,7 @@ from llm.seca.chat.models import *  # noqa: F401,F403
 from llm.seca.lichess.models import *  # noqa: F401,F403
 from llm.seca.training.models import *  # noqa: F401,F403
 from llm.seca.coach.study_plan.models import *  # noqa: F401,F403
+from llm.seca.entitlements.models import *  # noqa: F401,F403
 
 # pylint: enable=wildcard-import,unused-wildcard-import
 
@@ -140,6 +141,22 @@ def init_schema() -> None:
             "players",
             "training_xp",
             "INTEGER DEFAULT 0",
+        )
+
+        # Player.plan — subscription tier for the freemium entitlements
+        # layer ("free" / "pro").  Dormant this phase: written only by
+        # the (future) Google Play billing verification endpoint, read
+        # only by llm.seca.entitlements once SECA_ENTITLEMENTS_ENFORCED
+        # turns on.  Constant DEFAULT backfills every legacy row to the
+        # free plan on both dialects (same ADD COLUMN semantics as
+        # training_xp above).  The usage_counters table that pairs with
+        # this column is NEW, so create_all covers it — only this
+        # pre-existing-table column needs the in-place migration.
+        _ensure_column(
+            conn,
+            "players",
+            "plan",
+            _column_type_for_dialect("TEXT DEFAULT 'free'", "VARCHAR DEFAULT 'free'"),
         )
 
         # Player.lichess_user_id — OAuth identity for "Sign in with
