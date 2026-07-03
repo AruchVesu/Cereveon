@@ -8,6 +8,7 @@ import chess
 import httpx
 import time
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -1666,6 +1667,28 @@ async def _live_move_quality(
     return classify_move_quality(cp_before, cp_after)
 
 
+def _chat_limit_response(decision) -> JSONResponse:
+    """402 payment-required for an over-quota chat turn.
+
+    Shape B error body (``error`` key — see API_CONTRACTS.md "Error
+    responses") plus the metering fields the Android paywall sheet
+    renders.  Emitted as a plain ``JSONResponse`` from the route (never
+    ``raise HTTPException``) and always non-2xx, so the
+    ``commit_pending_auth_rotation`` middleware skips the rotation and
+    the presented JWT stays valid for the client's next call.
+    """
+    return JSONResponse(
+        status_code=402,
+        content={
+            "error": "chat_daily_limit",
+            "plan": decision.plan,
+            "limit": decision.limit,
+            "used": decision.used,
+            "upgrade": {"product": "pro_monthly"},
+        },
+    )
+
+
 @app.post("/chat")
 @limiter.limit("10/minute")
 async def chat(
@@ -1688,7 +1711,20 @@ async def chat(
     failure paths (5xx, validator rejection of even the deterministic
     fallback) intentionally do NOT happen — the user will retry and
     the next successful exchange replaces the lost turn.
+
+    Entitlements (dormant until SECA_ENTITLEMENTS_ENFORCED is on): the
+    plan's daily chat quota is pre-checked before any engine/LLM work
+    (over limit → the documented 402 body) and consumed only alongside
+    the same 2xx side-effect boundary as persistence, so a failed
+    request never eats a turn.
     """
+    # Free-tier chat quota — checked FIRST so an over-limit turn costs
+    # no Stockfish/DeepSeek work, and returned as non-2xx so the
+    # token-rotation middleware leaves the presented JWT valid.
+    tier = entitlements.check(db, player, entitlements.METRIC_CHAT_TURN)
+    if not tier.allowed:
+        return _chat_limit_response(tier)
+
     # Server-derived context replaces ``req.player_profile`` and
     # ``req.past_mistakes`` so the coach sees authoritative player
     # state, not a possibly-stale client cache.  Request-body fields
@@ -1748,6 +1784,12 @@ async def chat(
             "mode": fallback.mode,
         }
         validate_chat_response(response)
+
+    # Consume one chat turn only now that a validated reply exists —
+    # the same side-effect boundary as persistence below, so a 5xx or
+    # double validator failure above never eats quota.  record() is
+    # fail-open internally (rollback + warning on DB trouble).
+    entitlements.record(db, player, entitlements.METRIC_CHAT_TURN)
 
     # Persist the exchange — server-authoritative chat history.
     # ``_last_user_message`` walks the request's message list to find
@@ -1816,13 +1858,32 @@ async def chat_stream(
     can lose the row, the trade-off for real streaming where the final
     reply is unknown until the end).  JWT rotation is owned here exactly as
     before (X-Auth-Token header pre-set; DB commit after the first chunk).
+
+    Entitlements: the daily chat quota is pre-checked BEFORE the
+    rotation takeover and before the StreamingResponse is built, so an
+    over-limit turn is a plain HTTP 402 JSON response (the Android
+    client reads non-200 bodies before opening the SSE reader), never
+    an SSE ``abort``.  The turn is consumed at the terminal event,
+    mirroring persistence.
     """
+    # Free-tier chat quota — same gate as /chat, placed before ANY
+    # work (rotation pop, engine eval, stream construction).  Non-2xx,
+    # so the rotation middleware leaves the presented JWT valid.
+    tier = entitlements.check(db, player, entitlements.METRIC_CHAT_TURN)
+    if not tier.allowed:
+        return _chat_limit_response(tier)
+
     derived_profile = _derive_player_profile(player)
     derived_past_mistakes = _derive_past_mistakes(player)
     stockfish_json = await _chat_stockfish_json(req.fen)
     turns = [_ChatPipelineTurn(role=t.role, content=t.content) for t in req.messages]
     user_msg = _last_user_message(req.messages)
     player_id = str(player.id)
+    # Plain-attribute snapshot for the quota consumer below: by the time
+    # the SSE generator runs, the request-scoped session is closed and
+    # ``player`` may be a detached/expired ORM instance whose attribute
+    # access raises — the service only needs ``id`` + ``plan``.
+    player_snapshot = SimpleNamespace(id=player_id, plan=getattr(player, "plan", "free"))
 
     # Take ownership of the JWT rotation from the
     # ``commit_pending_auth_rotation`` middleware: pop it so the middleware
@@ -1859,6 +1920,25 @@ async def chat_stream(
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "chat/stream history save failed (%s: %s); reply still streamed",
+                type(exc).__name__,
+                exc,
+            )
+
+    def _record_turn() -> None:
+        # Consume one chat turn at the terminal event — the streaming
+        # twin of /chat's post-validation record().  Fresh session for
+        # the same reason as _persist; called exactly where _persist is
+        # (done / abort / defensive tail), so "counted" and "persisted"
+        # can never drift apart.  Best-effort: quota loss must not
+        # break a stream that already delivered its reply.
+        try:
+            from llm.seca.auth.router import SessionLocal as _SessionLocal  # noqa: PLC0415
+
+            with _SessionLocal() as _db:
+                entitlements.record(_db, player_snapshot, entitlements.METRIC_CHAT_TURN)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "chat/stream quota record failed (%s: %s); turn not counted",
                 type(exc).__name__,
                 exc,
             )
@@ -1927,6 +2007,7 @@ async def chat_stream(
             elif isinstance(event, _StreamDone):
                 saw_terminal = True
                 _persist(event.reply, event.mode)
+                _record_turn()
                 yield _sse(
                     {"type": "done", "engine_signal": event.engine_signal, "mode": event.mode}
                 )
@@ -1934,6 +2015,7 @@ async def chat_stream(
                 saw_terminal = True
                 fb = _fallback_reply()
                 _persist(fb.reply, fb.mode)
+                _record_turn()
                 if not rotation_committed:
                     # No chunk preceded the abort (e.g. first-token
                     # violation); the X-Auth-Token header still shipped, so
@@ -1953,6 +2035,7 @@ async def chat_stream(
             # but never leave the client hanging if that contract breaks.
             fb = _fallback_reply()
             _persist(fb.reply, fb.mode)
+            _record_turn()
             yield _sse(
                 {
                     "type": "abort",
