@@ -54,10 +54,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 #: Play products this server recognises → the plan they grant.  Must
-#: stay in lock-step with the Android paywall's product catalogue and
-#: the ``upgrade.product`` hint in the chat 402 body
-#: (API_CONTRACTS.md §5).
-KNOWN_PRODUCTS: dict[str, str] = {"pro_monthly": "pro"}
+#: stay in lock-step with the Android paywall's product catalogue
+#: (PaywallActivity PLAY_PRODUCT_IDS: monthly → pro_monthly, yearly →
+#: pro_yearly) and the ``upgrade.product`` hint in the chat 402 body
+#: (API_CONTRACTS.md §5).  Both products grant the same "pro" plan —
+#: the billing period is a Play-side pricing concern, not an
+#: entitlement distinction.
+KNOWN_PRODUCTS: dict[str, str] = {"pro_monthly": "pro", "pro_yearly": "pro"}
 
 #: subscriptionsv2 states that still carry entitlement — see the module
 #: docstring for the CANCELED rationale.

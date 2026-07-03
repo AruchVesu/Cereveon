@@ -154,6 +154,20 @@ class TestValidPurchase:
         assert player.plan == "pro"
         assert bystander.plan == "free", "only the authenticated caller's plan may flip"
 
+    def test_pro_yearly_also_grants_pro(self, db, player, no_limiter, monkeypatch):
+        """Both Play products map to the same "pro" plan — the billing
+        period is a Play pricing concern, not an entitlement one.  Keeps
+        the paywall's yearly tile from 400ing at verify."""
+        spy = _VerifierSpy(PurchaseVerdict(entitled=True, state="SUBSCRIPTION_STATE_ACTIVE"))
+        monkeypatch.setattr(billing_router, "_verify_google_purchase", spy)
+
+        response = _call(db, player, product="pro_yearly")
+
+        assert response["plan"] == "pro"
+        assert response["product_id"] == "pro_yearly"
+        db.refresh(player)
+        assert player.plan == "pro"
+
     def test_canceled_but_unexpired_is_entitled(self, db, player, no_limiter, monkeypatch):
         """subscriptionsv2 CANCELED = auto-renew off, paid period still
         running — access holds until EXPIRED (see router docstring)."""
