@@ -169,7 +169,8 @@ invalid Bearer returns 401)
   "fen":        <string>,
   "uci":        <string>,
   "player_id":  <string | null>,
-  "fen_before": <string | null>
+  "fen_before": <string | null>,
+  "game_id":    <string | null>
 }
 ```
 
@@ -179,6 +180,7 @@ invalid Bearer returns 401)
 | `uci` | `string` | UCI move (4–5 chars, e.g. `"e2e4"`, `"e7e8q"`) |
 | `player_id` | `string \| null` | Optional player identifier |
 | `fen_before` | `string \| null` | Optional — position **before** the move. When present (and `fen_before` + `uci` actually reaches `fen`, an integrity check), the server runs a second Stockfish eval on it and grades move quality from the centipawn swing `fen_before → fen`, surfaced as `engine_signal.last_move_quality` / `move_quality`. The server can't reconstruct the pre-move position from `fen` alone (a capture / en-passant / promotion loses the captured piece), so the client supplies it. Absent/null → `move_quality` stays `"unknown"` (pre-feature behaviour). Validated through the same FEN gate as `fen`. Additive + backward-compatible (no `X-API-Version` bump). |
+| `game_id` | `string \| null` | Optional distinct-game key for the free-tier entitlements admission (`llm/seca/entitlements`). Same validator posture as `ChatRequest.game_id`: ≤64 chars, empty/whitespace → `null`. When enforcement is ON (`SECA_ENTITLEMENTS_ENFORCED`), the plan's daily quota of **distinct** `game_id`s keeps the LLM-coached path; an over-quota game answers every move via the deterministic coach instead (see `coach_tier` below) — never an error. Absent/null → the admission check **fails open** (older clients keep the LLM path unconditionally). Additive + backward-compatible (no `X-API-Version` bump). |
 
 ### Response
 
@@ -188,7 +190,8 @@ invalid Bearer returns 401)
   "hint":               <string>,
   "engine_signal":      <object>,
   "move_quality":       <string>,
-  "mode":               "LIVE_V1"
+  "mode":               "LIVE_V1",
+  "coach_tier":         {"plan": <string>, "degraded": <bool>, "remaining": <int | null>}
 }
 ```
 
@@ -199,6 +202,7 @@ invalid Bearer returns 401)
 | `engine_signal` | `object` | Structured evaluation context (see `EngineSignalDto`) |
 | `move_quality` | `string` | Quality label: `"good"`, `"inaccuracy"`, `"mistake"`, `"blunder"` |
 | `mode` | `string` | Always `"LIVE_V1"` for this endpoint |
+| `coach_tier` | `object` | Additive (2026-07, freemium Subtask 3; `LiveMoveResponse` ignores unknown keys, so old clients are unaffected — same leniency that covered the `dynamic_adaptation` retirement). `plan` = `"free"` / `"pro"`. `degraded` = `true` when this hint came from the deterministic coach because the game is over the plan's daily coached-game quota — the client should render its upgrade/limit chip. `remaining` = distinct coached games left today, or `null` while metering is dormant (`null` means "not metered", distinct from `0`). Engine analysis (`engine_signal`, `move_quality`) is unaffected by degradation — only the hint generator changes. |
 
 The previous response carried a `dynamic_adaptation` boolean from the
 in-process `_dynamic_registry`. That registry + its `/adaptation/mode`

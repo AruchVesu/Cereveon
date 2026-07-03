@@ -39,6 +39,7 @@ from llm.seca.lichess.router import router as lichess_router
 from llm.seca.training.router import router as training_router
 from llm.seca.mistakes.router import router as mistakes_router
 from llm.seca.coach.study_plan.router import router as study_plan_router
+from llm.seca.entitlements import service as entitlements
 
 # register SECA models
 import llm.seca.events.models
@@ -1143,12 +1144,24 @@ async def live_move(
     req: LiveMoveRequest,
     request: Request,
     player=Depends(get_current_player),
+    db=Depends(get_db),
 ):
     """Mode-1: per-move coaching feedback after the human's move.
 
     LLM-powered (1-2 sentences); falls back to deterministic hint when
     the DeepSeek call fails.  Runs in a thread-pool executor so the
     async event loop is not blocked during Stockfish + DeepSeek work.
+
+    Entitlements (dormant until SECA_ENTITLEMENTS_ENFORCED is on)
+    ---------------------------------------------------------------
+    The free tier admits N distinct ``game_id``s per UTC day to the
+    LLM-coached path; further games run the deterministic coach for
+    every move (``force_deterministic`` — cheaper hint, same contract,
+    never an error).  Stockfish analysis still runs for degraded games:
+    only the DeepSeek call is skipped.  A missing ``game_id`` fails
+    OPEN, so pre-``game_id`` clients keep today's behaviour.  The
+    additive ``coach_tier`` response field carries the posture for the
+    client's limit chip.
 
     Stockfish evaluation
     --------------------
@@ -1198,6 +1211,13 @@ async def live_move(
         if quality:
             stockfish_json.setdefault("errors", {})["last_move_quality"] = quality
 
+    # Free-tier admission — a few indexed SELECTs (plus one INSERT on a
+    # game's first move) on the request-scoped session, called inline
+    # like the /chat/history reads.  Failure inside the service rolls
+    # back and fails open, so this line can degrade a hint but never
+    # error the route.
+    tier = entitlements.admit(db, player, entitlements.METRIC_COACHED_GAME, req.game_id)
+
     result = await asyncio.to_thread(
         generate_live_reply,
         req.fen,
@@ -1205,6 +1225,7 @@ async def live_move(
         str(player.id),
         adaptation["teaching"]["style"],
         stockfish_json,
+        tier.degrade,  # force_deterministic — over-limit games skip the LLM
     )
     response = {
         "status": "ok",
@@ -1212,6 +1233,16 @@ async def live_move(
         "engine_signal": result.engine_signal,
         "move_quality": result.move_quality,
         "mode": result.mode,
+        # Additive: ``LiveMoveResponse`` ignores unknown keys (same
+        # leniency that covered the ``dynamic_adaptation`` retirement),
+        # and pre-entitlements clients simply never read it.  ``plan``
+        # is always present; ``remaining`` is null while metering is
+        # dormant ("not metered", distinct from "0 left").
+        "coach_tier": {
+            "plan": tier.plan,
+            "degraded": tier.degrade,
+            "remaining": tier.remaining,
+        },
     }
     try:
         validate_live_move_response(response)

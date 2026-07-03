@@ -156,6 +156,26 @@ class LiveMoveRequest(BaseModel):
             raise ValueError("player_id too long (max 100 chars)")
         return v
 
+    # Distinct-game key (``games.id``) for the entitlements admission
+    # check — the free tier's "N LLM-coached games per day" metering
+    # counts distinct game_ids, not moves.  Same posture and validator
+    # as ``ChatRequest.game_id``: optional, ≤64 chars, empty → None.
+    # Absent → the admission check fails OPEN (older clients that don't
+    # send it are never degraded).  Additive + backward-compatible.
+    game_id: str | None = None
+
+    @field_validator("game_id")
+    @classmethod
+    def validate_game_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if v == "":
+            return None
+        if len(v) > 64:
+            raise ValueError("game_id too long (max 64 chars)")
+        return v
+
 
 class StartGameRequest(BaseModel):
     # T3: player_id is now derived from the authenticated session.  The field
