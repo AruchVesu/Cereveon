@@ -25,15 +25,25 @@ interface GameApiClient {
         ApiResult.HttpError(501)
 
     /**
-     * GET /game/history.
+     * GET /game/history — recent finished games, newest-first.
      *
-     * Returns the 20 most recent games for the authenticated player, ordered
-     * newest-first. Requires Bearer token authentication.
+     * @param source  Provenance filter: `"lichess"` (imported games),
+     *                `"app"` (in-app games, incl. legacy NULL-source), or
+     *                null for all sources intermixed by recency.  A value
+     *                outside {app, lichess} is rejected 422 by the server.
+     * @param limit   Max rows (1..100).  The default (20) matches the
+     *                server default; the source-filtered tabs pass a
+     *                larger value so an imported-games view isn't
+     *                truncated by unrelated recent in-app games.
      *
-     * Default implementation returns [ApiResult.HttpError(501)] so test fakes
-     * do not need to override this method.
+     * Requires Bearer token authentication.  Default implementation
+     * returns [ApiResult.HttpError(501)] so test fakes do not need to
+     * override this method.
      */
-    suspend fun getGameHistory(): ApiResult<List<GameHistoryItem>> = ApiResult.HttpError(501)
+    suspend fun getGameHistory(
+        source: String? = null,
+        limit: Int = 20,
+    ): ApiResult<List<GameHistoryItem>> = ApiResult.HttpError(501)
 
     /** GET /game/{eventId}/positions — per-ply FENs + SANs for game replay. */
     suspend fun getGamePositions(eventId: String): ApiResult<GamePositionsResponse> =
@@ -329,8 +339,24 @@ class HttpGameApiClient(
             parse = { body -> ApiJson.decodeFromString<CurriculumRecommendation>(body) },
         )
 
-    override suspend fun getGameHistory(): ApiResult<List<GameHistoryItem>> = http.request(
-        path = "/game/history",
+    override suspend fun getGameHistory(
+        source: String?,
+        limit: Int,
+    ): ApiResult<List<GameHistoryItem>> = http.request(
+        // Base path kept as its own closed "/game/history" literal (the
+        // API-contract coverage test greps Android source for it); the
+        // query is concatenated separately.  BaseHttpClient does not
+        // URL-encode, but `source` is a fixed enum ("app"/"lichess") and
+        // `limit` an Int, so neither needs encoding.  `source` is omitted
+        // when null so the server returns all provenances.
+        path = "/game/history" + buildString {
+            append("?limit=")
+            append(limit)
+            if (source != null) {
+                append("&source=")
+                append(source)
+            }
+        },
         method = "GET",
         // Bearer-only; pre-refactor wire shape did not send X-Api-Key.
         headers = authHeaders(includeApiKey = false),

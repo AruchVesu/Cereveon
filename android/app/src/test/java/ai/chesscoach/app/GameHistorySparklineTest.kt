@@ -1,6 +1,7 @@
 package ai.chesscoach.app
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -89,5 +90,44 @@ class GameHistorySparklineTest {
         val games = listOf(item("1", 1350f))
         val result = GameHistoryBottomSheet.extractSparklineRatings(games)
         assertEquals(listOf(1350f), result)
+    }
+
+    // --- Source provenance (Lichess games history view) ---------------------
+
+    private fun sourced(source: String) = GameHistoryItem(
+        id = "g",
+        result = "win",
+        accuracy = 0.8f,
+        createdAt = "2026-03-01T10:00:00",
+        source = source,
+    )
+
+    @Test
+    fun `IMPORTED_TRUE - lichess source is imported, case-insensitive`() {
+        assertTrue(GameHistoryBottomSheet.isImported(sourced("lichess")))
+        assertTrue(GameHistoryBottomSheet.isImported(sourced("Lichess")))
+    }
+
+    @Test
+    fun `IMPORTED_FALSE - app source and default are not imported`() {
+        assertFalse(GameHistoryBottomSheet.isImported(sourced("app")))
+        // Default source (payload from a server predating the field) is "app".
+        assertFalse(GameHistoryBottomSheet.isImported(GameHistoryItem(id = "g", result = "win")))
+    }
+
+    @Test
+    fun `FILTER_SOURCE_MAP - each tab maps to its server source value`() {
+        assertEquals(null, GameHistoryBottomSheet.HistoryFilter.ALL.source)
+        assertEquals("app", GameHistoryBottomSheet.HistoryFilter.APP.source)
+        assertEquals("lichess", GameHistoryBottomSheet.HistoryFilter.LICHESS.source)
+    }
+
+    @Test
+    fun `FILTER_LIMIT - source tabs request a deeper slice than All`() {
+        // "All" keeps the 20-game recent window; source views request more
+        // so they aren't truncated by unrelated recent games.
+        assertEquals(20, GameHistoryBottomSheet.HistoryFilter.ALL.limit)
+        assertTrue(GameHistoryBottomSheet.HistoryFilter.APP.limit > 20)
+        assertTrue(GameHistoryBottomSheet.HistoryFilter.LICHESS.limit > 20)
     }
 }

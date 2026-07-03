@@ -7,18 +7,20 @@ import io
 import json
 import logging
 import re
+from typing import Annotated
 
 import chess
 import chess.pgn
 
 _PGN_HEADER_RE = re.compile(r'^\s*\[\s*\w+\s+"[^"]*"\s*\]', re.MULTILINE)
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 from llm.seca.analysis.historical_pipeline import HistoricalAnalysisPipeline
 from llm.seca.analytics.training_recommendations import generate_training_recommendations
 
 logger = logging.getLogger(__name__)
+from sqlalchemy import or_
 from sqlalchemy.orm import Session as DBSession
 
 from llm.seca.auth.router import get_db, get_current_player
@@ -964,14 +966,62 @@ def _winner_last_move_san(pgn_text: str) -> str | None:
 def game_history(
     player=Depends(get_current_player),
     db: DBSession = Depends(get_db),
+    # Annotated form (not ``= Query(...)``) so the runtime default is the
+    # plain value, letting tests that call this handler directly get
+    # ``source=None`` / ``limit=20`` instead of a Query sentinel object
+    # (``.limit(FieldInfo)`` would otherwise raise).  FastAPI still reads
+    # the constraints from the annotation metadata.  In-CI direct callers
+    # that guard this: test_game_finish_db_integration.py and
+    # test_per_game_chat_alignment.py both call game_history(player=...,
+    # db=...) with no source/limit and assert on len(games).
+    source: Annotated[
+        str | None,
+        Query(
+            pattern="^(app|lichess)$",
+            description=(
+                "Filter by game provenance. 'lichess' = imported from Lichess; "
+                "'app' = played in-app (matches legacy NULL-source rows too). "
+                "Omit for all sources intermixed by recency. A value outside "
+                "{app, lichess} is rejected 422 by the pattern."
+            ),
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=100,
+            description=(
+                "Max rows returned (newest-first). Default 20 preserves the "
+                "pre-source-filter behaviour for older clients that send no "
+                "limit; the Lichess/In-app tabs request more so a source view "
+                "isn't truncated by unrelated recent games."
+            ),
+        ),
+    ] = 20,
 ):
-    events = (
-        db.query(GameEvent)
-        .filter(GameEvent.player_id == player.id)
-        .order_by(GameEvent.created_at.desc())
-        .limit(20)
-        .all()
-    )
+    """Recent finished games for the player, newest-first.
+
+    Provenance (2026-07-03): every row carries a ``source`` field —
+    ``"lichess"`` for games pulled by the Lichess import service,
+    ``"app"`` for in-app games (including legacy rows whose ``source``
+    column is NULL — in-app was the only writer before imports existed).
+    The optional ``source`` query param filters to one provenance so the
+    Android history screen can offer All / In-app / Lichess tabs; a
+    source view is queried independently of the mixed-recency window, so
+    a player's imported games remain reachable no matter how many recent
+    in-app games sit above them.
+    """
+    query = db.query(GameEvent).filter(GameEvent.player_id == player.id)
+    if source == "lichess":
+        query = query.filter(GameEvent.source == "lichess")
+    elif source == "app":
+        # In-app games are the NULL-source legacy rows plus any explicitly
+        # tagged 'app'; the Lichess importer is the only writer that sets a
+        # non-NULL, non-'app' source today.
+        query = query.filter(or_(GameEvent.source == "app", GameEvent.source.is_(None)))
+
+    events = query.order_by(GameEvent.created_at.desc()).limit(limit).all()
     games = []
     for ev in events:
         rating_update = db.query(RatingUpdate).filter(RatingUpdate.event_id == str(ev.id)).first()
@@ -983,6 +1033,10 @@ def game_history(
                 # GET /chat/history?game_id=...  None for legacy / imported /
                 # pre-game_id rows (no per-game chat to show).
                 "game_id": ev.app_game_id,
+                # Provenance for the row: 'lichess' for imported games, 'app'
+                # for in-app games (NULL-source legacy rows normalise to 'app'
+                # so the client always gets a concrete label to badge / group).
+                "source": ev.source or "app",
                 # Final mainline move (SAN) so the history list previews how the
                 # game ended without opening it; None for moveless / legacy rows.
                 "last_move": _last_move_san(ev.pgn),

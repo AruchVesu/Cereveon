@@ -312,6 +312,13 @@ Any client expecting a standalone `/coach` endpoint will receive HTTP 404.
 **Host:** `llm/seca/events/router.py`
 **Auth:** `Authorization: Bearer <token>` required
 
+### Query parameters
+
+| Param | Type | Default | Notes |
+|-------|------|---------|-------|
+| `source` | `"app" \| "lichess"` | *(omitted)* | Filter by provenance. `lichess` = games pulled by the Lichess import service; `app` = in-app games, **including legacy NULL-source rows** (in-app was the only writer before imports existed). Omit for all sources intermixed by recency. Any other value → **422** (enforced by the endpoint's `^(app\|lichess)$` pattern). |
+| `limit` | `int` | `20` | `1 ≤ limit ≤ 100`. Newest-first. Default 20 preserves the exact pre-2026-07-03 behaviour for clients that send no `limit`; the Android In-app / Lichess tabs request more so a filtered view isn't truncated by unrelated recent games. |
+
 ### Response
 
 ```json
@@ -320,6 +327,7 @@ Any client expecting a standalone `/coach` endpoint will receive HTTP 404.
     {
       "id":           <string>,
       "game_id":      <string | null>,
+      "source":       <"app" | "lichess">,
       "last_move":    <string | null>,
       "winner_move":  <string | null>,
       "result":       <"win" | "loss" | "draw">,
@@ -333,15 +341,16 @@ Any client expecting a standalone `/coach` endpoint will receive HTTP 404.
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `games` | `array` | Up to 20 entries, ordered newest-first |
+| `games` | `array` | Up to `limit` entries (default 20), ordered newest-first |
 | `id` | `string` | Game event UUID (the `game_events` row id) |
 | `game_id` | `string \| null` | Live game id (the `games.id` from `POST /game/start`, equal to `chat_turns.game_id`). Pass to `GET /chat/history?game_id=…` to load this game's coaching chat. `null` for legacy rows, imported (e.g. Lichess) games, and finishes from clients that didn't send a `game_id` — those have no per-game chat thread. |
+| `source` *(2026-07-03)* | `string` | Provenance: `"lichess"` for imported games, `"app"` for in-app games. **Legacy NULL-source rows normalise to `"app"`** so the client always receives a concrete label. Additive field — older clients ignore it (`ignoreUnknownKeys`). |
 | `last_move` | `string \| null` | SAN of the final mainline move (e.g. `"Nc6"`, `"Qxh7#"`), derived server-side from the stored PGN, so the history list can preview how each game ended. `null` for moveless or unparseable / legacy PGN. |
 | `winner_move` | `string \| null` | SAN of the **winning side's** final mainline move, per the PGN `Result` header (`1-0` = White, `0-1` = Black). Differs from `last_move` when the loser made the last move on the board. `null` for draws, ongoing / unknown results, moveless or unparseable PGN. |
 | `result` | `string` | One of `"win"`, `"loss"`, `"draw"` |
-| `accuracy` | `float` | 0.0–1.0 as submitted via `POST /game/finish` |
-| `created_at` | `string \| null` | ISO-8601 datetime string |
-| `rating_after` | `float \| null` | Rating after this game; `null` if no rating update was stored |
+| `accuracy` | `float` | 0.0–1.0. For imported Lichess games this is `0.0` until the post-import engine-analysis pass (§31) scores the game, then the engine-derived value. |
+| `created_at` | `string \| null` | ISO-8601 datetime string. **For imported games this is the import time**, not the game's original play date, so a fresh import clusters at the top of the unfiltered list. |
+| `rating_after` | `float \| null` | Rating after this game; `null` if no rating update was stored — always `null` for imported Lichess games (the importer writes no `RatingUpdate`). |
 
 ---
 

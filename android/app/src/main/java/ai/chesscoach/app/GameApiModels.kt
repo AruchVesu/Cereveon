@@ -139,6 +139,12 @@ data class GameHistoryItem(
     val accuracy: Float = 0f,
     @SerialName("rating_after") val ratingAfter: Float? = null,
     @SerialName("created_at") val createdAt: String = "",
+    // Provenance: "lichess" for imported games, "app" for in-app games
+    // (the server normalises legacy NULL-source rows to "app").  Drives
+    // the history screen's source filter + the "LICHESS" row badge.
+    // Defaults to "app" so a payload from a server predating the field
+    // decodes as an in-app game rather than throwing.
+    val source: String = "app",
 )
 
 /**

@@ -49,6 +49,16 @@ TEST_TARGETS = [
     "llm/tests/test_api_security.py",
     "llm/tests/test_skill_updater_resilience.py",
     "llm/tests/test_game_finish_db_integration.py",
+    # GET /game/history provenance filtering (GH_01..08): the `source`
+    # field + `?source=app|lichess` filter + bounded `?limit=` that back
+    # the Android All / In-app / Lichess history tabs.
+    "llm/tests/test_game_history_source.py",
+    # Per-game chat alignment (ALIGN_*): calls game_history() directly, so
+    # it also guards that the endpoint's Query params keep plain runtime
+    # defaults (the Annotated form) — a regression to `= Query(...)` would
+    # raise on `.limit(FieldInfo)` here.  Previously unregistered ("tests
+    # exist but never run" debt); wired in 2026-07-03.
+    "llm/tests/test_per_game_chat_alignment.py",
     "llm/tests/test_engine_pool_exhaustion.py",
     "llm/tests/test_cache_redis_unavailable.py",
     "llm/tests/test_seca_status.py",
