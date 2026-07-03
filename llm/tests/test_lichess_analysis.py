@@ -68,6 +68,7 @@ os.environ.setdefault("SECRET_KEY", "ci-secret-key-that-is-32-chars-long!!")
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from starlette.requests import Request as StarletteRequest
 
 # Import all model modules so Base.metadata sees every table.
@@ -196,7 +197,15 @@ class _CancellingPool:
 
 @pytest.fixture()
 def db_session():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    # StaticPool = one shared connection across threads, so the in-memory
+    # DB (and its tables) is visible from the TestClient worker thread in
+    # BF_05 — without it, SQLite's default per-thread connection gives the
+    # request thread a fresh, empty database ("no such table").
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(bind=engine)
     Session = sessionmaker(bind=engine)
     session = Session()
