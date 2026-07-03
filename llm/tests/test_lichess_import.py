@@ -1299,6 +1299,10 @@ class TestImportJobLifecycle:
             "inserted",
             "skipped_duplicate",
             "skipped_invalid",
+            # Post-import engine-analysis counter, added 2026-07-03
+            # (docs/API_CONTRACTS.md §31) — additive field, deployed
+            # clients decode with ignoreUnknownKeys.
+            "analyzed",
             "target_max_games",
             "last_imported_at_ms",
             "error_message",
@@ -1309,6 +1313,7 @@ class TestImportJobLifecycle:
         assert payload["status"] == JOB_STATUS_QUEUED
         assert payload["target_max_games"] == 25
         assert payload["inserted"] == 0
+        assert payload["analyzed"] == 0
         assert payload["last_imported_at_ms"] is None
 
 

@@ -20,7 +20,8 @@ It explicitly does NOT:
 Post-import analysis (2026-07-03)
 ---------------------------------
 After the stream completes, the v2 worker runs a BOUNDED engine pass
-(``_analyze_unscored_games``) over the player's newest unscored
+(``llm.seca.lichess.analysis_service.analyze_unscored_games``) over the
+player's newest unscored
 ``source='lichess'`` rows: ``compute_accuracy_from_pgn`` — the same
 engine-truth recompute /game/finish uses — writes ``accuracy`` +
 phase-keyed ``weaknesses_json`` back onto each row so the historical
@@ -36,17 +37,14 @@ still holds).
 from __future__ import annotations
 
 import io
-import json
 import logging
-import os
 from datetime import datetime, timedelta
-from typing import Iterator
+from typing import Callable, Iterator
 
 import chess
 import chess.pgn
 from sqlalchemy.orm import Session as DBSession, sessionmaker
 
-from llm.seca.analysis.pgn_accuracy import compute_accuracy_from_pgn
 from llm.seca.engines.stockfish.pool import StockfishEnginePool
 from llm.seca.auth.models import Player
 from llm.seca.auth.router import engine
@@ -110,25 +108,6 @@ CALIBRATION_PERF_PREFERENCE = ["rapid", "blitz", "classical"]
 # Per-game PGN size cap, mirroring the validator on /game/finish so an
 # anomalous Lichess game can't bloat a row.
 _MAX_PGN_BYTES = 100_000
-
-# ---------------------------------------------------------------------------
-# Post-import engine analysis knobs
-# ---------------------------------------------------------------------------
-
-# Games engine-analysed per import job (newest-first).  Bounds the
-# engine-pool minutes one job can consume: at the /game/finish-parity
-# 200 ms/ply budget a typical 80-ply game costs ~16 s, so the default
-# cap is ~5 min of background engine time per job — documented in
-# docs/THREAT_MODEL.md § T3.  Backlog beyond the cap is picked up by
-# subsequent import jobs (the unscored predicate is stable).
-LICHESS_ANALYSIS_MAX_GAMES = int(os.getenv("LICHESS_ANALYSIS_MAX_GAMES", "20"))
-
-# Per-ply engine budget for the analysis pass.  Defaults to the same
-# 200 ms /game/finish uses (see llm/seca/analysis/pgn_accuracy.py
-# "Performance notes") so imported and in-app games are scored with
-# identical depth — halving it would re-open the slow-burn-mistake
-# blindspot the 2026-05-20 bump closed.
-LICHESS_ANALYSIS_MOVETIME_MS = int(os.getenv("LICHESS_ANALYSIS_MOVETIME_MS", "200"))
 
 # Player defaults — calibration only fires when the player is still at
 # these out-of-the-box values, so an active in-app player's rating is
@@ -462,6 +441,7 @@ def start_import_job(
     player: Player,
     *,
     max_games: int,
+    dispatch: Callable[[str], None] | None = None,
 ) -> LichessImportJob:
     """Create-or-coalesce an import job for the player (v2 async).
 
@@ -476,17 +456,21 @@ def start_import_job(
     concurrent imports for *different* players fully parallel.
 
     ``rated`` is intentionally NOT a parameter here: this function only
-    creates the job row.  The router passes ``rated`` directly to the
-    worker via ``executor.submit(run_import_job, job_id, rated=...)``,
-    so persisting it on the row would just duplicate state.
+    creates the job row.  The caller's ``dispatch`` closure carries it to
+    the worker, so persisting it on the row would just duplicate state.
+
+    Worker dispatch (2026-07-03): callers pass ``dispatch`` — invoked
+    with the job id, inside the lock, for FRESHLY-CREATED rows only.
+    Earlier callers keyed their own ``executor.submit`` on
+    ``status == 'queued'``, which double-submits when a job created by an
+    earlier call gets coalesced back while still awaiting executor pickup
+    (two workers then race on per-game commits; the loser's
+    IntegrityError flips the job to failed mid-stream).  Only this
+    function knows fresh-vs-coalesced, so the dispatch decision lives
+    here.  Coalesced returns never dispatch.
 
     Returns the active job row — either one freshly inserted by this
-    call or the one a concurrent caller raced past.  Caller (the router)
-    is responsible for ``executor.submit(run_import_job, job.id, ...)``
-    only when the row was newly created; coalesced returns reuse the
-    worker already running.  ``LichessImportJob.status`` distinguishes:
-    ``queued`` means we just inserted and the worker hasn't picked it up;
-    any other status means a worker is already attached.
+    call or the one a concurrent caller raced past.
     """
     if max_games <= 0:
         raise ValueError("max_games must be positive")
@@ -525,108 +509,9 @@ def start_import_job(
         db.add(job)
         db.commit()
         db.refresh(job)
+        if dispatch is not None:
+            dispatch(job.id)
         return job
-
-
-def _analyze_unscored_games(
-    db: DBSession,
-    player: Player,
-    engine_pool: StockfishEnginePool,
-    *,
-    job: LichessImportJob | None = None,
-    max_games_analyzed: int | None = None,
-) -> int:
-    """Engine-analyse the player's unscored imported games (bounded).
-
-    Selects the newest ``source='lichess'`` GameEvent rows whose
-    ``accuracy`` is still NULL — the marker the import stream leaves on
-    every row it inserts — and runs ``compute_accuracy_from_pgn`` (the
-    same engine-truth recompute /game/finish uses) over each, writing
-    ``accuracy`` + phase-keyed ``weaknesses_json`` back so the historical
-    analysis pipeline consumes imported games exactly like in-app ones.
-
-    Design properties:
-
-    * BOUNDED — at most ``max_games_analyzed`` rows per call (default
-      ``LICHESS_ANALYSIS_MAX_GAMES``); older backlog waits for the next
-      import job.  Newest-first so recent form is scored first.
-    * Per-row commit — a crash mid-pass loses at most one game's work.
-    * Cancellation-aware — when ``job`` is provided, an external status
-      flip (``unlink_account`` marks the job failed) stops the loop
-      between games, mirroring the import stream's cancellation contract.
-    * Fail-soft per row — a malformed PGN (near-unreachable: the import
-      stream rejects PGNs python-chess can't replay, IS_13) is scored
-      with the recompute's own degenerate-game fallback (``accuracy=0.5``,
-      empty weaknesses) so it leaves the unscored set instead of wedging
-      the cap on every future pass.
-    * Fail-stop on pool trouble — ``RuntimeError`` (pool saturation /
-      unavailability) aborts the pass; remaining rows stay unscored and
-      the NEXT import job retries them.  The import job itself still
-      succeeds: analysis is enrichment, not import correctness.
-    * Never mutates ``Player.rating`` / ``confidence`` — the module-level
-      SkillUpdater exclusion holds.
-
-    Returns the number of rows analysed.
-    """
-    cap = LICHESS_ANALYSIS_MAX_GAMES if max_games_analyzed is None else max_games_analyzed
-    if cap <= 0:
-        return 0
-
-    rows = (
-        db.query(GameEvent)
-        .filter(
-            GameEvent.player_id == player.id,
-            GameEvent.source == PLATFORM_LICHESS,
-            GameEvent.accuracy.is_(None),
-        )
-        .order_by(GameEvent.created_at.desc())
-        .limit(cap)
-        .all()
-    )
-
-    analyzed = 0
-    for row in rows:
-        if job is not None:
-            db.refresh(job, ["status"])
-            if job.status not in JOB_STATUS_ACTIVE:
-                logger.info(
-                    "Lichess analysis pass stopping: job %s flipped to %s",
-                    job.id,
-                    job.status,
-                )
-                break
-        try:
-            analysis = compute_accuracy_from_pgn(
-                row.pgn,
-                engine_pool,
-                result=row.result,
-                movetime_ms=LICHESS_ANALYSIS_MOVETIME_MS,
-            )
-        except RuntimeError as exc:
-            db.rollback()
-            logger.warning(
-                "Lichess analysis pass aborted (engine pool): %s — %d row(s) deferred",
-                exc,
-                len(rows) - analyzed,
-            )
-            break
-        except ValueError as exc:
-            db.rollback()
-            logger.warning("Lichess analysis: unparseable PGN on row %s: %s", row.id, exc)
-            row.accuracy = 0.5
-            row.weaknesses_json = "{}"
-            db.commit()
-            continue
-
-        row.accuracy = float(analysis.accuracy)
-        row.weaknesses_json = json.dumps(analysis.weaknesses)
-        db.commit()
-        analyzed += 1
-        if job is not None:
-            job.analyzed = analyzed
-            db.commit()
-
-    return analyzed
 
 
 def run_import_job(
@@ -711,11 +596,15 @@ def run_import_job(
         # job needs no client change.  ``engine_pool`` is None when the
         # server booted without a pool (tests, degraded deploys); the
         # import still succeeds and the rows stay unscored for a later
-        # job that does have a pool.
+        # job that does have a pool.  Lazy import: analysis_service is a
+        # sibling leaf module and importing it here (not at module level)
+        # keeps the pair cycle-free in both load orders.
         db.refresh(job, ["status"])
         if job.status == JOB_STATUS_RUNNING and engine_pool is not None:
+            from llm.seca.lichess import analysis_service
+
             try:
-                _analyze_unscored_games(db, player, engine_pool, job=job)
+                analysis_service.analyze_unscored_games(db, player, engine_pool, job=job)
             except Exception:  # pylint: disable=broad-exception-caught
                 # Analysis is enrichment — a surprise failure must not
                 # fail an import whose games already landed.  Rollback so
@@ -841,9 +730,15 @@ def _run_import_stream(
             player_id=player.id,
             pgn=pgn,
             result=result,
-            # Accuracy / weaknesses are produced by the local engine
-            # pool; we leave them at column defaults for imported
-            # games.  Lazy re-analysis populates ESV at view time.
+            # Unscored marker consumed by the post-stream engine pass
+            # (analysis_service.analyze_unscored_games).  NOTE the ORM
+            # quirk: SQLAlchemy 2.x fires the column's Python-side
+            # default (0.0) even for this EXPLICIT None kwarg, so the
+            # row persists accuracy=0.0, not NULL — the analysis
+            # service's unscored predicate matches both forms, and
+            # AN_00 in test_lichess_analysis.py pins this producer
+            # behaviour so a "simplification" here can't silently
+            # detach the pass from its input set.
             accuracy=None,
             weaknesses_json="{}",
             source=PLATFORM_LICHESS,

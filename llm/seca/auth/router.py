@@ -74,8 +74,12 @@ def _ensure_column(conn, table: str, column: str, sql_type: str) -> None:
 
     Uses SQLAlchemy's ``inspect`` so we don't have to dialect-switch on the
     PRAGMA / information_schema query.  Both dialects accept the
-    ``ALTER TABLE <t> ADD COLUMN <c> <type>`` form (no DEFAULT, NULL
-    allowed) — that's the lowest-common-denominator portable DDL.
+    ``ALTER TABLE <t> ADD COLUMN <c> <type>`` form — the portable
+    lowest-common-denominator DDL.  ``sql_type`` may carry a simple
+    constant ``DEFAULT`` (e.g. ``"INTEGER DEFAULT 0"``, used by
+    ``training_xp`` and ``lichess_import_jobs.analyzed``): both dialects
+    accept constant defaults in ADD COLUMN and backfill existing rows
+    with the value.
     """
     cols = {c["name"] for c in inspect(engine).get_columns(table)}
     if column in cols:
@@ -665,24 +669,33 @@ def _kick_lichess_import(db: DBSession, player, request: Request) -> None:
     # Local imports, same circular-import guard as _ensure_lichess_link:
     # import_service imports ``engine`` from this module, and
     # lichess.router imports ``get_current_player`` from this module.
-    # Both are fully initialised by request time.  JOB_STATUS_QUEUED is
-    # already bound at module scope via the load-bearing models wildcard.
+    # Both are fully initialised by request time.
+    import llm.seca.lichess.router as lichess_router
     from llm.seca.lichess import import_service as lichess_import_service
-    from llm.seca.lichess.router import _executor as lichess_executor
 
     player_id = player.id
     try:
-        job = lichess_import_service.start_import_job(
-            db, player, max_games=_SIGNIN_IMPORT_MAX_GAMES
-        )
-        if job.status == JOB_STATUS_QUEUED:
-            lichess_executor.submit(
+        # scope.get-based read: tolerates handler-direct test requests
+        # whose ASGI scope has no "app" (request.app raises KeyError).
+        pool = lichess_router.engine_pool_from_request(request)
+        executor = lichess_router._executor  # pylint: disable=protected-access
+        # Worker submission via the dispatch callback: start_import_job
+        # invokes it inside the per-player lock for freshly-created jobs
+        # only, so this kick can never double-submit against a job the
+        # Connect sheet's Import button (or a previous sign-in) already
+        # dispatched.
+        lichess_import_service.start_import_job(
+            db,
+            player,
+            max_games=_SIGNIN_IMPORT_MAX_GAMES,
+            dispatch=lambda job_id: executor.submit(
                 lichess_import_service.run_import_job,
-                job.id,
+                job_id,
                 max_games=_SIGNIN_IMPORT_MAX_GAMES,
                 rated=True,
-                engine_pool=getattr(request.app.state, "engine_pool", None),
-            )
+                engine_pool=pool,
+            ),
+        )
     except Exception:  # pylint: disable=broad-exception-caught
         db.rollback()
         logger.warning("lichess auto-import kick failed for player %s", player_id, exc_info=True)

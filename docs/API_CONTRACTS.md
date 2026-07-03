@@ -1371,9 +1371,12 @@ to §30's v1 path.
 HTTP status: **202 Accepted**.
 
 - `job_id` — server-issued UUID; pass to §31a to poll progress.
-- `status` — `queued` when the row was freshly inserted by this call
-  (worker has not picked it up yet); any other value means a
-  concurrent caller's job was coalesced into this response.
+- `status` — `queued` means the worker has not picked the job up yet
+  (a fresh insert, or a coalesced return while the executor is
+  backlogged); any other value means an already-running job was
+  coalesced into this response.  Worker dispatch happens exactly once
+  server-side regardless (`start_import_job`'s dispatch callback fires
+  only for freshly-created rows, inside the per-player lock).
 - `inserted` / `skipped_*` — counters at the moment the row was read
   (`queued` rows are always 0; coalesced rows reflect the worker's
   progress).
@@ -1417,19 +1420,23 @@ data.
 ### Post-import engine analysis *(2026-07-03)*
 
 After the stream completes (and before the job goes terminal), the v2
-worker runs `import_service._analyze_unscored_games`: the newest
-`source='lichess'` rows with `accuracy IS NULL` — including backlog
-from imports that predate this feature — are re-analysed with the
-**local** engine pool via `compute_accuracy_from_pgn` (the same
-engine-truth recompute `/game/finish` uses, same 200 ms/ply budget),
-writing `accuracy` + phase-keyed `weaknesses_json` onto each row.  From
-that point the historical-analysis surfaces (curriculum, weakness
-charts, progress dashboard) consume imported games exactly like in-app
-ones.  Bounded at `LICHESS_ANALYSIS_MAX_GAMES` (default 20) per job —
-see `docs/THREAT_MODEL.md` §T3 for the engine-minutes rationale;
-excess backlog is picked up by subsequent jobs.  Pool saturation
-defers the remainder without failing the job; player rating /
-confidence are never mutated by this pass.
+worker runs `llm.seca.lichess.analysis_service.analyze_unscored_games`:
+the most recently imported `source='lichess'` rows still carrying the
+unscored marker (`accuracy` NULL **or** `0.0` — the ORM's Python-side
+column default fires even for the stream's explicit `None`, so both
+forms occur; scored rows can never collide because the ACPL mapping is
+strictly positive) — including backlog from imports that predate this
+feature — are re-analysed with the **local** engine pool via
+`compute_accuracy_from_pgn` (the same engine-truth recompute
+`/game/finish` uses, same 200 ms/ply budget), writing `accuracy` +
+phase-keyed `weaknesses_json` onto each row.  From that point the
+historical-analysis surfaces (curriculum, weakness charts, progress
+dashboard) consume imported games exactly like in-app ones.  Bounded at
+`LICHESS_ANALYSIS_MAX_GAMES` (default 20) per job — see
+`docs/THREAT_MODEL.md` §T3 for the engine-minutes rationale; excess
+backlog is picked up by subsequent jobs.  Pool saturation defers the
+remainder without failing the job; player rating / confidence are never
+mutated by this pass.
 
 ---
 

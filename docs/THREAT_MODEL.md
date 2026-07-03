@@ -215,15 +215,20 @@ Mitigation:
   re-spawned at next pool startup).
 
 Background engine consumers (2026-07-03): the Lichess post-import
-analysis pass (`import_service._analyze_unscored_games`) burns
-engine-pool minutes OUTSIDE any request — a hostile A1 could try to
-keep the pool warm by re-triggering imports. Bounds: at most
+analysis pass (`llm.seca.lichess.analysis_service.analyze_unscored_games`)
+burns engine-pool minutes OUTSIDE any request — a hostile A1 could try
+to keep the pool warm by re-triggering imports. Bounds: at most
 `LICHESS_ANALYSIS_MAX_GAMES` (default 20) games per job at the
-/game/finish 200 ms/ply budget (~5 min of single-threaded engine time),
-one active job per player (coalescing + partial unique index), 6/min on
-the import route, and the pass acquires pool slots per ply with the
-same 1 s queue timeout as the /game/finish recompute — `RuntimeError`
-on saturation aborts the pass rather than queueing behind live traffic.
+/game/finish 200 ms/ply budget — ~5 min typical, ≈13.3 min hard bound
+(20 × 200-ply cap × 200 ms) of single-threaded engine time; one active
+job per player (coalescing + partial unique index + the dispatch-once
+contract on `start_import_job`); job spawns are limited to 6/min on the
+import route plus the post-OAuth-sign-in kick (§T7 flow — itself gated
+by 10/min on /auth/lichess and by needing a fresh one-time OAuth code
+per call, and coalescing collapses both spawn paths onto the same
+single active job). The pass acquires pool slots per ply with the same
+1 s queue timeout as the /game/finish recompute — `RuntimeError` on
+saturation aborts the pass rather than queueing behind live traffic.
 `/live/move` latency therefore degrades by at most one in-flight
 background evaluation per pool slot, identical to a concurrent
 /game/finish.

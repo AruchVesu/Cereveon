@@ -30,8 +30,9 @@ class GameEvent(Base):
     # was played in the ChessCoach Android client and finalised via
     # ``/game/finish``; ``'lichess'`` means it was pulled from the Lichess
     # public API by the import service.  Filterable for UI tabs (e.g.
-    # "Imported games") and used by the lazy re-analysis path to decide
-    # whether ESV must be recomputed from PGN.
+    # "Imported games") and used by the post-import engine-analysis pass
+    # (llm.seca.lichess.analysis_service) to select the imported rows
+    # whose accuracy / weaknesses still need computing from PGN.
     source: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
     # External-platform game identifier when ``source != 'app'`` — the
