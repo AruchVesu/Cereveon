@@ -622,10 +622,17 @@ def _ensure_lichess_link(db: DBSession, player, account: dict) -> None:
     An OAuth-verified identity is strictly stronger proof of account
     ownership than the self-asserted username in POST /lichess/link, so
     the first sign-in creates the game-import link (plus first-link
-    rating calibration) automatically.  Skipped when the player already
-    has ANY lichess link — including one pointing at a different handle —
-    so this path never clobbers import watermarks or moves links between
-    accounts.
+    rating calibration) automatically.  Skipped when THIS player already
+    has a lichess link (its own watermark is left untouched).
+
+    When the handle is linked to a DIFFERENT Cereveon account, the link
+    is CLAIMED (``claim_from_other_player=True``): verified OAuth
+    ownership overrides another account's self-asserted link.  This is
+    the fix for the same-human / two-logins case — the handle manually
+    linked on a password account, OAuth sign-in on a separate account
+    that could otherwise never link.  ``link_account`` cancels the other
+    account's active import jobs and removes its link row; that account's
+    imported games stay as history.
 
     Never raises: a link or calibration failure must not fail a sign-in
     whose identity is already verified.  The rollback keeps a failed
@@ -655,7 +662,13 @@ def _ensure_lichess_link(db: DBSession, player, account: dict) -> None:
         )
         if existing is not None:
             return
-        lichess_import_service.link_account(db, player, str(account["id"]), profile=account)
+        # claim_from_other_player=True: this is the OAuth-verified path, so
+        # if the handle is linked to a different Cereveon account (e.g. the
+        # same human's password login, self-asserted via /lichess/link),
+        # take it over — verified ownership overrides a typed-in claim.
+        lichess_import_service.link_account(
+            db, player, str(account["id"]), profile=account, claim_from_other_player=True
+        )
     except Exception:  # pylint: disable=broad-exception-caught
         db.rollback()
         logger.warning("lichess auto-link failed for player %s", player_id, exc_info=True)
@@ -666,6 +679,15 @@ def _ensure_lichess_link(db: DBSession, player, account: dict) -> None:
 # and the /lichess/import Query default.  Incremental via the
 # LinkedAccount watermark, so repeat sign-ins only pull new games.
 _SIGNIN_IMPORT_MAX_GAMES = 50
+
+# Include CASUAL games as well as rated in the auto-import.  ``rated`` on
+# the Lichess client is a filter, not a category: ``rated=False`` sends no
+# ``rated`` param, so Lichess returns rated + casual.  We want everything
+# for the analysis surface — a mistake in a casual game is still a mistake,
+# and calibration reads perf RATINGS from the profile (not individual
+# games), so casual games don't skew it.  The import path never runs
+# SkillUpdater on imported games, so there's no live-rating impact either.
+_SIGNIN_IMPORT_RATED = False
 
 
 def _kick_lichess_import(db: DBSession, player, request: Request) -> None:
@@ -709,7 +731,7 @@ def _kick_lichess_import(db: DBSession, player, request: Request) -> None:
                 lichess_import_service.run_import_job,
                 job_id,
                 max_games=_SIGNIN_IMPORT_MAX_GAMES,
-                rated=True,
+                rated=_SIGNIN_IMPORT_RATED,
                 engine_pool=pool,
             ),
         )

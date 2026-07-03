@@ -795,15 +795,26 @@ Superset of the §15/§16 shape — the Android client deserialises it as
   fails after a successful exchange, so no live token is left dangling.
 - Best-effort auto-link: when the player has no `/lichess` link yet, the
   game-import link (§27) + first-link calibration are created from the
-  already-fetched account profile.  Link failure (including a cross-player
-  409 conflict) never fails the sign-in, and an existing link — even to a
-  different handle — is never modified.
+  already-fetched account profile.  Link failure never fails the sign-in,
+  and *this* player's existing link is never modified.  When the handle is
+  linked to a **different** Cereveon account, OAuth sign-in **claims** it
+  (*2026-07-03*): verified OAuth ownership overrides another account's
+  self-asserted `/lichess/link`.  `link_account`'s
+  `claim_from_other_player` flag is set only on this verified path — the
+  manual `/lichess/link` route (§27) still rejects conflicts with 409.
+  The losing account's active import jobs are cancelled and its link row
+  removed; its imported games remain as history.  This resolves the
+  same-human / two-logins case (handle linked on a password account,
+  OAuth sign-in on another that could otherwise never link).
 - Best-effort auto-import *(2026-07-03)*: after the link step, the same
-  v2 background job as §31 is started (`max_games=50`, rated only,
+  v2 background job as §31 is started (`max_games=50`, **rated + casual**,
   watermark-incremental, per-player coalescing), including its
   post-stream engine analysis — so signing in with Lichess feeds the
   player's game history into Cereveon's analysis with no manual Import
-  tap.  Failure here never fails the sign-in;
+  tap.  (The auto-import passes `rated=false`, i.e. no rated filter, so
+  casual games come through too; calibration reads perf ratings from the
+  profile, not individual games, so casual games don't skew it, and the
+  import never runs SkillUpdater.)  Failure here never fails the sign-in;
   `GET /lichess/status.active_import_job_id` (§29) exposes the job to
   clients that want progress.  Accounts that linked *before* this shipped
   are covered by the complementary cold-start backfill on `GET /auth/me`
