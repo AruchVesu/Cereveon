@@ -147,9 +147,10 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
         }
 
         // Cancel any in-flight load so rapid tab taps can't interleave two
-        // render passes into historyList.
+        // render passes into historyList.  Scoped to the VIEW lifecycle so
+        // a network return after onDestroyView never touches detached views.
         loadJob?.cancel()
-        loadJob = lifecycleScope.launch {
+        loadJob = viewLifecycleOwner.lifecycleScope.launch {
             when (val result = client.getGameHistory(source = filter.source, limit = filter.limit)) {
                 is ApiResult.Success -> render(result.data, filter)
                 else -> {

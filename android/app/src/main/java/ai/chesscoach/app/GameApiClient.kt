@@ -343,12 +343,14 @@ class HttpGameApiClient(
         source: String?,
         limit: Int,
     ): ApiResult<List<GameHistoryItem>> = http.request(
-        // Query string built by hand (BaseHttpClient does not encode for
-        // us): `source` is a fixed enum ("app"/"lichess") and `limit` an
-        // Int, so neither needs URL-encoding.  `source` is omitted
-        // entirely when null so the server returns all provenances.
-        path = buildString {
-            append("/game/history?limit=")
+        // Base path kept as its own closed "/game/history" literal (the
+        // API-contract coverage test greps Android source for it); the
+        // query is concatenated separately.  BaseHttpClient does not
+        // URL-encode, but `source` is a fixed enum ("app"/"lichess") and
+        // `limit` an Int, so neither needs encoding.  `source` is omitted
+        // when null so the server returns all provenances.
+        path = "/game/history" + buildString {
+            append("?limit=")
             append(limit)
             if (source != null) {
                 append("&source=")

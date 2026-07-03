@@ -967,10 +967,13 @@ def game_history(
     player=Depends(get_current_player),
     db: DBSession = Depends(get_db),
     # Annotated form (not ``= Query(...)``) so the runtime default is the
-    # plain value, letting tests that call this handler directly — e.g.
-    # test_per_game_chat_alignment.py — get ``source=None`` / ``limit=20``
-    # instead of a Query sentinel object.  FastAPI still reads the
-    # constraints from the annotation metadata.
+    # plain value, letting tests that call this handler directly get
+    # ``source=None`` / ``limit=20`` instead of a Query sentinel object
+    # (``.limit(FieldInfo)`` would otherwise raise).  FastAPI still reads
+    # the constraints from the annotation metadata.  In-CI direct callers
+    # that guard this: test_game_finish_db_integration.py and
+    # test_per_game_chat_alignment.py both call game_history(player=...,
+    # db=...) with no source/limit and assert on len(games).
     source: Annotated[
         str | None,
         Query(
