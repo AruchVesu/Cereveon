@@ -37,7 +37,7 @@ from llm.seca.auth.router import _is_sqlite as _DB_IS_SQLITE
 from llm.seca.auth.router import get_current_player, get_db
 from llm.seca.lichess import client as lichess_client
 from llm.seca.lichess import import_service
-from llm.seca.lichess.models import JOB_STATUS_QUEUED, LichessImportJob
+from llm.seca.lichess.models import LichessImportJob
 from llm.seca.shared_limiter import limiter
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,23 @@ _executor = ThreadPoolExecutor(
     max_workers=1 if _DB_IS_SQLITE else 4,
     thread_name_prefix="lichess-import",
 )
+
+
+def engine_pool_from_request(request: Request):
+    """App-state engine pool for background-worker submission, fail-soft.
+
+    ``request.app`` raises ``KeyError`` on the minimal handler-direct
+    requests the test suite constructs (no ``app`` in the ASGI scope),
+    so this reads via ``scope.get`` instead.  ``None`` merely disables
+    the post-import analysis pass; the import itself is unaffected.
+
+    Public (no underscore): consumed by this router's import dispatch
+    AND by the /auth/lichess post-sign-in kick in llm.seca.auth.router.
+    """
+    app = request.scope.get("app")
+    state = getattr(app, "state", None)
+    return getattr(state, "engine_pool", None)
+
 
 # Lichess username spec: 2–30 chars, alphanumerics plus ``_`` and ``-``.
 # Source: lichess.org/api docs — same rule the signup form enforces.
@@ -225,23 +242,29 @@ def trigger_import(
                 rated=rated,
             )
 
-        # v2 async path.
+        # v2 async path.  Worker submission happens via the dispatch
+        # callback — invoked by start_import_job, inside the per-player
+        # lock, for FRESHLY-CREATED jobs only.  Keying the submit on
+        # ``status == 'queued'`` out here (the pre-2026-07-03 pattern)
+        # double-submits when a job created by an earlier call is
+        # coalesced back while still awaiting executor pickup.
         job = import_service.start_import_job(
             db,
             player,
             max_games=max_games,
-        )
-        if job.status == JOB_STATUS_QUEUED:
-            # Freshly inserted — kick off the worker.  Coalesced
-            # returns (status != 'queued') reuse the worker already
-            # attached to the row, so we MUST NOT submit a second
-            # task or two workers would race on per-game commits.
-            _executor.submit(
+            dispatch=lambda job_id: _executor.submit(
                 import_service.run_import_job,
-                job.id,
+                job_id,
                 max_games=max_games,
                 rated=rated,
-            )
+                # Captured from app.state at submit time — the worker has
+                # no request context (same pattern as /game/finish's
+                # accuracy recompute).  None (pool-less boot: tests,
+                # degraded deploys) skips the post-import analysis pass;
+                # the import itself is unaffected.
+                engine_pool=engine_pool_from_request(request),
+            ),
+        )
         response.status_code = 202
         return import_service.serialize_job(job)
     except HTTPException:

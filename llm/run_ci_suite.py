@@ -150,6 +150,13 @@ TEST_TARGETS = [
     # sign-in review.  Registered alongside the OAuth suite since /auth/
     # lichess now leans on link_account + the shared client error types.
     "llm/tests/test_lichess_import.py",
+    # Lichess post-import engine analysis (AN_00..12 + PL_01): the
+    # bounded pass that scores imported games with engine-truth accuracy
+    # + weakness vectors so the historical-analysis pipeline consumes
+    # them, the producer-side ORM-default pin behind its unscored
+    # predicate, its run_import_job seams (no-pool skip, crash isolation,
+    # cancellation), and the /auth/lichess post-sign-in auto-import kick.
+    "llm/tests/test_lichess_analysis.py",
     # Sprint 6.C — hashing defensive branches (HASH_01..HASH_07) and
     # events/storage defensive branches (ESTORE_01..ESTORE_04).  Both
     # were sitting below their per-module floor before these tests
