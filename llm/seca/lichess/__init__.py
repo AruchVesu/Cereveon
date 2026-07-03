@@ -11,9 +11,10 @@ Lichess can return its own Stockfish evaluations when called with
 ``docs/ARCHITECTURE.md`` engine truth comes from the local engine pool
 only.  The client therefore requests Lichess with ``evals=false`` and the
 import path never copies any Lichess-derived eval into ``GameEvent``
-fields that the ESV / coaching pipeline consumes.  ESV for imported games
-is produced lazily by re-analysing the PGN with the local Stockfish pool
-when (and only when) the user opens that game for review.
+fields that the ESV / coaching pipeline consumes.  Accuracy + weakness
+vectors for imported games are produced by the LOCAL engine pool in a
+bounded post-import pass (``import_service._analyze_unscored_games``)
+that runs inside the v2 import worker after the game stream completes.
 
 Per-player import-job mutex
 ---------------------------

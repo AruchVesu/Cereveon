@@ -241,6 +241,12 @@ def trigger_import(
                 job.id,
                 max_games=max_games,
                 rated=rated,
+                # Captured from app.state at submit time — the worker has
+                # no request context (same pattern as /game/finish's
+                # accuracy recompute).  None (pool-less boot: tests,
+                # degraded deploys) skips the post-import analysis pass;
+                # the import itself is unaffected.
+                engine_pool=getattr(request.app.state, "engine_pool", None),
             )
         response.status_code = 202
         return import_service.serialize_job(job)

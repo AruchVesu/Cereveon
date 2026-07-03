@@ -753,6 +753,14 @@ Superset of the §15/§16 shape — the Android client deserialises it as
   already-fetched account profile.  Link failure (including a cross-player
   409 conflict) never fails the sign-in, and an existing link — even to a
   different handle — is never modified.
+- Best-effort auto-import *(2026-07-03)*: after the link step, the same
+  v2 background job as §31 is started (`max_games=50`, rated only,
+  watermark-incremental, per-player coalescing), including its
+  post-stream engine analysis — so signing in with Lichess feeds the
+  player's game history into Cereveon's analysis with no manual Import
+  tap.  Failure here never fails the sign-in;
+  `GET /lichess/status.active_import_job_id` (§29) exposes the job to
+  clients that want progress.
 
 ### Errors
 
@@ -1351,6 +1359,7 @@ to §30's v1 path.
   "inserted":          <int>,
   "skipped_duplicate": <int>,
   "skipped_invalid":   <int>,
+  "analyzed":          <int>,
   "target_max_games":  <int>,
   "last_imported_at_ms": <int (Unix ms) | null>,
   "error_message":     <string | null>,
@@ -1376,6 +1385,13 @@ HTTP status: **202 Accepted**.
   during this run.  Promoted to the canonical
   `LinkedAccount.last_imported_at` (ISO-8601) only on clean
   `succeeded`.
+- `analyzed` *(2026-07-03)* — games scored by the post-stream engine
+  analysis pass (see the trust-boundary note below).  Advances while
+  `status` is still `running`, AFTER `inserted` reaches its final
+  value — a client that only tracks `inserted` sees an unchanged bar
+  for the analysis tail, which the deployed Android client tolerates
+  (any non-terminal status keeps its polling loop alive; unknown JSON
+  keys are ignored).
 
 ### Coalescing
 
@@ -1397,6 +1413,23 @@ primary guard; on Postgres the partial unique index
 Same as §30: Lichess `evals=false` is pinned; the import service
 never populates `GameEvent.accuracy` / `weaknesses_json` from Lichess
 data.
+
+### Post-import engine analysis *(2026-07-03)*
+
+After the stream completes (and before the job goes terminal), the v2
+worker runs `import_service._analyze_unscored_games`: the newest
+`source='lichess'` rows with `accuracy IS NULL` — including backlog
+from imports that predate this feature — are re-analysed with the
+**local** engine pool via `compute_accuracy_from_pgn` (the same
+engine-truth recompute `/game/finish` uses, same 200 ms/ply budget),
+writing `accuracy` + phase-keyed `weaknesses_json` onto each row.  From
+that point the historical-analysis surfaces (curriculum, weakness
+charts, progress dashboard) consume imported games exactly like in-app
+ones.  Bounded at `LICHESS_ANALYSIS_MAX_GAMES` (default 20) per job —
+see `docs/THREAT_MODEL.md` §T3 for the engine-minutes rationale;
+excess backlog is picked up by subsequent jobs.  Pool saturation
+defers the remainder without failing the job; player rating /
+confidence are never mutated by this pass.
 
 ---
 
@@ -1426,6 +1459,7 @@ Same shape as §31's body (200 OK).  Field semantics identical:
   "inserted":          <int>,
   "skipped_duplicate": <int>,
   "skipped_invalid":   <int>,
+  "analyzed":          <int>,
   "target_max_games":  <int>,
   "last_imported_at_ms": <int | null>,
   "error_message":     <string | null>,

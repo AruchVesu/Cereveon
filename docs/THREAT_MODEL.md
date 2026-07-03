@@ -214,6 +214,20 @@ Mitigation:
   recycled mid-handle (the worker call raises and the engine is
   re-spawned at next pool startup).
 
+Background engine consumers (2026-07-03): the Lichess post-import
+analysis pass (`import_service._analyze_unscored_games`) burns
+engine-pool minutes OUTSIDE any request — a hostile A1 could try to
+keep the pool warm by re-triggering imports. Bounds: at most
+`LICHESS_ANALYSIS_MAX_GAMES` (default 20) games per job at the
+/game/finish 200 ms/ply budget (~5 min of single-threaded engine time),
+one active job per player (coalescing + partial unique index), 6/min on
+the import route, and the pass acquires pool slots per ply with the
+same 1 s queue timeout as the /game/finish recompute — `RuntimeError`
+on saturation aborts the pass rather than queueing behind live traffic.
+`/live/move` latency therefore degrades by at most one in-flight
+background evaluation per pool slot, identical to a concurrent
+/game/finish.
+
 Residual risk: a coordinated authenticated flood that respects rate
 limits. Accepted at small player counts; mitigated by infrastructure
 (Hetzner CX22 → CX42 upgrade path documented in

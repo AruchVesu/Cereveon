@@ -232,6 +232,17 @@ def init_schema() -> None:
         )
         conn.commit()
 
+        # Lichess post-import analysis counter (PR: Lichess history →
+        # analysis).  Tracks how many imported games the v2 worker's
+        # engine pass scored during a job.  DEFAULT 0 backfills legacy
+        # job rows so serialize_job never emits null.
+        _ensure_column(
+            conn,
+            "lichess_import_jobs",
+            "analyzed",
+            "INTEGER DEFAULT 0",
+        )
+
         # Weekly-curriculum anchor (aggregate-weakness re-anchor).  Records
         # the player's dominant MistakeCategory the study plan is built
         # around so the day-3 / day-7 practice puzzles can be selected from
@@ -629,6 +640,54 @@ def _ensure_lichess_link(db: DBSession, player, account: dict) -> None:
         logger.warning("lichess auto-link failed for player %s", player_id, exc_info=True)
 
 
+# Game slice requested by the post-sign-in auto-import — mirrors the
+# Android Connect sheet's default (LichessApiClient.DEFAULT_MAX_IMPORT)
+# and the /lichess/import Query default.  Incremental via the
+# LinkedAccount watermark, so repeat sign-ins only pull new games.
+_SIGNIN_IMPORT_MAX_GAMES = 50
+
+
+def _kick_lichess_import(db: DBSession, player, request: Request) -> None:
+    """Best-effort: start an incremental history import after OAuth sign-in.
+
+    "Sign in with Lichess" should make the player's Lichess games flow
+    into Cereveon's analysis without a manual Import tap: this starts the
+    same v2 background job the Connect sheet's button does (per-player
+    coalescing + the watermark make repeat sign-ins cheap and idempotent),
+    and the worker's post-stream engine pass scores the imported games for
+    the historical-analysis pipeline.
+
+    Never raises: import trouble (no link after a skipped auto-link,
+    executor saturation, DB hiccup) must not fail a sign-in whose
+    identity is already verified.  GET /lichess/status picks up the job
+    via ``active_import_job_id`` if the client wants progress.
+    """
+    # Local imports, same circular-import guard as _ensure_lichess_link:
+    # import_service imports ``engine`` from this module, and
+    # lichess.router imports ``get_current_player`` from this module.
+    # Both are fully initialised by request time.  JOB_STATUS_QUEUED is
+    # already bound at module scope via the load-bearing models wildcard.
+    from llm.seca.lichess import import_service as lichess_import_service
+    from llm.seca.lichess.router import _executor as lichess_executor
+
+    player_id = player.id
+    try:
+        job = lichess_import_service.start_import_job(
+            db, player, max_games=_SIGNIN_IMPORT_MAX_GAMES
+        )
+        if job.status == JOB_STATUS_QUEUED:
+            lichess_executor.submit(
+                lichess_import_service.run_import_job,
+                job.id,
+                max_games=_SIGNIN_IMPORT_MAX_GAMES,
+                rated=True,
+                engine_pool=getattr(request.app.state, "engine_pool", None),
+            )
+    except Exception:  # pylint: disable=broad-exception-caught
+        db.rollback()
+        logger.warning("lichess auto-import kick failed for player %s", player_id, exc_info=True)
+
+
 @router.post("/lichess")
 @limiter.limit("10/minute")
 def login_lichess(request: Request, req: LichessLoginRequest, db: DBSession = Depends(get_db)):
@@ -645,6 +704,9 @@ def login_lichess(request: Request, req: LichessLoginRequest, db: DBSession = De
     4. Find-or-create the player keyed on ``players.lichess_user_id`` and
        issue a session JWT via the same machinery as /auth/login.
     5. Best-effort game-import auto-link + first-link calibration.
+    6. Best-effort incremental history import (the v2 background job,
+       including its post-stream engine analysis) so the player's
+       Lichess games feed Cereveon's analysis without a manual Import.
     """
     try:
         lichess_token = lichess_client.exchange_authorization_code(req.code, req.code_verifier)
@@ -676,6 +738,7 @@ def login_lichess(request: Request, req: LichessLoginRequest, db: DBSession = De
     token, player, created = service.login_with_lichess(lichess_user_id, req.device_info)
 
     _ensure_lichess_link(db, player, account)
+    _kick_lichess_import(db, player, request)
 
     auth_login_total.labels(result="lichess_success").inc()
     return {

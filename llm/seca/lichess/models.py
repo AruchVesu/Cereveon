@@ -105,6 +105,15 @@ class LichessImportJob(Base):
     skipped_duplicate: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     skipped_invalid: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Games engine-analysed by the post-stream pass (accuracy + weakness
+    # vector written back onto the GameEvent rows so the historical
+    # analysis pipeline can consume imported games).  Counts THIS job's
+    # analysis work, which may include backlog rows from earlier imports
+    # that predate the analysis feature.  Nullable=False via default so
+    # serialize_job never emits null; legacy rows get the column via the
+    # init_schema ADD COLUMN migration with DEFAULT 0.
+    analyzed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
     # The cap requested by the client.  Pinned at row creation so the
     # progress-bar denominator is stable across the job's lifetime even
     # if a future feature accepts a re-cap mid-run.
