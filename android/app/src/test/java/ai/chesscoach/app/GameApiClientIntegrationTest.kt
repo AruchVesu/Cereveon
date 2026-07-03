@@ -629,4 +629,67 @@ class GameApiClientIntegrationTest {
         assertTrue(result is ApiResult.Success<*>)
         assertNull((result as ApiResult.Success<*>).data)
     }
+
+    // ---------------------------------------------------------------------------
+    // GET /game/history — source filter + limit (docs/API_CONTRACTS.md §7)
+    // ---------------------------------------------------------------------------
+
+    private val historyJson = """
+{
+  "games": [
+    {"id":"g1","source":"lichess","result":"win","accuracy":0.61,"created_at":"2026-07-01T10:00:00"},
+    {"id":"g2","source":"app","result":"loss","accuracy":0.55,"created_at":"2026-06-30T09:00:00"}
+  ]
+}"""
+
+    @Test
+    fun `INT_HISTORY_DEFAULT_PATH - no-arg call sends limit=20 and no source`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(historyJson))
+        client(token = "tok").getGameHistory()
+        val req = server.takeRequest(10, TimeUnit.SECONDS)!!
+        assertEquals("GET", req.method)
+        assertEquals("/game/history?limit=20", req.path)
+    }
+
+    @Test
+    fun `INT_HISTORY_SOURCE_PARAM - lichess filter serialised into the query`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(historyJson))
+        client(token = "tok").getGameHistory(source = "lichess", limit = 50)
+        val req = server.takeRequest(10, TimeUnit.SECONDS)!!
+        assertEquals("/game/history?limit=50&source=lichess", req.path)
+    }
+
+    @Test
+    fun `INT_HISTORY_SOURCE_PARSED - source field deserialised per row`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(historyJson))
+        val result = client(token = "tok").getGameHistory()
+        assertTrue("expected Success, got $result", result is ApiResult.Success<*>)
+        @Suppress("UNCHECKED_CAST")
+        val games = (result as ApiResult.Success<*>).data as List<GameHistoryItem>
+        assertEquals("lichess", games[0].source)
+        assertEquals("app", games[1].source)
+    }
+
+    @Test
+    fun `INT_HISTORY_SOURCE_DEFAULT - row without source decodes as app`() = runBlocking {
+        // A payload from a server predating the source field must decode
+        // as an in-app game, not throw.
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"games":[{"id":"g1","result":"win","accuracy":0.5,"created_at":"2026-07-01T10:00:00"}]}""",
+            ),
+        )
+        val result = client(token = "tok").getGameHistory()
+        @Suppress("UNCHECKED_CAST")
+        val games = (result as ApiResult.Success<*>).data as List<GameHistoryItem>
+        assertEquals("app", games[0].source)
+    }
+
+    @Test
+    fun `INT_HISTORY_BEARER - Authorization Bearer sent`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(historyJson))
+        client(token = "bearer-hist-tok").getGameHistory()
+        val req = server.takeRequest(10, TimeUnit.SECONDS)!!
+        assertEquals("Bearer bearer-hist-tok", req.getHeader("Authorization"))
+    }
 }

@@ -44,6 +44,61 @@
         app:atriumKicker="Games"
         app:atriumTitle="Recent" />
 
+    <!-- Source filter — All / In-app / Lichess.  Hard-edged Atrium
+         chips; selection is toggled in GameHistoryBottomSheet (text
+         colour + chip background). -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginStart="@dimen/atrium_space_24"
+        android:layout_marginEnd="@dimen/atrium_space_24"
+        android:layout_marginTop="@dimen/atrium_space_8"
+        android:baselineAligned="false">
+
+        <TextView
+            android:id="@+id/filterAll"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="@dimen/atrium_space_8"
+            android:gravity="center"
+            android:fontFamily="monospace"
+            android:textSize="11sp"
+            android:letterSpacing="0.08"
+            android:paddingTop="@dimen/atrium_space_8"
+            android:paddingBottom="@dimen/atrium_space_8"
+            android:text="ALL" />
+
+        <TextView
+            android:id="@+id/filterApp"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="@dimen/atrium_space_8"
+            android:gravity="center"
+            android:fontFamily="monospace"
+            android:textSize="11sp"
+            android:letterSpacing="0.08"
+            android:paddingTop="@dimen/atrium_space_8"
+            android:paddingBottom="@dimen/atrium_space_8"
+            android:text="IN-APP" />
+
+        <TextView
+            android:id="@+id/filterLichess"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:fontFamily="monospace"
+            android:textSize="11sp"
+            android:letterSpacing="0.08"
+            android:paddingTop="@dimen/atrium_space_8"
+            android:paddingBottom="@dimen/atrium_space_8"
+            android:text="LICHESS" />
+
+    </LinearLayout>
+
     <!-- Rating sparkline trend (≥2 games required). -->
     <ai.chesscoach.app.RatingSparklineView
         android:id="@+id/ratingSparkline"
