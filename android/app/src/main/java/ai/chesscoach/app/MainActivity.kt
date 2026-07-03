@@ -53,6 +53,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var authRepo: AuthRepository
     private lateinit var txtWeaknessTags: TextView
     private lateinit var txtNextTrainingChip: TextView
+    private lateinit var txtUpgradeChip: TextView
     private var currentPlayerId: String = "demo"
     private val moveClassifications = mutableListOf<MistakeClassification>()
 
@@ -203,6 +204,10 @@ class MainActivity : AppCompatActivity() {
 
         txtWeaknessTags = findViewById(R.id.txtWeaknessTags)
         txtNextTrainingChip = findViewById(R.id.txtNextTrainingChip)
+        txtUpgradeChip = findViewById(R.id.txtUpgradeChip)
+        txtUpgradeChip.setOnClickListener {
+            startActivity(Intent(this, PaywallActivity::class.java))
+        }
         reviewNavBar = findViewById(R.id.reviewNavBar)
         btnReviewPrev = findViewById(R.id.btnReviewPrev)
         btnReviewNext = findViewById(R.id.btnReviewNext)
@@ -296,6 +301,9 @@ class MainActivity : AppCompatActivity() {
             scoreRow.visibility = View.GONE
             txtEngineScore.text = ""
             txtMistakeCategory.text = ""
+            // A fresh game gets a fresh admission verdict; hide the limit
+            // chip until /live/move says otherwise for the new game_id.
+            txtUpgradeChip.visibility = View.GONE
             updateChapterHeader()
             drawerLayout.closeDrawer(GravityCompat.END)
             startNewGameSession()
@@ -607,11 +615,23 @@ class MainActivity : AppCompatActivity() {
             // to login.
             tokenSink = { newToken -> authRepo.saveToken(newToken) },
         )
+        // Free-tier coached-game admission: every /live/move call carries the
+        // current server game id so the entitlements layer meters GAMES, not
+        // moves (API_CONTRACTS.md §4).  Null before /game/start lands — the
+        // server fails open for it.
+        viewModel.serverGameIdProvider = { currentServerGameId }
+
         viewModel.onQuickCoachUpdate = { update ->
             // Track for end-of-game accuracy computation — only on human-move updates
             // to avoid double-counting (one human-move coach update + one AI-score update per turn)
             if (update.isHumanMoveCoachUpdate) {
                 moveClassifications.add(update.classification)
+                // Entitlements limit chip: only human-move updates carry the
+                // coach_tier verdict, and it holds for the WHOLE game (the
+                // admission is per game_id), so set — don't clear — outside
+                // this branch.  Cleared on reset/new game via startNewGameUi.
+                txtUpgradeChip.visibility =
+                    if (update.coachDegraded) View.VISIBLE else View.GONE
             }
 
             // Show engine score badge; degrade gracefully when engine is unavailable

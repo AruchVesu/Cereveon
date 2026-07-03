@@ -439,4 +439,86 @@ class LiveMoveApiClientIntegrationTest {
             sunk.isEmpty(),
         )
     }
+
+    // ---------------------------------------------------------------------------
+    // 20–23  Entitlements: game_id request field + coach_tier response field
+    //        (API_CONTRACTS.md §4, additive 2026-07)
+    // ---------------------------------------------------------------------------
+
+    @Test
+    fun `INT_LIVE_GAME_ID_IN_BODY - game_id present when supplied`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(LIVE_OK_BODY))
+        client().getLiveCoaching(startingFen, testUci, gameId = "srv-game-42")
+        val body = JSONObject(server.takeRequest(10, TimeUnit.SECONDS)!!.body.readUtf8())
+        assertEquals(
+            "game_id must reach the wire so the server can meter coached GAMES",
+            "srv-game-42",
+            body.getString("game_id"),
+        )
+    }
+
+    @Test
+    fun `INT_LIVE_GAME_ID_ABSENT - game_id omitted when not supplied`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(LIVE_OK_BODY))
+        client().getLiveCoaching(startingFen, testUci)
+        val body = JSONObject(server.takeRequest(10, TimeUnit.SECONDS)!!.body.readUtf8())
+        assertTrue(
+            "game_id must be OMITTED (not null) when unknown — the server fails " +
+                "open for absent ids, and encodeDefaults=false guarantees omission",
+            !body.has("game_id"),
+        )
+    }
+
+    @Test
+    fun `INT_LIVE_COACH_TIER_PARSED - coach_tier is deserialised when present`() = runBlocking {
+        val body = """
+{
+  "status": "ok",
+  "hint": "Solid choice.",
+  "engine_signal": null,
+  "move_quality": "good",
+  "mode": "LIVE_V1",
+  "coach_tier": {"plan": "free", "degraded": true, "remaining": 0}
+}"""
+        server.enqueue(MockResponse().setResponseCode(200).setBody(body))
+        val result = client().getLiveCoaching(startingFen, testUci)
+        assertTrue(result is ApiResult.Success<*>)
+        val data = (result as ApiResult.Success<*>).data as LiveMoveResponse
+        assertEquals("free", data.coachTier?.plan)
+        assertEquals(true, data.coachTier?.degraded)
+        assertEquals(0, data.coachTier?.remaining)
+    }
+
+    @Test
+    fun `INT_LIVE_COACH_TIER_ABSENT - pre-entitlements server yields null coachTier`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(LIVE_OK_BODY))
+        val result = client().getLiveCoaching(startingFen, testUci)
+        assertTrue(result is ApiResult.Success<*>)
+        val data = (result as ApiResult.Success<*>).data as LiveMoveResponse
+        assertNull(
+            "coachTier must be null (not-metered) when the server omits coach_tier",
+            data.coachTier,
+        )
+    }
+
+    // ---------------------------------------------------------------------------
+    // 24  Error bodies surface on ApiResult.HttpError (structured error
+    //     contracts — e.g. the entitlements 402 on the chat routes)
+    // ---------------------------------------------------------------------------
+
+    @Test
+    fun `INT_LIVE_HTTP_ERROR_BODY - non-200 carries the error body`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(402)
+                .setBody("""{"error": "chat_daily_limit", "plan": "free", "limit": 3, "used": 3}"""),
+        )
+        val result = client().getLiveCoaching(startingFen, testUci)
+        assertTrue("expected HttpError, got $result", result is ApiResult.HttpError)
+        val httpError = result as ApiResult.HttpError
+        assertEquals(402, httpError.code)
+        assertTrue(
+            "HttpError.body must carry the structured error payload; got: ${httpError.body}",
+            httpError.body?.contains("chat_daily_limit") == true,
+        )
+    }
 }

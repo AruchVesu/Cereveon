@@ -114,7 +114,18 @@ class BaseHttpClient(
                 onResponse?.invoke(conn)
                 ApiResult.Success(parse(text))
             } else {
-                ApiResult.HttpError(code)
+                // Carry the (bounded) error body so callers can act on
+                // structured error contracts — e.g. the entitlements 402
+                // quota body — rather than only the status code.  Error
+                // bodies here are small JSON; 4 KB is a defensive cap.
+                val errorBody = try {
+                    conn.errorStream
+                        ?.bufferedReader(Charsets.UTF_8)
+                        ?.use { it.readText().take(4096) }
+                } catch (_: Exception) {
+                    null
+                }
+                ApiResult.HttpError(code, errorBody?.takeIf { it.isNotBlank() })
             }
         } catch (_: SocketTimeoutException) {
             ApiResult.Timeout

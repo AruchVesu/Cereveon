@@ -785,6 +785,9 @@ class ChatBottomSheet : DialogFragment() {
             // reveals it to the user at a readable pace (see TYPEWRITER_*).
             var accumulated = ""
             var streamFinished = false
+            // Set when the server answers the entitlements 402 (daily chat
+            // quota) — drives the paywall reaction after the collect loop.
+            var limitNotice: ChatLimitNotice? = null
 
             // Typewriter reveal — paces the (often very fast) server stream to a
             // readable rate, running concurrently with the collector below.
@@ -843,6 +846,10 @@ class ChatBottomSheet : DialogFragment() {
                         is StreamChunk.StreamError -> {
                             Log.w(STREAM_TAG, "stream error: ${chunk.message}")
                             if (chunk.message.startsWith("HTTP 401")) handleTokenExpiry()
+                            // Entitlements 402: the daily chat quota is used up.
+                            // Parsed here, acted on after the collect loop.
+                            ChatLimitNotice.fromStreamErrorMessage(chunk.message)
+                                ?.let { limitNotice = it }
                         }
                     }
                 }
@@ -851,11 +858,27 @@ class ChatBottomSheet : DialogFragment() {
             }
             reveal.join()
 
-            // Ensure the complete reply is shown (fallback if the stream produced
-            // nothing; also covers an abort that shortened the text), then persist.
-            val displayReply = accumulated.takeIf { it.isNotBlank() } ?: FALLBACK_REPLY
-            renderStreamUpdate(displayReply)
-            sessionStore.addMessage("assistant", displayReply)
+            val quotaNotice = limitNotice
+            if (quotaNotice != null) {
+                // Render the quota explanation in the coach bubble but do NOT
+                // persist it: sessionStore is replayed to the server as
+                // conversation history, and a quota notice is not coaching
+                // context.  Then surface the paywall — the 402 body's
+                // upgrade hint is exactly this screen (API_CONTRACTS.md §5).
+                renderStreamUpdate(
+                    "You've used all ${quotaNotice.limit} coach questions for today. " +
+                        "Upgrade to Premium for unlimited coaching — or come back tomorrow.",
+                )
+                if (isAdded) {
+                    startActivity(Intent(requireContext(), PaywallActivity::class.java))
+                }
+            } else {
+                // Ensure the complete reply is shown (fallback if the stream produced
+                // nothing; also covers an abort that shortened the text), then persist.
+                val displayReply = accumulated.takeIf { it.isNotBlank() } ?: FALLBACK_REPLY
+                renderStreamUpdate(displayReply)
+                sessionStore.addMessage("assistant", displayReply)
+            }
 
             isStreaming = false
             sendBtn.isEnabled = true

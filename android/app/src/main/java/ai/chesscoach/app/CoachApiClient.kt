@@ -89,7 +89,13 @@ interface CoachApiClient {
                 emit(StreamChunk.Chunk(result.data.reply))
                 emit(StreamChunk.Done(result.data.engineSignal, "CHAT_V1"))
             }
-            is ApiResult.HttpError -> emit(StreamChunk.StreamError("HTTP ${result.code}"))
+            is ApiResult.HttpError -> {
+                // Mirror the streaming override's "HTTP <code>: <body>"
+                // shape so ChatLimitNotice.fromStreamErrorMessage works
+                // identically through both paths.
+                val suffix = result.body?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""
+                emit(StreamChunk.StreamError("HTTP ${result.code}$suffix"))
+            }
             is ApiResult.NetworkError -> emit(StreamChunk.StreamError("Network error"))
             ApiResult.Timeout -> emit(StreamChunk.StreamError("Timeout"))
         }

@@ -51,6 +51,7 @@ class ChessViewModelLiveMoveQualityTest {
             uci: String,
             playerId: String,
             fenBefore: String?,
+            gameId: String?,
         ): ApiResult<LiveMoveResponse> = result
     }
 
