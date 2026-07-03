@@ -261,6 +261,24 @@ is wire-backward-compatible with any unknown client.
 }
 ```
 
+### Errors
+
+- `402` — daily chat quota exhausted (entitlements; only when
+  `SECA_ENTITLEMENTS_ENFORCED` is on — dormant otherwise). Shape B body
+  with metering extras, emitted before any engine/LLM work:
+
+  ```json
+  {"error": "chat_daily_limit", "plan": "free", "limit": 3, "used": 3,
+   "upgrade": {"product": "pro_monthly"}}
+  ```
+
+  `plan` / `limit` / `used` reflect the caller's plan (`free` = 3/day,
+  `pro` = 100/day soft cap). Non-2xx, so no `X-Auth-Token` rotation
+  header ships (the presented JWT stays valid — see §10). The turn is
+  **not** consumed. Clients render this as the upgrade/paywall surface.
+  A successful reply consumes one turn at the same 2xx side-effect
+  boundary as history persistence, so server errors never eat quota.
+
 ---
 
 ## 6. `POST /seca/explain`
@@ -965,6 +983,7 @@ The final `done` event carries the ESV + mode. Clients should buffer chunks and 
 ### Errors
 
 - `401` — auth failure (no `X-Auth-Token` rotation header on failure paths — see §10).
+- `402` — daily chat quota exhausted (entitlements; dormant unless `SECA_ENTITLEMENTS_ENFORCED` is on). Same Shape B body as §5's 402, returned as a **plain HTTP JSON response before the SSE stream opens** — never as an SSE `abort` event — and before the rotation takeover, so no `X-Auth-Token` ships and the presented JWT stays valid. The Android client already reads non-200 bodies before opening the SSE reader. The turn is consumed only at the stream's terminal event (`done`/`abort`), exactly where history is persisted, so an interrupted or failed stream never eats quota.
 - `429` — rate limit.
 - `500` — boundary validation rejected both the LLM reply AND the deterministic fallback (rare; the deterministic builder is constructed to pass every gate). Surfaces in the Android client as the "Coach is offline" fallback string.
 
@@ -1888,13 +1907,18 @@ contract.
 { "error": <string> }
 ```
 
-Used only by three surfaces, all of which run as middleware or as a
-slowapi exception handler — i.e., never via `raise HTTPException(...)`:
+Used only by three surfaces, all of which return a constructed
+`JSONResponse` rather than `raise HTTPException(...)`:
 
 - `_LimitBodySize` middleware (`llm/server.py`) — 411 / 413 / 400 for
   Content-Length-related rejection.
 - `rate_limit_handler` (`llm/server.py`) — 429 for slowapi rate-limit
   exceedance.
+- `_chat_limit_response` (`llm/server.py`) — 402 for an over-quota chat
+  turn on `/chat` and `/chat/stream` (entitlements; dormant unless
+  `SECA_ENTITLEMENTS_ENFORCED` is on). Carries **additional contract
+  keys** beyond `error`: `plan`, `limit`, `used`, `upgrade.product` —
+  the one Shape B body where clients read more than the `error` string.
 
 ### Status-code → shape mapping
 
@@ -1904,6 +1928,7 @@ slowapi exception handler — i.e., never via `raise HTTPException(...)`:
 | 400 | A | `{"detail": "X-API-Version mismatch: …"}` | `api_version_gate` middleware: client `X-API-Version` not in `API_VERSIONS_SUPPORTED`. |
 | 400 | B | `{"error": "Invalid Content-Length"}` | `_LimitBodySize` middleware: Content-Length header doesn't parse as int. |
 | 401 | A | `{"detail": "Invalid or expired token"}` / `{"detail": "Missing token"}` / `{"detail": "Invalid credentials"}` | `get_current_player` / `logout` / `login` failures; raw `Authorization` header parse on `/auth/logout`. |
+| 402 | B | `{"error": "chat_daily_limit", "plan": "free", "limit": 3, "used": 3, "upgrade": {"product": "pro_monthly"}}` | Entitlements chat quota exhausted on `/chat` / `/chat/stream` (only when `SECA_ENTITLEMENTS_ENFORCED` is on). The extra keys are contract, not decoration — the paywall sheet renders them. No `X-Auth-Token` header (non-2xx). |
 | 403 | A | `{"detail": "not your game"}` | Authenticated player operating on another player's resource (game lifecycle). |
 | 404 | A | `{"detail": "no active game"}` / `{"detail": "game not found"}` / `{"detail": "opening not found"}` | Resource-not-found across `/game/*`, `/repertoire/*`. |
 | 409 | A | `{"detail": "game already finished"}` | Game-lifecycle conflict (checkpointing a finished game). |
