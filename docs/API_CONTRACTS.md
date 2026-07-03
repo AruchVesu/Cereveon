@@ -572,6 +572,29 @@ derived from the JWT; any value in the request body is ignored.
 Pair with `POST /game/finish` (see §3) and `POST /game/{game_id}/checkpoint`
 (see §12) to close the lifecycle properly.
 
+### Errors
+
+- `402` — free-tier daily game limit reached (entitlements; only when
+  `SECA_ENTITLEMENTS_ENFORCED` is on — dormant otherwise). The free tier
+  is **1 coached game/day, hard-blocked**: once the player has played
+  their daily game (made a move in it — the coached-game admission
+  marker is written on the first `/live/move`), a new `/game/start` is
+  refused. Shape B body, same envelope as the chat 402 (§5) with a
+  distinct `error` discriminator:
+
+  ```json
+  {"error": "game_daily_limit", "plan": "free", "limit": 1, "used": 1,
+   "upgrade": {"product": "pro_monthly"}}
+  ```
+
+  The client renders this as a non-dismissible paywall ("come back
+  tomorrow") and does **not** enter a game — the server returned no
+  `game_id`. Starting or resetting a game **before** the first move is
+  not blocked (`remaining >= 1`): a misclick or opening rethink costs
+  nothing. Resuming an existing game does not call `/game/start` and is
+  never gated. `pro` is blocked only at its far-higher soft cap
+  (10/day). Non-2xx, so no `X-Auth-Token` rotation header ships.
+
 ---
 
 ## 12. `POST /game/{game_id}/checkpoint`
@@ -2017,6 +2040,7 @@ Used only by three surfaces, all of which return a constructed
 | 400 | B | `{"error": "Invalid Content-Length"}` | `_LimitBodySize` middleware: Content-Length header doesn't parse as int. |
 | 401 | A | `{"detail": "Invalid or expired token"}` / `{"detail": "Missing token"}` / `{"detail": "Invalid credentials"}` | `get_current_player` / `logout` / `login` failures; raw `Authorization` header parse on `/auth/logout`. |
 | 402 | B | `{"error": "chat_daily_limit", "plan": "free", "limit": 3, "used": 3, "upgrade": {"product": "pro_monthly"}}` | Entitlements chat quota exhausted on `/chat` / `/chat/stream` (only when `SECA_ENTITLEMENTS_ENFORCED` is on). The extra keys are contract, not decoration — the paywall sheet renders them. No `X-Auth-Token` header (non-2xx). |
+| 402 | B | `{"error": "game_daily_limit", "plan": "free", "limit": 1, "used": 1, "upgrade": {"product": "pro_monthly"}}` | Free-tier daily game limit on `/game/start` (§11), only when `SECA_ENTITLEMENTS_ENFORCED` is on. Hard block: no `game_id` returned. Client shows a non-dismissible paywall. No `X-Auth-Token` header (non-2xx). |
 | 402 | A | `{"detail": "purchase not active (SUBSCRIPTION_STATE_EXPIRED)"}` | `/billing/google/verify` (§36): Google's verdict is that the token carries no entitlement. Plan not flipped. |
 | 502 | A | `{"detail": "purchase verification temporarily unavailable"}` | `/billing/google/verify` (§36): Google OAuth / Play API unreachable or abnormal — retry later. |
 | 503 | A | `{"detail": "purchase verification not configured"}` | `/billing/google/verify` (§36): `GOOGLE_PLAY_*` service-account env vars unset on this deploy. |

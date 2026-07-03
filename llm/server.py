@@ -1387,9 +1387,30 @@ def engine_eval(
 
 @app.post("/game/start")
 @limiter.limit("20/minute")
-def start_game(req: StartGameRequest, request: Request, player=Depends(get_current_player)):
+def start_game(
+    req: StartGameRequest,
+    request: Request,
+    player=Depends(get_current_player),
+    db=Depends(get_db),
+):
     # T3: player_id is sourced from the JWT, not the request body.  Any
     # req.player_id sent by older clients is ignored (see StartGameRequest).
+
+    # Free-tier hard gate (dormant until SECA_ENTITLEMENTS_ENFORCED):
+    # 1 coached game/day.  ``check`` counts the distinct coached-game
+    # admission markers written on the first /live/move of each game, so
+    # remaining==0 means the player has already PLAYED their daily game —
+    # starting (or resetting into) another is refused with the paywall
+    # 402.  Starting/resetting BEFORE the first move is still free
+    # (remaining>=1): a misclick or opening rethink costs nothing.
+    # ``remaining`` is None while metering is dormant, so ``== 0`` is
+    # False and the gate is inert.  Read-only: the marker is still
+    # written by /live/move, keeping "coached game" == "game you moved
+    # in", never "game row created".
+    tier = entitlements.check(db, player, entitlements.METRIC_COACHED_GAME)
+    if tier.remaining == 0:
+        return _game_limit_response(tier)
+
     game_id = create_game(str(player.id))
     return {"game_id": game_id}
 
@@ -1683,6 +1704,27 @@ def _chat_limit_response(decision) -> JSONResponse:
         status_code=402,
         content={
             "error": "chat_daily_limit",
+            "plan": decision.plan,
+            "limit": decision.limit,
+            "used": decision.used,
+            "upgrade": {"product": "pro_monthly"},
+        },
+    )
+
+
+def _game_limit_response(decision) -> JSONResponse:
+    """402 payment-required for starting a game over the daily game limit.
+
+    Free tier is 1 coached game/day, enforced as a HARD block at
+    ``/game/start`` (the client turns this into a non-dismissible
+    paywall — "come back tomorrow").  Same Shape B envelope + rotation
+    posture as ``_chat_limit_response``; only the ``error`` discriminator
+    differs so the client can tell the game gate from the chat gate.
+    """
+    return JSONResponse(
+        status_code=402,
+        content={
+            "error": "game_daily_limit",
             "plan": decision.plan,
             "limit": decision.limit,
             "used": decision.used,
