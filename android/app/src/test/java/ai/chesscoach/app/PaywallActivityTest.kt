@@ -54,6 +54,22 @@ class PaywallActivityTest {
     }
 
     @Test
+    fun `DEFAULT_PLANS carry the launch pricing`() {
+        // Launch pricing (2026-07), chosen against the MEASURED unit
+        // economics: a fully-coached game ≈ $0.0033 in DeepSeek tokens,
+        // so €9.99/mo carries a ≥95% gross margin after VAT + Play fee.
+        // These are DISPLAY labels bound to the tiles in onCreate; the
+        // Play Console products behind PLAY_PRODUCT_IDS do the billing —
+        // when the Console price changes, change this together with it.
+        val monthly = PaywallActivity.DEFAULT_PLANS.first { it.key == "monthly" }
+        val yearly = PaywallActivity.DEFAULT_PLANS.first { it.key == "yearly" }
+        assertEquals("€9.99", monthly.price)
+        assertEquals("per month", monthly.sub)
+        assertEquals("€71.99", yearly.price)
+        assertEquals("€6 / month", yearly.sub)
+    }
+
+    @Test
     fun `DEFAULT_PLANS entries have non-blank prices and subs`() {
         for (plan in PaywallActivity.DEFAULT_PLANS) {
             assertNotNull(plan.price)

@@ -60,6 +60,8 @@ class PaywallActivity : AppCompatActivity() {
     private lateinit var yearlyTile: FrameLayout
     private lateinit var monthlyPrice: TextView
     private lateinit var yearlyPrice: TextView
+    private lateinit var monthlySub: TextView
+    private lateinit var yearlySub: TextView
 
     private val authRepo: AuthRepository by lazy {
         AuthRepository(EncryptedTokenStorage(this))
@@ -120,6 +122,22 @@ class PaywallActivity : AppCompatActivity() {
         yearlyTile   = findViewById(R.id.paywallPlanYearly)
         monthlyPrice = findViewById(R.id.paywallPlanMonthlyPrice)
         yearlyPrice  = findViewById(R.id.paywallPlanYearlyPrice)
+        monthlySub   = findViewById(R.id.paywallPlanMonthlySub)
+        yearlySub    = findViewById(R.id.paywallPlanYearlySub)
+
+        // DEFAULT_PLANS is the single source for the tile copy — the XML
+        // values are pre-bind placeholders.  What gets BILLED is the Play
+        // Console product behind PLAY_PRODUCT_IDS; these labels must be
+        // kept in lock-step with the prices configured there (pinned by
+        // PaywallActivityTest's launch-pricing test).
+        DEFAULT_PLANS.firstOrNull { it.key == "monthly" }?.let {
+            monthlyPrice.text = it.price
+            monthlySub.text = it.sub
+        }
+        DEFAULT_PLANS.firstOrNull { it.key == "yearly" }?.let {
+            yearlyPrice.text = it.price
+            yearlySub.text = it.sub
+        }
 
         monthlyTile.setOnClickListener { selectPlan("monthly") }
         yearlyTile.setOnClickListener { selectPlan("yearly") }
@@ -361,26 +379,33 @@ class PaywallActivity : AppCompatActivity() {
             }
 
         /**
-         * Hardcoded default plans matching the design 1-for-1.  Lifted
-         * to the companion so unit tests can verify the canonical
-         * shape without launching the activity.  The "yearly" entry
-         * is marked recommended (drives the initial active-tile
-         * selection).  Display pricing is design-driven; what gets
-         * PURCHASED is decided by [PLAY_PRODUCT_IDS].
+         * Canonical plan-tile copy, bound to the tiles in [onCreate].
+         * Lifted to the companion so unit tests can verify the shape
+         * without launching the activity; the "yearly" entry is marked
+         * recommended (drives the initial active-tile selection).
+         *
+         * LAUNCH PRICING (2026-07): €9.99/month; yearly €71.99 (= €6 a
+         * month, ~40% off).  Chosen against the MEASURED unit costs —
+         * a fully-coached game ≈ $0.0033 in DeepSeek tokens, so a
+         * heavy Pro user costs well under €1/month (≥95% gross margin
+         * after ~20% VAT + Play's 15% fee).  These labels are DISPLAY
+         * copy: what gets billed is the Play Console product behind
+         * [PLAY_PRODUCT_IDS] — change both together, and let Play's
+         * per-country price templates localise the actual charge.
          */
         val DEFAULT_PLANS: List<Plan> = listOf(
             Plan(
                 key = "monthly",
                 title = "Monthly",
-                price = "$9",
+                price = "€9.99",
                 sub = "per month",
                 isRecommended = false,
             ),
             Plan(
                 key = "yearly",
                 title = "Yearly",
-                price = "$72",
-                sub = "$6 / month",
+                price = "€71.99",
+                sub = "€6 / month",
                 isRecommended = true,
             ),
         )

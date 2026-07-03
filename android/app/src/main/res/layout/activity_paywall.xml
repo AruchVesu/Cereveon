@@ -190,13 +190,16 @@
                             android:textAppearance="@style/Atrium.Kicker"
                             android:text="Monthly" />
 
+                        <!-- Placeholder copy only — PaywallActivity binds
+                             price + sub from DEFAULT_PLANS in onCreate. -->
                         <TextView
                             android:id="@+id/paywallPlanMonthlyPrice"
                             style="@style/Atrium.PaywallPlan.Price"
-                            android:text="$9"
-                            tools:text="$9" />
+                            android:text="€9.99"
+                            tools:text="€9.99" />
 
                         <TextView
+                            android:id="@+id/paywallPlanMonthlySub"
                             style="@style/Atrium.PaywallPlan.Sub"
                             android:text="per month" />
 
@@ -231,16 +234,19 @@
                             android:textAppearance="@style/Atrium.Kicker"
                             android:text="Yearly" />
 
+                        <!-- Placeholder copy only — PaywallActivity binds
+                             price + sub from DEFAULT_PLANS in onCreate. -->
                         <TextView
                             android:id="@+id/paywallPlanYearlyPrice"
                             style="@style/Atrium.PaywallPlan.Price"
                             android:textColor="@color/atrium_accent_cyan"
-                            android:text="$72"
-                            tools:text="$72" />
+                            android:text="€71.99"
+                            tools:text="€71.99" />
 
                         <TextView
+                            android:id="@+id/paywallPlanYearlySub"
                             style="@style/Atrium.PaywallPlan.Sub"
-                            android:text="$6 / month" />
+                            android:text="€6 / month" />
 
                     </LinearLayout>
 
