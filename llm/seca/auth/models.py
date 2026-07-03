@@ -41,6 +41,17 @@ class Player(Base):
     # surface changes.
     training_xp: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # Subscription tier for the freemium entitlements layer: "free" or
+    # "pro".  Dormant in this phase — nothing reads it until the
+    # entitlements service ships and ``SECA_ENTITLEMENTS_ENFORCED`` is
+    # turned on, and nothing writes it until the Google Play billing
+    # verification endpoint lands.  Server-side default keeps every
+    # existing and new row on the free plan until a verified purchase
+    # flips it.  Plan values are a closed vocabulary owned by
+    # ``llm.seca.entitlements`` (see ``usage_counters`` there for the
+    # metering side).
+    plan: Mapped[str] = mapped_column(String(16), default="free", nullable=False)
+
     # OAuth identity for "Sign in with Lichess" (POST /auth/lichess): the
     # canonical lowercase Lichess user id, verified server-side via the
     # authorization-code exchange + GET /api/account.  NULL for password
