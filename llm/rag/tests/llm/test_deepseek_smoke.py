@@ -36,12 +36,25 @@ import pytest
 from llm.rag.llm.deepseek import DeepseekLLM
 from llm.rag.llm.run_mode_2 import run_mode_2
 
+# The instruction lines mirror the rule both production prompts carry
+# (system_v2_mode_2.txt rule 5 / system_v1.txt SPECIAL CASES): the
+# semantic gate REQUIREs "inevitable"/"forced" on a mate-type signal
+# while the lexical gate FORBIDS "checkmate" / "mate in N" / "forced
+# mate".  Without the instruction the live model routinely writes
+# "checkmate", the repair loop rewrites it away, and the repaired text
+# no longer carries the required inevitability vocabulary — the first
+# genuine CI execution of this smoke test (2026-07-06) failed exactly
+# that way.  The test's assertions are unchanged; a stub prompt that
+# sets the model up to violate the validators tests the repair loop's
+# worst case, not provider connectivity.
 PROMPT = """
 ENGINE SIGNAL:
 evaluation.type = mate
 forced mate
 
-Explain the position.
+Explain the position.  The engine signal confirms the mate: state
+plainly that the outcome is inevitable — use the word "inevitable" —
+and never write the words "checkmate", "mate in N", or "forced mate".
 """
 
 if os.getenv("RUN_DEEPSEEK_TESTS") != "1":

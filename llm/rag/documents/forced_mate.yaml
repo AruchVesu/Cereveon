@@ -3,4 +3,4 @@ type: evaluation_translation
 conditions:
   evaluation.type: mate
 content:
-  description: "The position contains a forced, unavoidable conclusion."
+  description: "The outcome is inevitable — the position contains a forced, unavoidable conclusion."

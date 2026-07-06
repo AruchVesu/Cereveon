@@ -81,11 +81,26 @@ def test_llm_regression_contract():
         case_type = case_type_from_path(case_path)
 
         esv = extract_engine_signal(case.get("stockfish_json", {}))
-        rag_docs = retrieve(esv, ALL_RAG_DOCUMENTS)
+
+        # A missing-data case declares its premise with an EMPTY
+        # stockfish_json — the engine layer produced nothing.  Rendering
+        # the EXTRACTED signal for such a case shows the model a
+        # fabricated, complete-looking equal evaluation
+        # (``extract_engine_signal`` backfills band/side/phase), making
+        # the required "missing / not enough information" acknowledgment
+        # unreachable: the model cannot see the absence it must report.
+        # Render the verbatim empty signal (and retrieve against it —
+        # RAG docs selected from a fabricated ESV would likewise be
+        # fabricated context) so the prompt states the truth of the
+        # case.  Validation is unchanged: the extracted ESV still drives
+        # the semantic gates and ``case_type`` still drives the
+        # missing-data REQUIRE.
+        signal_for_prompt = esv if case.get("stockfish_json") else {}
+        rag_docs = retrieve(signal_for_prompt, ALL_RAG_DOCUMENTS)
 
         prompt = render_mode_2_prompt(
             system_prompt=(ROOT / "rag/prompts/mode_2/system_v1.txt").read_text(encoding="utf-8"),
-            engine_signal=esv,
+            engine_signal=signal_for_prompt,
             rag_docs=rag_docs,
             fen=case["fen"],
             user_query=case.get("user_query", ""),
