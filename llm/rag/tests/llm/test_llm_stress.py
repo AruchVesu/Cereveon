@@ -251,12 +251,26 @@ _NEGATION_GUARD = re.compile(
     re.IGNORECASE,
 )
 
+# Factor-scoped phrasings ("the one thing working in your favor",
+# "one point in your favour") name a single mitigating aspect inside an
+# otherwise honest assessment — sound coaching in a lost position, not
+# an overall who-stands-better claim.  Flagged a real CI run on
+# 2026-07-06 whose reply opened with the correct losing verdict.  Same
+# window shape as the negation guard; directional inversions read as
+# plain claims ("you are winning") and are unaffected.
+_FACTOR_GUARD = re.compile(
+    r"\b(?:thing|things|factor|factors|aspect|aspects|element|elements|"
+    r"point|points|work(?:s|ing)?|count(?:s|ing)?)\b[^.!?]{0,15}$",
+    re.IGNORECASE,
+)
+
 
 def _unnegated_hits(reply: str, patterns: tuple[re.Pattern[str], ...]) -> list[str]:
     hits: list[str] = []
     for pattern in patterns:
         for match in pattern.finditer(reply):
-            if _NEGATION_GUARD.search(reply[max(0, match.start() - 30) : match.start()]):
+            preceding = reply[max(0, match.start() - 30) : match.start()]
+            if _NEGATION_GUARD.search(preceding) or _FACTOR_GUARD.search(preceding):
                 continue
             snippet = reply[max(0, match.start() - 30) : match.end() + 30]
             hits.append(snippet.strip())
@@ -868,6 +882,12 @@ def test_selfcheck_advantage_direction() -> None:
     mate_for = {"evaluation": {"type": "mate", "band": "decisive_advantage", "side": "white"}}
     assert advantage_direction_violations("You are about to be mated.", mate_for, "white")
     assert not advantage_direction_violations("Mate is inevitable in your favour.", mate_for, "white")
+    # Factor-scoped consolation inside an honest losing assessment
+    # (real CI false positive, 2026-07-06) vs. an overall claim.
+    assert not advantage_direction_violations(
+        "This is the one thing working in your favor: the game is young.", losing, "white"
+    )
+    assert advantage_direction_violations("The position is in your favour.", losing, "white")
     # Sub-dimension comparatives are coaching, not overall claims.
     assert not advantage_direction_violations("You are better developed.", losing, "white")
     assert not advantage_direction_violations("You are ahead in development.", losing, "white")
