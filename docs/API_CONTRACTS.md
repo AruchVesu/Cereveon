@@ -391,8 +391,9 @@ chat thread.
 
 ```json
 {
-  "positions": ["<fen>", "…"],
-  "moves":     ["<san>", "…"]
+  "positions":    ["<fen>", "…"],
+  "moves":        ["<san>", "…"],
+  "player_color": <"white" | "black" | null>
 }
 ```
 
@@ -400,6 +401,7 @@ chat thread.
 |-------|------|-------|
 | `positions` | `array<string>` | N+1 FENs: index 0 is the start, index *i* is the board after ply *i* (`positions` last entry is the final position) |
 | `moves` | `array<string>` | N SANs: `moves[i]` produced `positions[i+1]` (e.g. `"e4"`, `"Nf3"`); for move-list labels |
+| `player_color` *(2026-07-06)* | `string \| null` | Which side the player was on, for review **board orientation**. `"white"` / `"black"` for imported Lichess games (the importer derives it by matching the linked handle against the game's players and stores it on the row). Rows imported *before* this column existed have no stored value; the endpoint then falls back to matching the player's current linked Lichess handle against the PGN's `White`/`Black` headers at read time. `null` for in-app games (always played as White), and for imported rows that aren't derivable (no current link / no header match) — the client renders `null` as White (no flip). Additive field; older clients ignore it. |
 
 Status codes: `400` (`event_id` over the 64-char cap), `403` (not the owner), `404` (unknown event).
 

@@ -235,6 +235,18 @@ def init_schema() -> None:
             _column_type_for_dialect("TEXT", "VARCHAR"),
         )
 
+        # Replay board orientation ("which side did the player play").
+        # Set to 'white' / 'black' by the Lichess import; NULL for in-app
+        # games (always white) and legacy rows.  GET /game/{id}/positions
+        # surfaces it so a Black game replays from the player's side.
+        # Nullable, no default — legacy rows read as NULL (== white).
+        _ensure_column(
+            conn,
+            "game_events",
+            "player_color",
+            _column_type_for_dialect("TEXT", "VARCHAR"),
+        )
+
         # Per-game chat scoping ("chat history for each game"). game_id is
         # nullable so legacy rows stay player-global and player_id remains the
         # isolation boundary. Add the covering index for the per-game query;

@@ -551,8 +551,14 @@ class ChessBoardView @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!isInteractive || gameOver || event.action != MotionEvent.ACTION_DOWN) return true
-        val col = (event.x / (width / 8f)).toInt(); val row = (event.y / (width / 8f)).toInt()
-        if (row !in 0..7 || col !in 0..7) return true
+        val screenCol = (event.x / (width / 8f)).toInt()
+        val screenRow = (event.y / (width / 8f)).toInt()
+        if (screenRow !in 0..7 || screenCol !in 0..7) return true
+        // Invert the screen tap back to board coordinates when flipped so
+        // taps land on the right square (defensive — the review board is
+        // non-interactive, and live play is never flipped).
+        val col = sCol(screenCol)
+        val row = sRow(screenRow)
         if (selectedRow == -1) {
             val piece = board[row][col]
             if (piece != '.' && piece.isUpperCase() == whiteToMove) {
@@ -577,6 +583,26 @@ class ChessBoardView @JvmOverloads constructor(
         else -> ""
     }
 
+    /**
+     * When true, render the board from Black's perspective (Black at the
+     * bottom, files h→a left→right).  Set when replaying an imported
+     * Lichess game the player played as Black, so their pieces sit at the
+     * bottom under the fixed "You" label instead of upside-down.  Default
+     * false = White at bottom (in-app games are always played as White).
+     */
+    var flipped: Boolean = false
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+
+    // Board coordinate -> on-screen index, applying [flipped] (a 180°
+    // rotation preserves square colour, so parity checks stay board-based).
+    private fun sCol(c: Int): Int = if (flipped) 7 - c else c
+    private fun sRow(r: Int): Int = if (flipped) 7 - r else r
+
     override fun onDraw(canvas: Canvas) {
         squareSize = width / 8f
         piecePaintWhite.textSize = squareSize * 0.8f
@@ -590,10 +616,14 @@ class ChessBoardView @JvmOverloads constructor(
 
         for (r in 0..7) {
             for (c in 0..7) {
-                val l = c * squareSize
-                val t = r * squareSize
-                val rr = (c + 1) * squareSize
-                val bb = (r + 1) * squareSize
+                // Board coord (r,c) drawn at screen cell (sr,sc) so the
+                // whole board flips when [flipped] is set.
+                val sc = sCol(c)
+                val sr = sRow(r)
+                val l = sc * squareSize
+                val t = sr * squareSize
+                val rr = (sc + 1) * squareSize
+                val bb = (sr + 1) * squareSize
                 canvas.drawRect(l, t, rr, bb, if ((r + c) % 2 == 0) darkSquare else lightSquare)
                 if (boardStyle == STYLE_ENGRAVED) {
                     val pad = edgeStroke / 2f
@@ -608,18 +638,22 @@ class ChessBoardView @JvmOverloads constructor(
                 if (r == selectedRow && c == selectedCol) {
                     canvas.drawRect(l, t, rr, bb, selectPaint)
                 }
-                if (c == 0) {
+                // Rank label on the screen-left column, file label on the
+                // screen-bottom row — the label VALUE stays the board's
+                // rank/file so it reads correctly whichever way the board
+                // is oriented.
+                if (sc == 0) {
                     val rank = (8 - r).toString()
-                    canvas.drawText(rank, 8f, r * squareSize + coordinatePaint.textSize, coordinatePaint)
+                    canvas.drawText(rank, 8f, t + coordinatePaint.textSize, coordinatePaint)
                 }
-                if (r == 7) {
+                if (sr == 7) {
                     val file = ('a' + c).toString()
-                    canvas.drawText(file, (c + 1) * squareSize - coordinatePaint.measureText(file) - 8f, 8 * squareSize - 8f, coordinatePaint)
+                    canvas.drawText(file, rr - coordinatePaint.measureText(file) - 8f, 8 * squareSize - 8f, coordinatePaint)
                 }
                 val p = board[r][c]
                 if (p != '.') {
                     val paint = if (p.isUpperCase()) piecePaintWhite else piecePaintBlack
-                    canvas.drawText(pieceToUnicode(p), c * squareSize + squareSize / 2, r * squareSize + squareSize * 0.82f, paint)
+                    canvas.drawText(pieceToUnicode(p), sc * squareSize + squareSize / 2, sr * squareSize + squareSize * 0.82f, paint)
                 }
             }
         }
@@ -659,10 +693,10 @@ class ChessBoardView @JvmOverloads constructor(
         arrowPaint.strokeWidth = squareSize * 0.15f
         arrowPaint.setShadowLayer(10f, 0f, 0f, arrow.color)
         
-        val startX = arrow.sc * squareSize + squareSize / 2
-        val startY = arrow.sr * squareSize + squareSize / 2
-        val endX = arrow.tc * squareSize + squareSize / 2
-        val endY = arrow.tr * squareSize + squareSize / 2
+        val startX = sCol(arrow.sc) * squareSize + squareSize / 2
+        val startY = sRow(arrow.sr) * squareSize + squareSize / 2
+        val endX = sCol(arrow.tc) * squareSize + squareSize / 2
+        val endY = sRow(arrow.tr) * squareSize + squareSize / 2
         
         val angle = atan2((endY - startY).toDouble(), (endX - startX).toDouble())
         val dist = sqrt((endX - startX).pow(2) + (endY - startY).pow(2))

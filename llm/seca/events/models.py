@@ -53,6 +53,16 @@ class GameEvent(Base):
     # ``chat_turns.game_id``, which carries its own covering index).
     app_game_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Which side the player was on, for replay board orientation:
+    # ``'white'`` / ``'black'``.  Set only for imported games (the Lichess
+    # import derives it by matching the linked handle against the game's
+    # players).  NULL for in-app games and legacy rows — the client treats
+    # NULL as white (in-app games are always played as white, so the board
+    # renders white-at-bottom by default and needs no flip).  Consumed by
+    # GET /game/{event_id}/positions so a Black game replays from the
+    # player's side instead of upside-down.
+    player_color: Mapped[str | None] = mapped_column(String, nullable=True)
+
     created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
 
     player: Mapped["Player"] = relationship("Player")

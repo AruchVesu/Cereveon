@@ -962,6 +962,45 @@ def _winner_last_move_san(pgn_text: str) -> str | None:
         return None
 
 
+def _lichess_player_color_from_pgn(db: DBSession, event, game) -> str | None:
+    """Fallback replay orientation for Lichess rows imported before the
+    ``player_color`` column existed.
+
+    Matches the player's linked Lichess handle (lowercased canonical id)
+    against the PGN's ``White`` / ``Black`` header names (also lowercased —
+    Lichess usernames are their id modulo case).  Returns ``None`` when not
+    derivable (no current link, missing headers, or no match), in which
+    case the client renders White (no flip).  Read-only; never raises.
+    """
+    if game is None:
+        return None
+    # Lazy import to avoid a module-load events -> lichess coupling.
+    from llm.seca.lichess.models import LinkedAccount
+
+    try:
+        link = (
+            db.query(LinkedAccount.external_username)
+            .filter(
+                LinkedAccount.player_id == str(event.player_id),
+                LinkedAccount.platform == "lichess",
+            )
+            .first()
+        )
+    except Exception:  # noqa: BLE001 — orientation is best-effort
+        return None
+    if link is None or not link.external_username:
+        return None
+
+    handle = link.external_username.strip().lower()
+    white = str(game.headers.get("White") or "").strip().lower()
+    black = str(game.headers.get("Black") or "").strip().lower()
+    if handle and handle == white:
+        return "white"
+    if handle and handle == black:
+        return "black"
+    return None
+
+
 @router.get("/history")
 def game_history(
     player=Depends(get_current_player),
@@ -1109,4 +1148,17 @@ def game_positions(
             board.push(move)
             positions.append(board.fen())
 
-    return {"positions": positions, "moves": moves}
+    # Which side the player was on, so the review board can orient to
+    # their perspective.  Imported games store it directly; rows imported
+    # before the column existed fall back to matching the linked Lichess
+    # handle against the PGN's White/Black headers.  NULL for in-app games
+    # (always white) — the client renders NULL as white (no flip).
+    player_color = event.player_color
+    if player_color is None and event.source == "lichess":
+        player_color = _lichess_player_color_from_pgn(db, event, game)
+
+    return {
+        "positions": positions,
+        "moves": moves,
+        "player_color": player_color,
+    }

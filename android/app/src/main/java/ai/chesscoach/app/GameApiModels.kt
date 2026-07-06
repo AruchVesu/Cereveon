@@ -158,6 +158,10 @@ data class GameHistoryItem(
 data class GamePositionsResponse(
     val positions: List<String> = emptyList(),
     val moves: List<String> = emptyList(),
+    // Which side the player was on ("white" / "black"), for replay board
+    // orientation.  Null for in-app games (always white) and legacy rows —
+    // the review renders null as white (no flip).
+    @SerialName("player_color") val playerColor: String? = null,
 )
 
 /**
