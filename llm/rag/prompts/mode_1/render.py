@@ -10,7 +10,11 @@ from __future__ import annotations
 
 import json
 
-from llm.rag.prompts.engine_facts import describe_threats, render_engine_facts
+from llm.rag.prompts.engine_facts import (
+    TRANSIENT_CHECK_FLAGS,
+    describe_threats,
+    render_engine_facts,
+)
 
 
 _BAND_LABEL: dict[str, str] = {
@@ -126,6 +130,14 @@ def render_mode_1_prompt(
     )
     threat = describe_threats(fen, last_move_uci) if last_move_uci else ""
     if threat:
+        # Past-tense for Mode-1: the hint is read AFTER the engine's reply,
+        # so "now attacks" invites a stale present-tense claim about a piece
+        # that may already be captured or answered (the check-staleness
+        # class, PR #313; reproduced for threats 2026-07-06).  Chat keeps
+        # describe_threats' present tense — its board IS current.
+        threat = threat.replace(" now attacks", " attacked").replace(
+            " now bears on", " bore on"
+        ).replace(" and bears on", " and bore on")
         fact_lines.append(threat[0].upper() + threat[1:])
     facts_block = ""
     if fact_lines:
@@ -149,6 +161,19 @@ def render_mode_1_prompt(
             "says so, not because the opponent is ahead."
         )
 
+    # Prompt-side copy of the signal with the transient ``check:*_to_move``
+    # flags stripped from tactical_flags.  PR #313 dropped the check fact
+    # from the PROSE grounding (``include_check=False`` above) because the
+    # engine's forced reply resolves any check the player just gave before
+    # the hint is read — but this raw JSON dump still carried the flag, a
+    # second leak path for a stale "you checked the opponent's king"
+    # comment (reproduced 2026-07-06).  Only the PROMPT copy is filtered:
+    # the validators keep the caller's unmodified signal.
+    signal_for_prompt = dict(engine_signal)
+    signal_for_prompt["tactical_flags"] = [
+        f for f in engine_signal.get("tactical_flags", []) if f not in TRANSIENT_CHECK_FLAGS
+    ]
+
     prompt = f"""{system_prompt}
 
 ────────────────────────────
@@ -162,7 +187,7 @@ Engine evaluation (neutral): {eval_desc}
 After the player's move: {player_perspective}
 Game phase: {phase}
 Engine signal (structured):
-{json.dumps(engine_signal, indent=2)}{rag_block}{facts_block}
+{json.dumps(signal_for_prompt, indent=2)}{rag_block}{facts_block}
 
 ────────────────────────────
 TASK
@@ -171,7 +196,13 @@ Provide your 1–2 sentence coaching feedback for the move just played.
 When you say "you" or "your", it refers to the player (colour shown
 above).  Use the "After the player's move" line as the authoritative
 framing for whose position improved or worsened — do NOT re-derive
-which colour is ahead from the structured engine_signal.side field.{quality_guidance}"""
+which colour is ahead from the structured engine_signal.side field.
+By the time the player reads your comment the opponent has usually
+already replied, so never present a momentary state as current.  Never
+write "you checked the opponent's king" or "the king is in check", and
+describe what the move attacked in the PAST tense ("your bishop
+attacked a knight"), never as ongoing ("is attacking", "is putting
+pressure on") — the board may already have changed.{quality_guidance}"""
 
     return prompt.strip()
 
