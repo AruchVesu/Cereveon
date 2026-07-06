@@ -32,7 +32,9 @@ jobs:
   llm-regression:
     name: Real-LLM regression (DeepSeek)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 30 → 45 when the Category G stress matrix (~24 probes) joined the
+    # weekly run alongside Categories C and D.
+    timeout-minutes: 45
     # GitHub Actions disallows ``secrets.X`` directly in step-level
     # ``if:`` expressions (it would create a side-channel oracle for
     # whether a secret exists), so the secret-presence check is
@@ -81,6 +83,27 @@ jobs:
           RUN_DEEPSEEK_TESTS: "1"
           COACH_DEEPSEEK_API_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY }}
         run: python -m pytest -q llm/rag/tests/llm/test_deepseek_smoke.py
+
+      - name: Run LLM stress test (Category G — hallucination / accuracy / level-style)
+        if: env.HAS_DEEPSEEK_KEY == 'true'
+        env:
+          RUN_DEEPSEEK_TESTS: "1"
+          COACH_DEEPSEEK_API_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY }}
+          LLM_STRESS_REPORT_PATH: llm-stress-report.jsonl
+        # -s so the per-run scorecard (fallback rate, latency percentiles,
+        # per-level words-per-sentence telemetry) lands in the job log.
+        run: python -m pytest -q -s llm/rag/tests/llm/test_llm_stress.py
+
+      - name: Upload stress-test report
+        # Upload on failure too — a failing axis is exactly when the
+        # per-probe replies + violations are needed for review.
+        if: env.HAS_DEEPSEEK_KEY == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-stress-report
+          path: llm-stress-report.jsonl
+          if-no-files-found: ignore
+          retention-days: 90
 
       # Per-call quality-score telemetry was previously uploaded as an
       # artifact here, but the writer (``llm/rag/telemetry/quality.py::
