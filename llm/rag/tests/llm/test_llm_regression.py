@@ -6,6 +6,16 @@ LLM provider (DeepSeek). Designed to catch *stochastic* contract
 violations — failures that would not surface in a single deterministic
 fake-LLM pass but appear when real model sampling drifts.
 
+The prompt under test is the PRODUCTION composition: each case is
+rendered through ``test_prompt_snapshot.render_case`` — the live
+``system_v2_mode_2.SYSTEM_PROMPT`` plus the ``render_mode_2`` renderer,
+exactly what ``llm/rag/deploy/embedded.py`` sends on the ``run_mode_2``
+surface, byte-identical to what the golden snapshot pins.  (Until
+2026-07-06 this harness exercised ``mode_2/system_v1.txt`` — a prompt
+with zero production consumers; the v1/v2 fork meant the weekly LLM
+budget regression-tested dead text while the production prompt drifted
+untested.  v1 is retired.)
+
 Local-only by default — gated on ``RUN_DEEPSEEK_TESTS=1`` plus a real
 ``COACH_DEEPSEEK_API_KEY`` in env. Runs in CI only on tag pushes
 (``.github/workflows/fly-deploy.yml`` ``llm-regression`` job) and the
@@ -30,12 +40,10 @@ from pathlib import Path
 
 import pytest
 
-from llm.rag.documents import ALL_RAG_DOCUMENTS
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
 from llm.rag.llm.deepseek import DeepseekLLM
 from llm.rag.llm.run_mode_2 import run_mode_2
-from llm.rag.prompts.mode_2.render import render_mode_2_prompt
-from llm.rag.retriever.retriever import retrieve
+from llm.rag.tests.golden.test_prompt_snapshot import render_case
 
 ROOT = Path(__file__).resolve().parents[3]
 CASES_DIR = ROOT / "tests" / "golden" / "cases"
@@ -80,31 +88,16 @@ def test_llm_regression_contract():
         case = load_case(case_path)
         case_type = case_type_from_path(case_path)
 
+        # ``render_case`` is the canonical golden-case render — the
+        # production v2 system prompt + the embedded-surface renderer,
+        # byte-identical to what the prompt snapshot pins.  It renders a
+        # missing-data case (EMPTY stockfish_json) with the verbatim
+        # empty signal so the model can see the absence it must
+        # acknowledge; ``extract_engine_signal`` would otherwise
+        # backfill a complete-looking equal evaluation and make the
+        # missing-data REQUIRE unreachable.
+        prompt = render_case(case)
         esv = extract_engine_signal(case.get("stockfish_json", {}))
-
-        # A missing-data case declares its premise with an EMPTY
-        # stockfish_json — the engine layer produced nothing.  Rendering
-        # the EXTRACTED signal for such a case shows the model a
-        # fabricated, complete-looking equal evaluation
-        # (``extract_engine_signal`` backfills band/side/phase), making
-        # the required "missing / not enough information" acknowledgment
-        # unreachable: the model cannot see the absence it must report.
-        # Render the verbatim empty signal (and retrieve against it —
-        # RAG docs selected from a fabricated ESV would likewise be
-        # fabricated context) so the prompt states the truth of the
-        # case.  Validation is unchanged: the extracted ESV still drives
-        # the semantic gates and ``case_type`` still drives the
-        # missing-data REQUIRE.
-        signal_for_prompt = esv if case.get("stockfish_json") else {}
-        rag_docs = retrieve(signal_for_prompt, ALL_RAG_DOCUMENTS)
-
-        prompt = render_mode_2_prompt(
-            system_prompt=(ROOT / "rag/prompts/mode_2/system_v1.txt").read_text(encoding="utf-8"),
-            engine_signal=signal_for_prompt,
-            rag_docs=rag_docs,
-            fen=case["fen"],
-            user_query=case.get("user_query", ""),
-        )
 
         for _ in range(REPEATS):
             run_mode_2(

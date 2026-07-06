@@ -1,3 +1,0 @@
-RAG CONTEXT:
-- A piece is under-defended and can be won with accurate play.
-- More space allows greater piece mobility and flexibility.
