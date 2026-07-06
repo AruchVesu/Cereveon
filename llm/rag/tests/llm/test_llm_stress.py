@@ -220,8 +220,14 @@ def phantom_check_claims(reply: str, board: chess.Board) -> list[str]:
 # White has no doubled pawns — a structure hallucination the piece/check
 # checkers cannot see.  "backward" is deliberately NOT checked (no crisp
 # deterministic definition).  Conditional/teaching phrasing is excused.
+# "your opponent('s) ..." must bind as an OPPONENT claim before the bare
+# "your" alternative can grab it — the filler-word allowance otherwise
+# swallowed "opponent has" and attributed "your opponent has doubled
+# pawns" to the PLAYER's side (batch-2 false positive on a correct
+# Berlin doubled-c-pawns observation, 2026-07-06).
 _STRUCTURE_CLAIM = re.compile(
-    r"\b(?P<owner>your|their|his|her)\s+(?:\w+\s+){0,2}?(?P<kind>doubled|isolated|passed)\s+pawns?\b",
+    r"\b(?P<owner>your opponent(?:'s)?|your|their|his|her)\s+(?:\w+\s+){0,2}?"
+    r"(?P<kind>doubled|isolated|passed)\s+pawns?\b",
     re.IGNORECASE,
 )
 _STRUCTURE_EXCUSE = re.compile(
@@ -286,9 +292,12 @@ def pawn_structure_claims(reply: str, board: chess.Board, player_color: str) -> 
         if _STRUCTURE_EXCUSE.search(window):
             continue
         owner = match.group("owner").lower()
+        # "your" = the player's side; "your opponent(...)" / "their" /
+        # "his" / "her" = the opponent's side.
+        owner_is_player = owner == "your"
         color = (
             (chess.WHITE if player_is_white else chess.BLACK)
-            if owner == "your"
+            if owner_is_player
             else (chess.BLACK if player_is_white else chess.WHITE)
         )
         kind = match.group("kind").lower()
@@ -1054,6 +1063,12 @@ def test_selfcheck_pawn_structure() -> None:
     assert not pawn_structure_claims("Your passed pawn decides the game.", kp, "white")
     assert not pawn_structure_claims("Your isolated pawn is actually a strength here.", kp, "white")
     assert pawn_structure_claims("Their passed pawn is dangerous.", kp, "white")
+    # "your opponent has X pawns" is an OPPONENT claim, not a player claim
+    # (batch-2 false positive on a correct Berlin observation).
+    berlin = chess.Board("r1b1kb1r/ppp2ppp/2p5/4Pn2/8/2N2N2/PPP2PPP/R1B2RK1 w - - 2 10")
+    assert not pawn_structure_claims("Your opponent has doubled pawns to target.", berlin, "white")
+    assert not pawn_structure_claims("Your opponent's doubled pawns are weak.", berlin, "white")
+    assert pawn_structure_claims("Your opponent has doubled pawns.", kp, "white")  # opponent has NO pawns
 
 
 def test_selfcheck_quality_contradiction() -> None:
