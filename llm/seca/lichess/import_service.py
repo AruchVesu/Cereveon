@@ -753,6 +753,9 @@ def _run_import_stream(
                 user_id_lc,
             )
             continue
+        # Non-None because ``result`` (which gates the skip above) is
+        # derived from the same white/black match.
+        player_color = _derive_player_color(game, user_id_lc)
 
         created_at_ms = game.get("createdAt")
         if isinstance(created_at_ms, (int, float)):
@@ -777,6 +780,7 @@ def _run_import_stream(
             weaknesses_json="{}",
             source=PLATFORM_LICHESS,
             external_game_id=external_id,
+            player_color=player_color,
         )
         db.add(row)
         db.commit()
@@ -832,23 +836,31 @@ def _run_import_stream(
 # ---------------------------------------------------------------------------
 
 
+def _derive_player_color(game: dict, user_id_lc: str) -> str | None:
+    """Return the side our linked user played — ``'white'`` / ``'black'`` —
+    or ``None`` if the user isn't listed on either side (defensive).
+
+    Drives replay board orientation: a game the user played as Black must
+    render flipped so their pieces sit at the bottom.
+    """
+    players = game.get("players") or {}
+    white_id = str(((players.get("white") or {}).get("user") or {}).get("id") or "").lower()
+    black_id = str(((players.get("black") or {}).get("user") or {}).get("id") or "").lower()
+
+    if user_id_lc == white_id:
+        return "white"
+    if user_id_lc == black_id:
+        return "black"
+    return None
+
+
 def _derive_result(game: dict, user_id_lc: str) -> str | None:
     """Map the Lichess game shape to {'win','loss','draw'} from our user's POV.
 
     Returns ``None`` if the linked user is not on either side (defensive).
     """
-    players = game.get("players") or {}
-    white_user = (players.get("white") or {}).get("user") or {}
-    black_user = (players.get("black") or {}).get("user") or {}
-
-    white_id = str(white_user.get("id") or "").lower()
-    black_id = str(black_user.get("id") or "").lower()
-
-    if user_id_lc == white_id:
-        user_color = "white"
-    elif user_id_lc == black_id:
-        user_color = "black"
-    else:
+    user_color = _derive_player_color(game, user_id_lc)
+    if user_color is None:
         return None
 
     winner = game.get("winner")

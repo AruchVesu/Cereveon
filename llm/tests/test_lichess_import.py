@@ -47,6 +47,8 @@ IS_13  import_user_games skips games with invalid PGN, oversize, missing id.
 IS_14  import_user_games advances last_imported_at watermark.
 IS_15  import_user_games on an unlinked player raises LichessNotLinkedError.
 IS_16  _derive_result handles white/black/draw plus missing-user case.
+IS_17  _derive_player_color returns the user's side (white/black/none),
+       for replay board orientation.
 
 RT_01  POST /lichess/link rejects malformed usernames at the schema layer.
 RT_02  POST /lichess/link 404 propagates LichessUserNotFound.
@@ -756,10 +758,16 @@ class TestImportUserGames:
         )
         assert [r.external_game_id for r in rows] == ["g1", "g2"]
         assert all(r.source == "lichess" for r in rows)
+        g1 = next(r for r in rows if r.external_game_id == "g1")
+        g2 = next(r for r in rows if r.external_game_id == "g2")
         # g1: alice was white, white won → win.
-        assert next(r for r in rows if r.external_game_id == "g1").result == "win"
+        assert g1.result == "win"
         # g2: alice was black, white won → loss.
-        assert next(r for r in rows if r.external_game_id == "g2").result == "loss"
+        assert g2.result == "loss"
+        # player_color is stored for replay orientation (IS_17 companion):
+        # alice played white in g1, black in g2.
+        assert g1.player_color == "white"
+        assert g2.player_color == "black"
 
     # IS_11
     def test_import_dedups_on_external_game_id(self, db_session, linked_player, monkeypatch):
@@ -939,6 +947,26 @@ class TestDeriveResult:
             "pgn": _VALID_PGN,
         }
         assert import_service._derive_result(game, "alice") == "win"
+
+
+# ===========================================================================
+# Pure-function: _derive_player_color (replay orientation)
+# ===========================================================================
+
+
+class TestDerivePlayerColor:
+    # IS_17 — the side the linked user played, for replay board orientation.
+    def test_user_is_white(self):
+        game = _game_dict(external_id="x", white="alice", black="bob", winner="white")
+        assert import_service._derive_player_color(game, "alice") == "white"
+
+    def test_user_is_black(self):
+        game = _game_dict(external_id="x", white="alice", black="bob", winner="white")
+        assert import_service._derive_player_color(game, "bob") == "black"
+
+    def test_user_not_a_player_returns_none(self):
+        game = _game_dict(external_id="x", white="alice", black="bob", winner="white")
+        assert import_service._derive_player_color(game, "stranger") is None
 
 
 # ===========================================================================

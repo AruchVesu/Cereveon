@@ -3,6 +3,12 @@
 # flags every such parameter as unused; disabling the rule file-wide
 # rather than per-handler keeps the diff stable as new endpoints land.
 # pylint: disable=unused-argument
+# This module hosts the auth HTTP surface, the whole init_schema
+# migration ladder, and the Lichess OAuth sign-in flow, so it runs past
+# the 1000-line soft cap.  It is a split candidate (init_schema is the
+# obvious extract), but carving it up is a dedicated refactor out of
+# scope for a feature change — same disposition as events/router.py.
+# pylint: disable=too-many-lines
 
 import json
 import logging
@@ -232,6 +238,18 @@ def init_schema() -> None:
             conn,
             "game_events",
             "app_game_id",
+            _column_type_for_dialect("TEXT", "VARCHAR"),
+        )
+
+        # Replay board orientation ("which side did the player play").
+        # Set to 'white' / 'black' by the Lichess import; NULL for in-app
+        # games (always white) and legacy rows.  GET /game/{id}/positions
+        # surfaces it so a Black game replays from the player's side.
+        # Nullable, no default — legacy rows read as NULL (== white).
+        _ensure_column(
+            conn,
+            "game_events",
+            "player_color",
             _column_type_for_dialect("TEXT", "VARCHAR"),
         )
 

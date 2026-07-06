@@ -692,4 +692,41 @@ class GameApiClientIntegrationTest {
         val req = server.takeRequest(10, TimeUnit.SECONDS)!!
         assertEquals("Bearer bearer-hist-tok", req.getHeader("Authorization"))
     }
+
+    // ---------------------------------------------------------------------------
+    // GET /game/{eventId}/positions — replay data incl. player_color
+    // ---------------------------------------------------------------------------
+
+    @Test
+    fun `INT_POSITIONS_PATH - request path is game slash id slash positions`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"positions":[],"moves":[]}"""))
+        client(token = "tok").getGamePositions("ev-3")
+        assertEquals("/game/ev-3/positions", server.takeRequest(10, TimeUnit.SECONDS)!!.path)
+    }
+
+    @Test
+    fun `INT_POSITIONS_PLAYER_COLOR - player_color deserialised for a Black game`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"positions":["fen0","fen1"],"moves":["e4"],"player_color":"black"}""",
+            ),
+        )
+        val result = client(token = "tok").getGamePositions("ev-1")
+        assertTrue("expected Success, got $result", result is ApiResult.Success<*>)
+        val data = (result as ApiResult.Success<*>).data as GamePositionsResponse
+        assertEquals("black", data.playerColor)
+        assertEquals(2, data.positions.size)
+    }
+
+    @Test
+    fun `INT_POSITIONS_PLAYER_COLOR_NULL - missing player_color decodes to null`() = runBlocking {
+        // A payload from a server predating the field must decode as null
+        // (in-app / legacy => White, no flip), not throw.
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody("""{"positions":["fen0"],"moves":[]}"""),
+        )
+        val result = client(token = "tok").getGamePositions("ev-2")
+        val data = (result as ApiResult.Success<*>).data as GamePositionsResponse
+        assertNull(data.playerColor)
+    }
 }

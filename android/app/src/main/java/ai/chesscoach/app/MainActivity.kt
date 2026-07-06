@@ -1059,7 +1059,9 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             when (val r = gameApiClient.getGamePositions(eventId)) {
                 is ApiResult.Success ->
-                    loadFinishedGameForReview(r.data.positions, r.data.moves, gameId)
+                    loadFinishedGameForReview(
+                        r.data.positions, r.data.moves, gameId, r.data.playerColor
+                    )
                 else ->
                     Toast.makeText(
                         this@MainActivity,
@@ -1074,11 +1076,17 @@ class MainActivity : AppCompatActivity() {
         positions: List<String>,
         moves: List<String>,
         gameId: String?,
+        playerColor: String?,
     ) {
         if (positions.isEmpty()) return
         reviewPositions = positions
         reviewMoves = moves
         reviewPly = positions.size - 1
+        // Orient the board to the side the player was on, so their pieces
+        // sit at the bottom under the "You" label.  Imported Lichess games
+        // carry "white"/"black"; in-app games (always white) and legacy
+        // rows send null -> no flip.
+        chessBoard.flipped = playerColor.equals("black", ignoreCase = true)
         // The coach chat reads currentGameId() + the live board FEN, so set the
         // game thread and make the board a passive replay surface (no play taps).
         currentServerGameId = gameId?.takeIf { it.isNotBlank() }
@@ -1108,6 +1116,8 @@ class MainActivity : AppCompatActivity() {
         reviewPositions = emptyList()
         reviewMoves = emptyList()
         reviewPly = 0
+        // Restore the default White-at-bottom orientation for live play.
+        chessBoard.flipped = false
         if (wasReviewing) chessBoard.isInteractive = true
         if (::reviewNavBar.isInitialized) reviewNavBar.visibility = View.GONE
     }

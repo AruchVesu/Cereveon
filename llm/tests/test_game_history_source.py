@@ -49,6 +49,7 @@ import llm.seca.auth.models  # noqa: F401
 import llm.seca.events.models  # noqa: F401
 import llm.seca.brain.models  # noqa: F401
 import llm.seca.analytics.models  # noqa: F401
+import llm.seca.lichess.models  # noqa: F401  (linked_accounts table for the fallback test)
 
 from llm.seca.auth.router import get_current_player, get_db
 from llm.seca.events.models import GameEvent
@@ -182,3 +183,52 @@ def test_gh_08_source_filter_is_player_scoped(db_session):
     payload = _client(db_session).get("/game/history", params={"source": "lichess"}).json()
     assert len(payload["games"]) == 1
     assert payload["games"][0]["id"] != "other-lg"
+
+
+# ---------------------------------------------------------------------------
+# GET /game/{event_id}/positions — replay board orientation
+# ---------------------------------------------------------------------------
+
+
+def test_gh_09_positions_returns_player_color_for_black_game(db_session):
+    ev = _add_game(db_session, source="lichess", external_id="lg-black")
+    ev.player_color = "black"  # user played Black -> review board flips
+    db_session.commit()
+
+    resp = _client(db_session).get(f"/game/{ev.id}/positions")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["player_color"] == "black"
+    assert len(body["positions"]) >= 1  # start position at minimum
+
+
+def test_gh_10_positions_player_color_null_for_app_game(db_session):
+    # In-app games leave player_color NULL -> client renders white (no flip).
+    ev = _add_game(db_session, source=None)
+    body = _client(db_session).get(f"/game/{ev.id}/positions").json()
+    assert body["player_color"] is None
+
+
+def test_gh_11_positions_legacy_null_color_derives_from_pgn_and_link(db_session):
+    # A Lichess row imported before the player_color column existed: NULL
+    # color, but a link exists and the PGN names the player as Black
+    # ("Bot") -> the endpoint derives "black" from the handle + headers.
+    from llm.seca.lichess.models import LinkedAccount
+
+    ev = _add_game(db_session, source="lichess", external_id="lg-legacy")
+    assert ev.player_color is None
+    db_session.add(
+        LinkedAccount(player_id=_PLAYER_ID, platform="lichess", external_username="bot")
+    )
+    db_session.commit()
+
+    body = _client(db_session).get(f"/game/{ev.id}/positions").json()
+    assert body["player_color"] == "black"
+
+
+def test_gh_12_positions_legacy_no_link_stays_null(db_session):
+    # Same legacy NULL-color row but no link -> not derivable -> NULL
+    # (client renders white). Guards the fallback's fail-open behaviour.
+    ev = _add_game(db_session, source="lichess", external_id="lg-nolink")
+    body = _client(db_session).get(f"/game/{ev.id}/positions").json()
+    assert body["player_color"] is None
