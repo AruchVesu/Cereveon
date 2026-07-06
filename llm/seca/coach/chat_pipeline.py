@@ -342,12 +342,17 @@ _COACH_VOICE_INSTRUCTIONS = {
     # length guidance ("2–4 short paragraphs", closing "Focus on …"
     # line) — stated as tone-only, DeepSeek followed the base structure
     # and wrote 6–9 sentences (weekly stress runs, 2026-07-06; the
-    # Category G scorecard flagged it on every execution).
+    # Category G scorecard flagged it on every execution).  The word
+    # budget exists because a sentence cap alone gets gamed: after the
+    # sentence fix the model complied with two ~50-word run-on
+    # sentences (51 words/sentence in the 2026-07-06 scorecard
+    # telemetry) — terse in structure, not in length.
     "terse": (
         "Be brief.  No flourish, no preamble — answer directly in one or two "
-        "short sentences.  This length rule OVERRIDES the default length "
-        "guidance: do NOT write multiple paragraphs and do NOT add a closing "
-        "'Focus on …' line.  Your ENTIRE reply is at most two short sentences."
+        "short sentences, at most about 30 words in total.  This length rule "
+        "OVERRIDES the default length guidance: do NOT write multiple "
+        "paragraphs, do NOT add a closing 'Focus on …' line, and do NOT chain "
+        "long clauses together to stay within two sentences."
     ),
 }
 
@@ -359,7 +364,7 @@ _COACH_VOICE_INSTRUCTIONS = {
 #: prompt fixes).  Tone-only voices need no reminder.
 _TERSE_REMINDER = (
     "\n\nREMINDER — TERSE VOICE: your entire reply must be at most two "
-    "short sentences."
+    "short sentences and about 30 words in total."
 )
 
 

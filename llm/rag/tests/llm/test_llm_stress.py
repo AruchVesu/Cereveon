@@ -430,9 +430,15 @@ def style_violations(
         violations.append(f"Mode-1 reply has {sentences} sentences (contract: 1-2)")
 
     if mode == "chat":
-        if coach_voice == "terse" and sentences > 3:
-            violations.append(f"terse-voice reply has {sentences} sentences (asked: 1-2)")
         words = word_count(reply)
+        if coach_voice == "terse":
+            if sentences > 3:
+                violations.append(f"terse-voice reply has {sentences} sentences (asked: 1-2)")
+            # The prompt asks for ~30 words; flag at 2x the budget so a
+            # modest overrun doesn't flake but the run-on-sentence gaming
+            # observed on 2026-07-06 (two ~50-word sentences) fails.
+            if words > 60:
+                violations.append(f"terse-voice reply has {words} words (asked: ~30)")
         if words > 400:
             violations.append(f"chat reply has {words} words (contract: 2-4 short paragraphs)")
 
@@ -900,4 +906,20 @@ def test_selfcheck_style() -> None:
     )
     assert style_violations(
         "One. Two. Three. Four sentences here.", mode="chat", style=None, coach_voice="terse"
+    )
+    # Run-on gaming: two sentences but far over the terse word budget.
+    long_two_sentences = (
+        "This is a single enormously long sentence that keeps chaining clause after "
+        "clause together so that it technically counts as one sentence while saying "
+        "a very great deal more than a terse reply ever should about the position. "
+        "And here is a second one doing exactly the same thing, stacking one more "
+        "observation onto another observation and then yet another after that, all "
+        "to stay under the sentence cap while ignoring the word budget entirely."
+    )
+    assert style_violations(long_two_sentences, mode="chat", style=None, coach_voice="terse")
+    assert not style_violations(
+        "You stand well here. Push your passed pawn and activate your king.",
+        mode="chat",
+        style=None,
+        coach_voice="terse",
     )
