@@ -151,15 +151,21 @@ _ABSENT_PIECE_EXCUSE = re.compile(
 
 
 def phantom_piece_claims(reply: str, board: chess.Board) -> list[str]:
-    """Mentions of a piece type that exists for NEITHER side, excluding
-    promotion/trade/absence phrasing.  A coach telling the player about
-    "your queen" on a queenless board is a board hallucination."""
+    """Determiner/possessive mentions of a piece type that exists for
+    NEITHER side, excluding promotion/trade/absence phrasing.  A coach
+    telling the player about "your queen" on a queenless board is a board
+    hallucination.  Bare / indefinite forms ("queens come off",
+    "turn the pawn into a queen", "a queen is worth nine points") are
+    generic chess teaching, not claims about THIS board — both false
+    positives from the first two weekly CI runs were of that shape."""
     violations: list[str] = []
     lower = reply.lower()
     for word, piece_type in _PIECE_WORDS.items():
         if board.pieces(piece_type, chess.WHITE) or board.pieces(piece_type, chess.BLACK):
             continue
-        for match in re.finditer(rf"\b{word}s?\b", lower):
+        for match in re.finditer(
+            rf"\b(?:your|their|his|her|its|the|both|each|this|that)\s+{word}s?\b", lower
+        ):
             window = lower[max(0, match.start() - 60) : match.end() + 60]
             if _ABSENT_PIECE_EXCUSE.search(window):
                 continue
@@ -820,6 +826,14 @@ def test_selfcheck_phantom_piece() -> None:
     assert not phantom_piece_claims(
         "Games are won or lost when the queens come off and technique decides.", board
     )
+    # Promotion idiom (second CI false positive, same day) and generic
+    # indefinite teaching — excluded structurally by the determiner form.
+    assert not phantom_piece_claims(
+        "Count the moves it takes to turn that extra pawn into a queen.", board
+    )
+    assert not phantom_piece_claims("Queens are the strongest pieces in chess.", board)
+    # Definite-article claims about THIS board still flag.
+    assert phantom_piece_claims("The queen dominates the centre of the board.", board)
     assert not phantom_piece_claims("Walk your king forward and push the pawn.", board)
     full = chess.Board(_FEN_EQ_OPEN)
     assert not phantom_piece_claims("Develop your queenside knight and bishop.", full)
