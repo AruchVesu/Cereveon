@@ -134,12 +134,14 @@ class TodayPlanResponse(BaseModel):
     word Mode-2-validator-clean string."""
 
     anchor_category: str | None
-    """The aggregate dominant weakness the week is built around — one of
-    the four ``MistakeCategory`` values (``opening_preparation`` /
+    """The aggregate dominant weakness — one of the four
+    ``MistakeCategory`` values (``opening_preparation`` /
     ``tactical_vision`` / ``positional_play`` / ``endgame_technique``),
     or ``null`` for legacy plans / players with too little history.  The
     overview screen renders it as the week's focus ("This week:
-    Tactics"); the day-3 / day-7 puzzles are drawn from its theme set."""
+    Tactics").  For puzzle selection it is only the backfill: day-3 /
+    day-7 lead with the day-0 mistake's own ``theme`` and fall back to
+    this category's theme set when that theme is too thin."""
 
     status: str
     """One of ``STATUSES`` — ``"active"`` while the week is in
