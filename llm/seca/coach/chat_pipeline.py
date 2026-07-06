@@ -338,8 +338,29 @@ def _safe_sanitize(value: str, max_len: int = 60) -> str | None:
 _COACH_VOICE_INSTRUCTIONS = {
     "formal":         "Use a formal, precise, restrained tone.  Avoid contractions or casual phrasing.",
     "conversational": "Use a patient, scholarly conversational tone.  Welcoming but unhurried.",
-    "terse":          "Be brief.  No flourish, no preamble — answer directly in one or two short sentences.",
+    # The terse instruction must EXPLICITLY override the base prompt's
+    # length guidance ("2–4 short paragraphs", closing "Focus on …"
+    # line) — stated as tone-only, DeepSeek followed the base structure
+    # and wrote 6–9 sentences (weekly stress runs, 2026-07-06; the
+    # Category G scorecard flagged it on every execution).
+    "terse": (
+        "Be brief.  No flourish, no preamble — answer directly in one or two "
+        "short sentences.  This length rule OVERRIDES the default length "
+        "guidance: do NOT write multiple paragraphs and do NOT add a closing "
+        "'Focus on …' line.  Your ENTIRE reply is at most two short sentences."
+    ),
 }
+
+#: End-of-system reminder for the terse voice.  The voice block sits
+#: directly after the base system prompt, and the base prompt's own
+#: structure guidance follows much later context; repeating the hard
+#: length cap as the LAST line of the system composition is what makes
+#: the model actually obey it (same recency lesson as the Category C/D
+#: prompt fixes).  Tone-only voices need no reminder.
+_TERSE_REMINDER = (
+    "\n\nREMINDER — TERSE VOICE: your entire reply must be at most two "
+    "short sentences."
+)
 
 
 def _chat_engine_signal(fen: str, stockfish_json: dict | None = None) -> dict:
@@ -499,6 +520,7 @@ def _build_chat_prompt(
         + style_block
         + history_block
         + player_block
+        + (_TERSE_REMINDER if coach_voice == "terse" else "")
     )
 
     prompt = _render(
