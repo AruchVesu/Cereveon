@@ -144,7 +144,7 @@ _PIECE_WORDS: dict[str, int] = {
 # +/-60-char window around the mention.
 _ABSENT_PIECE_EXCUSE = re.compile(
     r"promot|queening|new queen|becomes? a queen|trade|exchang|swap|"
-    r"off the board|no longer|no |not have|don't|do not|cannot|can't|"
+    r"off the board|com(?:e|es|ing) off|came off|no longer|no |not have|don't|do not|cannot|can't|"
     r"without|gone|missing|absence|down to|only (?:the )?kings?|just (?:the )?kings?",
     re.IGNORECASE,
 )
@@ -815,6 +815,11 @@ def test_selfcheck_phantom_piece() -> None:
     assert phantom_piece_claims("Your rook belongs behind the pawn.", board)
     assert not phantom_piece_claims("Push the pawn and promote it to a queen.", board)
     assert not phantom_piece_claims("The queens were traded long ago.", board)
+    # Phase-transition idiom, not a board claim — flagged a real CI run
+    # (2026-07-06) on a perfectly good generic-endgame lesson.
+    assert not phantom_piece_claims(
+        "Games are won or lost when the queens come off and technique decides.", board
+    )
     assert not phantom_piece_claims("Walk your king forward and push the pawn.", board)
     full = chess.Board(_FEN_EQ_OPEN)
     assert not phantom_piece_claims("Develop your queenside knight and bishop.", full)
