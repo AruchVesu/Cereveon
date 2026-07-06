@@ -248,6 +248,62 @@ CI
 
 No
 
+Category G — Real-LLM Stress Test (OPTIONAL, LOCAL ONLY)
+
+Purpose
+
+Probe the two production pipelines (Mode-1 live-move, Mode-2 chat) with a
+matrix of engine-ground-truthed positions and check every FINAL user-visible
+reply with deterministic claim-checkers, on three axes:
+
+Hallucination — phantom pieces (a piece type neither side has), phantom
+checks (check claims on a check-free board).  Zero tolerance.
+
+Accuracy — advantage-direction inversion ("you are winning" when the engine
+says the opponent is), material claims contradicting the board, Mode-1
+praise/condemnation contradicting the engine's move grade.  Zero tolerance.
+These are claims NO in-pipeline validator enforces (only the prompt framing
+does) — which is exactly why they are stress axes.
+
+Style — Mode-1 1–2-sentence contract, beginner-level jargon lexicon, terse
+coach voice length, chat length budget.  Rate-based (>= 80%) over REAL LLM
+replies only, because style is a prompt contract on a stochastic model —
+deterministic fallback templates are pinned by their own per-push tests.
+
+Also reports fallback rate per mode (fails under 70% — over-rejection
+signal on an adversarial matrix) and latency percentiles (telemetry only).
+
+Scope
+
+llm/rag/tests/llm/test_llm_stress.py (probe matrix + deterministic
+claim-checkers + checker self-checks)
+
+Command
+
+RUN_DEEPSEEK_TESTS=1 COACH_DEEPSEEK_API_KEY=sk-... \
+    python -m pytest -q llm/rag/tests/llm/test_llm_stress.py
+
+Set LLM_STRESS_REPORT_PATH=/path/report.jsonl to persist per-probe
+telemetry (reply, fallback flag, violations, latency).
+
+Rules
+
+Must not run in per-push CI (real model; runs weekly via
+llm-regression-cron.yml alongside Categories C and D)
+
+Hallucination / accuracy failures are contract violations — treat like a
+Category B/D failure: fix prompt, grounding, or model settings; never
+weaken the checkers or thresholds
+
+Style failures below the rate threshold indicate prompt drift
+
+The claim-checkers are pinned by in-module self-check tests so a broken
+regex cannot silently turn an axis into a no-op
+
+CI
+
+No (weekly cron only)
+
 Required Test Runs
 Before pushing code
 python llm/run_quality_gate.py
@@ -260,9 +316,10 @@ python -m pytest -q llm/rag/tests/test_output_firewall.py
 python -m pytest -q llm/tests/test_api_contract_validation.py
 python -m pytest -q llm/tests/test_coaching_pipeline_regression.py
 
-Before release (local; both require COACH_DEEPSEEK_API_KEY in env)
+Before release (local; all require COACH_DEEPSEEK_API_KEY in env)
 RUN_DEEPSEEK_TESTS=1 python -m pytest -q llm/rag/tests/llm/test_deepseek_smoke.py
 RUN_DEEPSEEK_TESTS=1 python -m pytest -q llm/rag/tests/llm/test_llm_regression.py
+RUN_DEEPSEEK_TESTS=1 python -m pytest -q llm/rag/tests/llm/test_llm_stress.py
 
 CI Policy
 
@@ -322,9 +379,9 @@ pip-audit and Trivy security scans
 
 CI must never run:
 
-real-LLM tests — `llm/rag/tests/llm/test_deepseek_smoke.py` and
-`test_llm_regression.py` are local-only and run weekly via
-`.github/workflows/llm-regression-cron.yml`
+real-LLM tests — `llm/rag/tests/llm/test_deepseek_smoke.py`,
+`test_llm_regression.py`, and `test_llm_stress.py` are local-only and run
+weekly via `.github/workflows/llm-regression-cron.yml`
 
 quality heuristics — Category E is advisory only
 
