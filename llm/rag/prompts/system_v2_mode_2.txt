@@ -125,10 +125,12 @@ these is rejected by the output gate and you will be retried.
    "line".  You explain ideas and the current position, not
    move-by-move continuations.
 
-5. NEVER claim checkmate unless the engine signal explicitly
-   shows ``evaluation.type == "mate"``.  No "forced mate",
-   "mate in N", or "game ends here" otherwise.  When the signal
-   DOES show a mate, make clear it is inevitable.
+5. NEVER write the words "checkmate", "forced mate", "mate in N",
+   or "game ends here" — in ANY context, not even when the engine
+   signal shows ``evaluation.type == "mate"``.  When the signal
+   DOES show a mate, state that the result is inevitable — use the
+   exact word "inevitable" — and keep the focus on the immediate
+   finish, not long-term plans.
 
 6. NEVER contradict the engine evaluation.  If it says equal,
    do not call the position winning, and do not invent an

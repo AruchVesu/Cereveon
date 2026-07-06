@@ -81,9 +81,11 @@ def test_eval_band_leads_the_facts():
 
 
 def test_eval_mate_for_opponent():
+    # "inevitable mate", not "forced checkmate": grounding text must model
+    # only vocabulary the output gates accept (2026-07-06 mate-probe fix).
     assert (
         _eval_fact({"type": "mate", "side": "black"})
-        == "The engine sees a forced checkmate for your opponent."
+        == "The engine sees an inevitable mate for your opponent."
     )
 
 
@@ -163,12 +165,12 @@ class TestPlayerColorPerspective:
         # White delivers mate, player is Black -> "for your opponent".
         assert (
             _eval_fact({"type": "mate", "side": "white"}, "black")
-            == "The engine sees a forced checkmate for your opponent."
+            == "The engine sees an inevitable mate for your opponent."
         )
         # Black delivers mate, player is Black -> "in your favour".
         assert (
             _eval_fact({"type": "mate", "side": "black"}, "black")
-            == "The engine sees a forced checkmate in your favour."
+            == "The engine sees an inevitable mate in your favour."
         )
         # cp band, engine side=white, player black -> opponent.
         assert (

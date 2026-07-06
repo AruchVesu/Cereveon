@@ -83,11 +83,19 @@ def _eval_fact(evaluation: dict, player_color: str = "white") -> str:
     you = player_color if player_color in ("white", "black") else "white"
     side = evaluation.get("side")
     if evaluation.get("type") == "mate":
+        # Phrasing models the SAFE mate vocabulary at the model: the
+        # lexical gate forbids "checkmate" (and the "forced mate" bigram)
+        # in OUTPUT unconditionally, and grounding text is what the model
+        # mirrors most — the pre-2026-07-06 "forced checkmate" wording
+        # here was the direct cause of the chat mate-probe fallbacks
+        # (model echoes its facts block, validator rejects, retries
+        # exhaust).  "inevitable mate" carries the same truth using the
+        # exact word the semantic gate REQUIREs.
         if side == you:
-            return "The engine sees a forced checkmate in your favour."
+            return "The engine sees an inevitable mate in your favour."
         if side in ("white", "black"):
-            return "The engine sees a forced checkmate for your opponent."
-        return "The engine sees a forced checkmate on the board."
+            return "The engine sees an inevitable mate for your opponent."
+        return "The engine sees an inevitable mate on the board."
     band = evaluation.get("band")
     if band == "equal":
         return "The engine evaluates the position as roughly equal."
