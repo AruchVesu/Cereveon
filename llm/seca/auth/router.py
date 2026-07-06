@@ -3,6 +3,12 @@
 # flags every such parameter as unused; disabling the rule file-wide
 # rather than per-handler keeps the diff stable as new endpoints land.
 # pylint: disable=unused-argument
+# This module hosts the auth HTTP surface, the whole init_schema
+# migration ladder, and the Lichess OAuth sign-in flow, so it runs past
+# the 1000-line soft cap.  It is a split candidate (init_schema is the
+# obvious extract), but carving it up is a dedicated refactor out of
+# scope for a feature change — same disposition as events/router.py.
+# pylint: disable=too-many-lines
 
 import json
 import logging
