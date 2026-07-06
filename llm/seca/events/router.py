@@ -1106,10 +1106,13 @@ def game_positions(
     sequence, so the client never parses PGN.
 
     Response:
-      positions — N+1 FENs: index 0 is the start position, index i is the
-                  board AFTER ply i (positions[-1] is the final position).
-      moves     — N SANs: moves[i] is the move that produced positions[i+1]
-                  (e.g. "e4", "Nf3"), for move-list labels.
+      positions    — N+1 FENs: index 0 is the start position, index i is the
+                     board AFTER ply i (positions[-1] is the final position).
+      moves        — N SANs: moves[i] is the move that produced positions[i+1]
+                     (e.g. "e4", "Nf3"), for move-list labels.
+      player_color — 'white' / 'black' for replay board orientation, or None
+                     (in-app games / not derivable).  See _lichess_player_color_from_pgn
+                     for the legacy fallback.  Full contract in API_CONTRACTS §7a.
 
     Authorisation mirrors ``GET /game/finish/{event_id}/status``: JWT plus an
     explicit ownership check that the event belongs to the calling player.

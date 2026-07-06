@@ -676,8 +676,8 @@ class ChessBoardView @JvmOverloads constructor(
         // top of the piece glyph; alpha is the cv-pulse keyframe
         // updated by focusPulseAnimator.
         focusSquare?.let { (r, c) ->
-            val cx = c * squareSize + squareSize / 2f
-            val cy = r * squareSize + squareSize / 2f
+            val cx = sCol(c) * squareSize + squareSize / 2f
+            val cy = sRow(r) * squareSize + squareSize / 2f
             val radius = squareSize * 0.42f
             focusRingPaint.strokeWidth = squareSize * 0.04f
             focusRingPaint.pathEffect = DashPathEffect(
