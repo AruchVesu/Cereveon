@@ -194,6 +194,12 @@ def stream_chat_reply(
 
     reply = buffer.strip()
     if not reply:
+        # The ONLY abort path that used to be silent — which made a prod
+        # incident (2026-07-06: two consecutive empty DeepSeek streams
+        # served the deterministic fallback, user-visible as "robotic
+        # replies") cost several diagnostic round-trips.  Every abort
+        # reason must be greppable in one pass.
+        logger.warning("Mode-2 stream produced no content; serving fallback")
         yield StreamAbort("empty")
         return
 
