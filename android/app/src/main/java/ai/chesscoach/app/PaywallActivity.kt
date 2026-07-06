@@ -106,7 +106,7 @@ class PaywallActivity : AppCompatActivity() {
             .build()
 
         // Theme runs edge-to-edge; without this listener the bottom
-        // "Begin · 7 days free" / "Maybe later" footer would render
+        // "Subscribe" / "Maybe later" footer would render
         // under the system gesture / nav bar.
         val footer = findViewById<LinearLayout>(R.id.paywallFooter)
         val footerBasePaddingBottom = footer.paddingBottom
