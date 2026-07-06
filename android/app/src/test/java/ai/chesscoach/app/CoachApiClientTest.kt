@@ -99,6 +99,7 @@ class CoachApiClientTest {
             moveCount: Int?,
             coachVoice: String?,
             lastMove: String?,
+            playerColor: String?,
         ): ApiResult<ChatResponseBody> {
             callCount++
             lastFen = fen

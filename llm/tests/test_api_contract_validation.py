@@ -1382,3 +1382,131 @@ class TestChatStreamBoundaryValidation:
         assert "_fallback_reply" in body, (
             "/chat/stream must serve the deterministic fallback on abort"
         )
+
+
+# ---------------------------------------------------------------------------
+# ChatRequest.player_color — the coach's "you" framing for imported /
+# replayed games where the user played Black (additive optional field,
+# 2026-07-06; see docs/API_CONTRACTS.md > POST /chat).
+# ---------------------------------------------------------------------------
+
+
+class TestChatPlayerColorContract:
+    """Schema allow-list + the user-facing framing the field exists for:
+    the SAME position must read as a win from one seat and a loss from the
+    other, on both the prompt path and the deterministic fallback."""
+
+    _START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    # Black delivers ...Ra1# next move; mate side = black.
+    _MATE_FEN = "r5k1/5ppp/8/8/8/8/5PPP/6K1 b - - 0 1"
+    _MATE_SJ = {
+        "evaluation": {"type": "mate", "value": -1},
+        "tactical_flags": ["forced_mate"],
+        "position_flags": [],
+    }
+
+    def test_schema_allow_list(self):
+        from pydantic import ValidationError
+        from llm.server_schemas import ChatRequest
+
+        for ok in (None, "white", "black"):
+            req = ChatRequest(fen=self._START, messages=[], player_color=ok)
+            assert req.player_color == ok
+        for bad in ("green", "WHITE", "Black", "b", ""):
+            try:
+                ChatRequest(fen=self._START, messages=[], player_color=bad)
+            except ValidationError as exc:
+                assert "player_color" in str(exc)
+            else:
+                raise AssertionError(f"player_color={bad!r} must fail validation")
+
+    def test_deterministic_mate_framing_flips_with_seat(self):
+        from unittest.mock import patch
+        import llm.seca.coach.chat_pipeline as chat_mod
+        from llm.seca.coach.chat_pipeline import generate_chat_reply, ChatTurn
+        from llm.rag.validators.explain_response_schema import validate_chat_response
+
+        msgs = [ChatTurn(role="user", content="Is there any hope left?")]
+        with patch.object(chat_mod, "_LLM_AVAILABLE", False):
+            as_white = generate_chat_reply(
+                self._MATE_FEN, msgs, stockfish_json=self._MATE_SJ, player_color="white"
+            )
+            as_black = generate_chat_reply(
+                self._MATE_FEN, msgs, stockfish_json=self._MATE_SJ, player_color="black"
+            )
+        # Mate side is BLACK: the White player is being mated, the Black
+        # player is delivering it.
+        assert "your opponent secures" in as_white.reply, as_white.reply
+        assert "you secure" in as_black.reply, as_black.reply
+        # Both framings still satisfy every boundary gate.
+        for result in (as_white, as_black):
+            validate_chat_response(
+                {
+                    "reply": result.reply,
+                    "engine_signal": result.engine_signal,
+                    "mode": result.mode,
+                }
+            )
+
+    def test_default_is_white_anchor(self):
+        """Omitting player_color must keep the pre-feature behaviour byte
+        stable — the deterministic reply equals an explicit "white"."""
+        from unittest.mock import patch
+        import llm.seca.coach.chat_pipeline as chat_mod
+        from llm.seca.coach.chat_pipeline import generate_chat_reply, ChatTurn
+
+        msgs = [ChatTurn(role="user", content="Is there any hope left?")]
+        with patch.object(chat_mod, "_LLM_AVAILABLE", False):
+            default = generate_chat_reply(self._MATE_FEN, msgs, stockfish_json=self._MATE_SJ)
+            explicit = generate_chat_reply(
+                self._MATE_FEN, msgs, stockfish_json=self._MATE_SJ, player_color="white"
+            )
+        assert default.reply == explicit.reply
+
+    def test_prompt_perspective_block_follows_player_color(self):
+        """The LLM prompt's PLAYER PERSPECTIVE anchor must name the caller's
+        colour (capture-the-system-prompt trick, as in test_chat_coach_voice)."""
+        from unittest.mock import patch
+        import llm.seca.coach.chat_pipeline as chat_mod
+        from llm.seca.coach.chat_pipeline import ChatTurn
+
+        captured: dict = {}
+
+        def fake_render(*, system_prompt, engine_signal, rag_docs, fen, user_query):
+            captured["system"] = system_prompt
+            return "PROMPT"
+
+        esv_stub = {
+            "evaluation": {"type": "cp", "band": "equal", "side": "white"},
+            "eval_delta": "stable",
+            "last_move_quality": "unknown",
+            "tactical_flags": [],
+            "position_flags": [],
+            "phase": "opening",
+        }
+
+        class _Pass:
+            def model_validate(self, *_, **__):
+                return None
+
+        for color, expected, forbidden in (
+            ("white", "playing WHITE", "playing BLACK"),
+            ("black", "playing BLACK", "playing WHITE"),
+        ):
+            with (
+                patch.object(chat_mod, "_LLM_AVAILABLE", True),
+                patch.object(chat_mod, "_render", fake_render),
+                patch.object(chat_mod, "_call_llm", lambda *_: "The position is roughly equal."),
+                patch.object(chat_mod, "extract_engine_signal", lambda *a, **k: esv_stub),
+                patch.object(chat_mod, "_EngineSignalSchema", _Pass()),
+                patch.object(chat_mod, "_retrieve", lambda *a, **k: []),
+                patch.object(chat_mod, "_build_clc", lambda *_: ""),
+                patch.object(chat_mod, "_sanitize", lambda x: x),
+            ):
+                chat_mod.generate_chat_reply(
+                    fen=self._START,
+                    messages=[ChatTurn(role="user", content="hello")],
+                    player_color=color,
+                )
+            assert expected in captured["system"], f"{color}: missing {expected!r}"
+            assert forbidden not in captured["system"], f"{color}: has {forbidden!r}"

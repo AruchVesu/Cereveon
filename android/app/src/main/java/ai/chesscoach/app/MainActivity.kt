@@ -101,6 +101,10 @@ class MainActivity : AppCompatActivity() {
     private var reviewPositions: List<String> = emptyList()
     private var reviewMoves: List<String> = emptyList()
     private var reviewPly: Int = 0
+    // The side the player was on in the game under review ("black" for
+    // imported Lichess games played as Black; null = white/live). Read by
+    // the coach chat so its "you" framing follows the player's seat.
+    private var reviewPlayerColor: String? = null
     private lateinit var reviewNavBar: View
     private lateinit var btnReviewPrev: Button
     private lateinit var btnReviewNext: Button
@@ -985,6 +989,14 @@ class MainActivity : AppCompatActivity() {
     fun currentGameId(): String? = currentServerGameId
 
     /**
+     * The side the player is on for the coach chat's "you" framing:
+     * "black" while reviewing an imported game played as Black, null
+     * otherwise (live games are always White; null keeps the field off
+     * the wire and the server anchors White).
+     */
+    fun currentPlayerColor(): String? = reviewPlayerColor
+
+    /**
      * Called when the backend returns HTTP 401 during an active game session.
      * Shows a non-disruptive dialog instead of silently breaking the game flow.
      * The user can choose to re-authenticate or dismiss and continue offline.
@@ -1094,6 +1106,9 @@ class MainActivity : AppCompatActivity() {
         // carry "white"/"black"; in-app games (always white) and legacy
         // rows send null -> no flip.
         chessBoard.flipped = playerColor.equals("black", ignoreCase = true)
+        // Remember the seat for the coach chat: its "you" framing must follow
+        // the player's side, or every pronoun is inverted on Black games.
+        reviewPlayerColor = if (chessBoard.flipped) "black" else null
         // The coach chat reads currentGameId() + the live board FEN, so set the
         // game thread and make the board a passive replay surface (no play taps).
         currentServerGameId = gameId?.takeIf { it.isNotBlank() }
@@ -1123,6 +1138,7 @@ class MainActivity : AppCompatActivity() {
         reviewPositions = emptyList()
         reviewMoves = emptyList()
         reviewPly = 0
+        reviewPlayerColor = null
         // Restore the default White-at-bottom orientation for live play.
         chessBoard.flipped = false
         if (wasReviewing) chessBoard.isInteractive = true

@@ -280,6 +280,22 @@ class ChatRequest(BaseModel):
     # English ("you advanced your f-pawn") instead of misreading the raw FEN.
     # Optional: older clients omit it; the prompt simply skips the move line.
     last_move: str | None = None
+    # The colour the player is playing, for the coach's "you" framing.
+    # Live in-app games are always White; imported/replayed games may be
+    # Black (the review board orients to the player's side — PR #344 —
+    # and chat opened on such a game must not misattribute every "you").
+    # Optional and additive: older clients omit it → White, the
+    # pre-feature anchor.  Strict allow-list, same rationale as
+    # coach_voice: an unknown value fails validation rather than
+    # silently bleeding into the prompt.
+    player_color: str | None = None
+
+    @field_validator("player_color")
+    @classmethod
+    def validate_player_color(cls, v: str | None) -> str | None:
+        if v is not None and v not in ("white", "black"):
+            raise ValueError('player_color must be "white" or "black"')
+        return v
 
     @field_validator("fen")
     @classmethod

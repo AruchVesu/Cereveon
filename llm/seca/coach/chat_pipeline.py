@@ -400,6 +400,7 @@ def _build_chat_prompt(
     retry_hint: str = "",
     coach_voice: str | None = None,
     last_move: str | None = None,
+    player_color: str = "white",
 ) -> str:
     """Assemble the fully-rendered Mode-2 prompt (system + voice + style +
     history + player context + RAG + FEN + sanitized user query).
@@ -479,32 +480,39 @@ def _build_chat_prompt(
     if coach_voice and coach_voice in _COACH_VOICE_INSTRUCTIONS:
         voice_block = "\n\nCOACH VOICE: " + _COACH_VOICE_INSTRUCTIONS[coach_voice]
 
-    # The Android client only lets the human play White (local games); without a
-    # colour anchor the coach reads the FEN side-to-move (the opponent, right
-    # after the player moves) as the player and says "you are Black".  Anchor
-    # White, and — when the client sends it — describe the player's last move in
-    # PLAIN ENGLISH (never a square: the no-notation output rule strips "f3" and
-    # forces the canned fallback — the #247/#248 regression).
+    # Live in-app games always have the human as White, but imported /
+    # replayed games may have them as Black (the review board orients to the
+    # player's side — PR #344), so the anchor colour comes from the caller
+    # (default White for older clients).  Without a colour anchor the coach
+    # reads the FEN side-to-move (the opponent, right after the player moves)
+    # as the player and says "you are Black".  When the client sends the last
+    # move, describe it in PLAIN ENGLISH (never a square: the no-notation
+    # output rule strips "f3" and forces the canned fallback — the #247/#248
+    # regression).
+    anchor = "BLACK" if player_color == "black" else "WHITE"
+    case_note = "Black (lowercase)" if player_color == "black" else "White (uppercase)"
     perspective_lines = [
-        "The player you are coaching is playing WHITE — their pieces are the "
-        "White (uppercase) pieces.  The side-to-move shown below is only whose "
-        "turn it is, not the player's colour; read the engine evaluation from "
-        "White's point of view."
+        f"The player you are coaching is playing {anchor} — their pieces are the "
+        f"{case_note} pieces.  The side-to-move shown below is only whose "
+        f"turn it is, not the player's colour; read the engine evaluation from "
+        f"{anchor.capitalize()}'s point of view."
     ]
     move_phrase = describe_move_plain(fen, last_move) if last_move else ""
     if move_phrase:
         perspective_lines.append(
             f"The player's most recent move (authoritative — describe it exactly "
             f"this way; do NOT re-derive the move from the board): they {move_phrase}. "
-            'Refer to it in plain words ("your f-pawn", "the kingside"), never in '
-            "coordinate or move notation."
+            'Refer to it in plain words ("your kingside pawn", "the kingside"), never in '
+            "coordinate or move notation and never with a file letter."
         )
     perspective_block = "\n\nPLAYER PERSPECTIVE:\n" + "\n".join(perspective_lines)
 
     # Deterministic engine facts (hanging pieces, checks, king safety, material,
     # pawn structure) + what the last move attacks, so the coach grounds tactics
     # in real facts instead of inventing them. All plain-English / coordinate-free.
-    fact_lines = render_engine_facts(engine_signal)
+    # ``player_color`` flips the white-relative flag table so "you" stays the
+    # player's side when they are Black (the Mode-1-proven flip machinery).
+    fact_lines = render_engine_facts(engine_signal, player_color=player_color)
     threat = describe_threats(fen, last_move) if last_move else ""
     if threat:
         fact_lines.append(threat[0].upper() + threat[1:])
@@ -548,6 +556,7 @@ def _build_chat_llm(
     retry_hint: str = "",
     coach_voice: str | None = None,
     last_move: str | None = None,
+    player_color: str = "white",
 ) -> str:
     """Call the LLM with the Mode-2 prompt (non-streaming) and validate.
 
@@ -562,6 +571,7 @@ def _build_chat_llm(
         retry_hint=retry_hint,
         coach_voice=coach_voice,
         last_move=last_move,
+        player_color=player_color,
     )
 
     response = _call_llm(prompt).strip()
@@ -714,6 +724,7 @@ def _build_reply_deterministic(
     history: list[ChatTurn],
     skill_level: str = "intermediate",
     coach_voice: str | None = None,
+    player_color: str = "white",
 ) -> str:
     """Deterministic Mode-2 reply used when LLM is unavailable.
 
@@ -755,10 +766,11 @@ def _build_reply_deterministic(
             parts.append("Following up on your earlier question:")
 
     # Engine-state framing — single sentence, no internal metadata.  The
-    # human is always White in chat (Android local-games anchor, see
-    # _build_chat_prompt), so frame the mate winner from White's seat ("you"
-    # / "your opponent") rather than the detached third-person side name.
-    parts.append(_format_engine_context(engine_signal, player_color="white"))
+    # anchor colour comes from the caller (White for live in-app games,
+    # possibly Black for imported/replayed games — see _build_chat_prompt),
+    # so the mate winner is framed from the PLAYER's seat ("you" / "your
+    # opponent") rather than the detached third-person side name.
+    parts.append(_format_engine_context(engine_signal, player_color=player_color))
 
     move_quality = engine_signal.get("last_move_quality", "")
     if move_quality and move_quality not in ("unknown", ""):
@@ -804,6 +816,7 @@ def generate_chat_reply(
     last_move: str | None = None,
     stockfish_json: dict | None = None,
     force_deterministic: bool = False,
+    player_color: str = "white",
 ) -> ChatReply:
     """Generate a coaching reply for the current chat turn.
 
@@ -870,6 +883,7 @@ def generate_chat_reply(
                     retry_hint=retry_hint,
                     coach_voice=coach_voice,
                     last_move=last_move,
+                    player_color=player_color,
                 )
                 # ESV structural integrity check (programming-error guard; never from LLM).
                 _EngineSignalSchema.model_validate(engine_signal)
@@ -944,5 +958,6 @@ def generate_chat_reply(
         history=messages,
         skill_level=skill_level,
         coach_voice=coach_voice,
+        player_color=player_color,
     )
     return ChatReply(reply=reply, engine_signal=engine_signal, mode="CHAT_V1")

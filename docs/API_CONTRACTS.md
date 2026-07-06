@@ -236,7 +236,8 @@ is wire-backward-compatible with any unknown client.
   "move_count":     <int | null>,
   "coach_voice":    <string | null>,
   "game_id":        <string | null>,
-  "last_move":      <string | null>
+  "last_move":      <string | null>,
+  "player_color":   <string | null>
 }
 ```
 
@@ -250,6 +251,7 @@ is wire-backward-compatible with any unknown client.
 | `coach_voice` | `string \| null` | Optional tone setting. Allow-list: `"formal"`, `"conversational"`, `"terse"` (case-insensitive, whitespace-stripped; empty string is coerced to `null`). Unknown values reject the request with 422. Default `null` → server treats as `"conversational"`. Affects tone only; engine truth and validator gates are unchanged. Pinned by `test_chat_coach_voice.py`. |
 | `game_id` | `string \| null` | Optional — per-game chat thread key (the client's current `games.id`). When present, the saved exchange is scoped to that game so `GET /chat/history?game_id=…` shows only that game's chat; absent/null keeps it player-global (legacy). ≤ 64 chars; empty → `null`. `player_id` (from the JWT) stays the isolation boundary, so this is an organizational key only. Same field on `POST /chat/stream`. |
 | `last_move` | `string \| null` | Optional — the player's most recent move in UCI (`[a-h][1-8][a-h][1-8]` + optional promotion `[qrbnQRBN]`). Lets the coach describe it in plain English ("you advanced your f-pawn") instead of misreading the raw FEN; the server renders it coordinate-free via `describe_move_plain` so the no-notation output rule isn't tripped. Absent/null → no move line. Same field on `POST /chat/stream`. 422 on malformed UCI. |
+| `player_color` | `string \| null` | Optional — the colour the player is playing, for the coach's "you" framing. Allow-list: `"white"`, `"black"`; anything else rejects with 422. Absent/null → `"white"` (the pre-feature anchor; live in-app games are always White). Clients send `"black"` when chat is opened on an imported/replayed game where the user played Black (the review board orients to the player's side). Flips the prompt perspective block, the ENGINE FACTS "you"/"your opponent" phrasing, and the deterministic fallback's mate framing. Additive and backward-compatible — no `X-API-Version` bump. Same field on `POST /chat/stream`. |
 
 ### Response
 
