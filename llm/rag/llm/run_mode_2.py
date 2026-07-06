@@ -49,6 +49,17 @@ _ENGINE_PHRASE_RE = re.compile(
     r"\b(" + "|".join(re.escape(p) for p in _ENGINE_PHRASES_FOR_STRIP) + r")\b",
     re.IGNORECASE,
 )
+# Structural gate phrases ("white can", "recommended move", ...) for the
+# final aggressive pass.  A notation-removal REWRITE routinely rephrases
+# "Qh5 wins" as "White can force a win" — introducing a structural
+# violation late in the loop.  ``text_remove_structure`` strips these
+# deterministically, but the aggressive last resort did not, so a
+# candidate could fail on a phrase one earlier branch removes trivially
+# (first observed on the 2026-07-06 forced_mate regression runs).
+_STRUCTURAL_PHRASE_RE = re.compile(
+    r"\b(" + "|".join(re.escape(k) for k in STRUCTURAL_KEYWORDS) + r")\b",
+    re.IGNORECASE,
+)
 
 
 def _extract_pattern_from_error(err: AssertionError) -> str:
@@ -179,20 +190,20 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
         def rewrite_remove_notation(t: str) -> str:
             s = mask_chess_notation(t)
             return model_rewrite(
-                "Remove ALL chess notation and coordinates, and remove any prescriptive/advisory language. Do NOT add new information.",
+                "Remove ALL chess notation and coordinates, and remove any prescriptive/advisory language. Never rephrase using 'White can' or 'Black can'. Preserve the word 'inevitable' if it is present. Do NOT add new information.",
                 s,
             )
 
         def rewrite_remove_advisory(t: str) -> str:
             advisory_examples = ", ".join(f"'{k}'" for k in ADVISORY_KEYWORDS)
             return model_rewrite(
-                f"Remove ALL advisory or prescriptive language (words like {advisory_examples}). Do NOT add new information.",
+                f"Remove ALL advisory or prescriptive language (words like {advisory_examples}). Preserve the word 'inevitable' if it is present. Do NOT add new information.",
                 t,
             )
 
         def rewrite_remove_mate(t: str) -> str:
             return model_rewrite(
-                "Remove absolute mate claims (e.g., 'checkmate', 'mate in N', 'forced mate'). Describe the evaluation and its implications without adding new factual assertions. Do NOT add new information.",
+                "Remove absolute mate claims (e.g., 'checkmate', 'mate in N', 'forced mate'). State instead that the outcome is inevitable — use the exact word 'inevitable'. Beyond that framing, do NOT add new information.",
                 t,
             )
 
@@ -214,7 +225,7 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
 
         def rewrite_remove_structure(t: str) -> str:
             return model_rewrite(
-                "Remove headings or sections such as 'Plan', 'Recommended Move', 'Example Move', and avoid phrasing like 'White can' or 'Black can'. Present the analysis as continuous, evaluative prose without headings. Do NOT add new information.",
+                "Remove headings or sections such as 'Plan', 'Recommended Move', 'Example Move', and avoid phrasing like 'White can' or 'Black can'. Present the analysis as continuous, evaluative prose without headings. Preserve the word 'inevitable' if it is present. Do NOT add new information.",
                 t,
             )
 
@@ -268,6 +279,13 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
         candidate = output
         attempts = 0
         last_err = err
+        # One-shot flags for the REQUIRE-class branches below: the first
+        # failure gets a targeted rewrite; if the SAME require fails
+        # again, the next iteration draws a fresh sample instead
+        # (rewrites inherit the flawed candidate's framing, while the
+        # prompt's first-sentence rules make an independent sample
+        # compliant with high probability).
+        require_rewrite_done = {"mate": False, "missing": False}
 
         while attempts < MAX_MODE_2_RETRIES:
             attempts += 1
@@ -335,6 +353,61 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
                     last_err = err2
                     continue
 
+            # REQUIRE-class failures — the branches above only REMOVE
+            # content, so a candidate missing a REQUIRED framing (mate
+            # inevitability, missing-data acknowledgment) was previously
+            # unrepairable: every rewrite said "do NOT add new
+            # information" and the aggressive pass only strips.  These
+            # rewrites ask the model to SUPPLY the required framing —
+            # which is engine truth (the ESV says mate / the analysis
+            # block is empty), not invention.  The gates are unchanged
+            # and the model must still produce the words itself; a model
+            # that cannot comply still fails the run (see
+            # test_retries_exhaustion_raises_for_forced_mate).
+            err_l = str(last_err).lower()
+            if "inevitab" in err_l:
+                try:
+                    if not require_rewrite_done["mate"]:
+                        require_rewrite_done["mate"] = True
+                        candidate = model_rewrite(
+                            "The engine signal confirms the outcome is forced. "
+                            "Rewrite so the FIRST sentence contains the exact word "
+                            "'inevitable', and never write 'checkmate', 'mate in N', "
+                            "or 'forced mate'. Use no chess notation or coordinates "
+                            "and no 'White can'/'Black can' phrasing. Keep the rest "
+                            "of the explanation; "
+                            "beyond the inevitability framing, do NOT add new "
+                            "information.",
+                            candidate,
+                        )
+                    else:
+                        candidate = llm.generate(prompt)
+                    _validate_all(candidate)
+                    return candidate
+                except AssertionError as err2:
+                    last_err = err2
+                    continue
+
+            if "missing information" in err_l or "acknowledge missing" in err_l:
+                try:
+                    if not require_rewrite_done["missing"]:
+                        require_rewrite_done["missing"] = True
+                        candidate = model_rewrite(
+                            "The analysis data for this request is missing. Rewrite "
+                            "so the reply begins with the exact sentence: \"There is "
+                            "not enough information to assess this position.\" and "
+                            "then states only that the required data is missing. Do "
+                            "NOT add chess analysis.",
+                            candidate,
+                        )
+                    else:
+                        candidate = llm.generate(prompt)
+                    _validate_all(candidate)
+                    return candidate
+                except AssertionError as err2:
+                    last_err = err2
+                    continue
+
             # As a general fallback: try text-level sanitization then combined rewrite
             try:
                 candidate = text_sanitize(candidate)
@@ -345,7 +418,7 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
 
             try:
                 candidate = model_rewrite(
-                    "Remove ALL chess notation and coordinates, remove ALL advisory or prescriptive language, and remove absolute mate claims. Do NOT add new information.",
+                    "Remove ALL chess notation and coordinates, remove ALL advisory or prescriptive language, and remove absolute mate claims. Never rephrase using 'White can' or 'Black can'. Preserve the word 'inevitable' if it is present. Do NOT add new information.",
                     candidate,
                 )
                 _validate_all(candidate)
@@ -369,6 +442,9 @@ def run_mode_2(llm, prompt: str, case_type: str, *, engine_signal: dict) -> str:
         # Remove any remaining forbidden engine phrases to maximise the
         # chance of passing validators on the last attempt.
         aggressive = _ENGINE_PHRASE_RE.sub("", aggressive)
+        # ... and the structural gate phrases a mid-loop rewrite may have
+        # introduced (see _STRUCTURAL_PHRASE_RE above).
+        aggressive = _STRUCTURAL_PHRASE_RE.sub("", aggressive)
         aggressive = re.sub(r"\s+", " ", aggressive).strip()
 
         try:
