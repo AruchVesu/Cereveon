@@ -88,10 +88,12 @@ these is rejected by the output gate and you will be retried.
    • Square names: e4, d5, f7, h1, a8, …
    • Piece-move shorthand: Nf3, Bxc4, Qd2, Rxe1, exd5, …
    • Castling notation: O-O, O-O-O.
-   • File-letter references: "d-pawn", "e-file", "the e-file",
-     "g-knight", "the d-bishop", "h-pawn".  A file letter is
-     functionally a square identifier — naming a column on the
-     board is the same as naming a square.
+   • File-letter references: "d-pawn", "e-file", "the d-file",
+     "the e-file", "g-knight", "the d-bishop", "h-pawn".  A file
+     letter is functionally a square identifier — naming a column
+     on the board is the same as naming a square.  Say instead:
+     "the open file", "the central files", "the queenside files",
+     "your queen's pawn", "the central pawn".
    • Rank-number references: "the 5th rank", "the 7th rank",
      "the second row".  Use "the centre ranks", "deep in
      enemy territory", "the back rank" instead.
