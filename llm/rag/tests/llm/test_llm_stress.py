@@ -10,6 +10,9 @@ Hallucination axis (hard, zero tolerance)
       NEITHER side (e.g. "your queen" in a king-and-pawn endgame)
     * phantom checks  — the reply claims a king is in check on a board
       where nobody is in check
+    * phantom pawn structure — possessive doubled/isolated/passed-pawn
+      claims the board contradicts ("your doubled pawns" when White has
+      none — real-example finding, 2026-07-06)
 
 Accuracy axis (hard, zero tolerance)
     * advantage direction — "you are winning / you have the advantage"
@@ -27,6 +30,8 @@ Style axis (rate-based, >= STYLE_PASS_RATE)
     * beginner / simple replies avoid an advanced-jargon lexicon
     * terse coach voice stays short; chat replies stay within the
       2-4-short-paragraphs length budget
+    * no file-letter references ("the d-file", "your e-pawn") — forbidden
+      by the prompts but invisible to the rank-digit notation gate
 
 The hallucination and accuracy checkers run on the final pipeline output —
 the user-facing contract — whether it came from the LLM or the deterministic
@@ -207,6 +212,94 @@ def phantom_check_claims(reply: str, board: chess.Board) -> list[str]:
     return violations
 
 
+# -- pawn-structure claims --------------------------------------------------
+
+# Determiner/possessive claims about doubled / isolated / passed pawns are
+# verifiable board facts.  A real-example run (M2-5 Carlsbad, 2026-07-06)
+# had the coach invent "your doubled pawns on the d-file" on a board where
+# White has no doubled pawns — a structure hallucination the piece/check
+# checkers cannot see.  "backward" is deliberately NOT checked (no crisp
+# deterministic definition).  Conditional/teaching phrasing is excused.
+_STRUCTURE_CLAIM = re.compile(
+    r"\b(?P<owner>your|their|his|her)\s+(?:\w+\s+){0,2}?(?P<kind>doubled|isolated|passed)\s+pawns?\b",
+    re.IGNORECASE,
+)
+_STRUCTURE_EXCUSE = re.compile(
+    r"\b(?:if|when|could|would|might|avoid|risk|careful|watch|can (?:become|end up|leave)|"
+    r"don't want|do not want|threat of|to create|creating|aim(?:ing)? (?:for|to))\b",
+    re.IGNORECASE,
+)
+
+
+def _files_with_pawns(board: chess.Board, color: chess.Color) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for sq in board.pieces(chess.PAWN, color):
+        f = chess.square_file(sq)
+        counts[f] = counts.get(f, 0) + 1
+    return counts
+
+
+def _has_doubled(board: chess.Board, color: chess.Color) -> bool:
+    return any(n >= 2 for n in _files_with_pawns(board, color).values())
+
+
+def _has_isolated(board: chess.Board, color: chess.Color) -> bool:
+    files = _files_with_pawns(board, color)
+    return any(
+        files.get(f - 1) is None and files.get(f + 1) is None for f in files
+    )
+
+
+def _has_passed(board: chess.Board, color: chess.Color) -> bool:
+    enemy = not color
+    for sq in board.pieces(chess.PAWN, color):
+        f, r = chess.square_file(sq), chess.square_rank(sq)
+        blocked = False
+        for esq in board.pieces(chess.PAWN, enemy):
+            ef, er = chess.square_file(esq), chess.square_rank(esq)
+            if abs(ef - f) <= 1 and ((color == chess.WHITE and er > r) or (color == chess.BLACK and er < r)):
+                blocked = True
+                break
+        if not blocked:
+            return True
+    return False
+
+
+_STRUCTURE_TRUTH = {
+    "doubled": _has_doubled,
+    "isolated": _has_isolated,
+    "passed": _has_passed,
+}
+
+
+def pawn_structure_claims(reply: str, board: chess.Board, player_color: str) -> list[str]:
+    """Possessive doubled/isolated/passed-pawn claims that the board
+    contradicts.  ``your X pawns`` is checked against the player's side,
+    ``their/his/her`` against the opponent's; generic teaching (no
+    possessive) and conditional phrasing are not claims."""
+    if player_color not in ("white", "black"):
+        return []
+    player_is_white = player_color == "white"
+    violations: list[str] = []
+    for match in _STRUCTURE_CLAIM.finditer(reply):
+        window = reply[max(0, match.start() - 60) : match.end() + 20]
+        if _STRUCTURE_EXCUSE.search(window):
+            continue
+        owner = match.group("owner").lower()
+        color = (
+            (chess.WHITE if player_is_white else chess.BLACK)
+            if owner == "your"
+            else (chess.BLACK if player_is_white else chess.WHITE)
+        )
+        kind = match.group("kind").lower()
+        if not _STRUCTURE_TRUTH[kind](board, color):
+            snippet = reply[max(0, match.start() - 30) : match.end() + 30]
+            violations.append(
+                f"claims {owner} {kind} pawns but that side has none: ...{snippet.strip()}..."
+            )
+    return violations
+
+
 # -- advantage direction ----------------------------------------------------
 
 _QUALIFIER = r"(?:a |an |the )?(?:small |slight |clear |decisive |big |significant |winning |real )?"
@@ -217,8 +310,13 @@ _QUALIFIER = r"(?:a |an |the )?(?:small |slight |clear |decisive |big |significa
 # validator history retired bare "better" for exactly this ambiguity.  The
 # lookaheads exclude those qualified forms; unqualified overall claims
 # ("you are better.", "you have the advantage here") remain caught, and
-# material-qualified claims belong to the material checker below.
-_SUBDIM_GUARD = r"(?!\s+(?:in|on|at|with)\b|\s+(?:developed|coordinated|placed|organi[sz]ed|prepared|mobili[sz]ed|activated))"
+# material-qualified claims belong to the material checker below.  "by" is
+# excluded because "ahead BY a pawn/piece" is a quantified MATERIAL
+# statement, not an eval-direction claim — on a sound sacrifice the
+# opponent IS ahead by material while the engine favours the player
+# (real-example run M2-2, 2026-07-06); the material checker owns those
+# forms and judges them against the actual board count.
+_SUBDIM_GUARD = r"(?!\s+(?:in|on|at|with|by)\b|\s+(?:developed|coordinated|placed|organi[sz]ed|prepared|mobili[sz]ed|activated))"
 
 _PLAYER_ADV_PATTERNS = tuple(
     re.compile(p, re.IGNORECASE)
@@ -317,6 +415,8 @@ _PLAYER_UP_PATTERNS = tuple(
     re.compile(p, re.IGNORECASE)
     for p in (
         rf"\byou(?:'re| are) (?:now )?up {_MATERIAL_NOUN}\b",
+        rf"\byou(?:'re| are) (?:now )?ahead by {_MATERIAL_NOUN}\b",
+        rf"\byour opponent is (?:now )?(?:down|behind by) {_MATERIAL_NOUN}\b",
         r"\byou(?:'re| are) ahead (?:in|on) material\b",
         r"\byou (?:have|hold) (?:a |the )?material advantage\b",
         r"\byou(?:'ve| have) won material\b",
@@ -327,9 +427,10 @@ _PLAYER_DOWN_PATTERNS = tuple(
     re.compile(p, re.IGNORECASE)
     for p in (
         rf"\byou(?:'re| are) (?:now )?down {_MATERIAL_NOUN}\b",
+        rf"\byou(?:'re| are) (?:now )?behind by {_MATERIAL_NOUN}\b",
         r"\byou(?:'re| are) behind (?:in|on) material\b",
         r"\byour opponent (?:has|holds) (?:a |the )?material advantage\b",
-        rf"\byour opponent is (?:now )?up {_MATERIAL_NOUN}\b",
+        rf"\byour opponent is (?:now )?(?:up|ahead by) {_MATERIAL_NOUN}\b",
         r"\byou(?:'ve| have) lost material\b",
     )
 )
@@ -430,6 +531,17 @@ _ADVANCED_JARGON = (
 )
 
 
+# File-letter references ("the d-file", "your e-pawn", "the g-knight") are
+# explicitly forbidden by v2 rule 1 ("a file letter is functionally a square
+# identifier") and Mode-1's descriptive-language rule, but the notation gate
+# needs a rank DIGIT and cannot see them — a real-example run (M2-5,
+# 2026-07-06) shipped "the d-file" to the user unflagged.  Style axis
+# (prompt contract), rate-based like the rest.
+_FILE_LETTER_REF = re.compile(
+    r"\b[a-h]-(?:file|pawn|rook|knight|bishop|queen)s?\b", re.IGNORECASE
+)
+
+
 def style_violations(
     reply: str,
     *,
@@ -439,6 +551,12 @@ def style_violations(
 ) -> list[str]:
     violations: list[str] = []
     sentences = sentence_count(reply)
+
+    for match in _FILE_LETTER_REF.finditer(reply):
+        violations.append(
+            f"file-letter reference '{match.group(0)}' (forbidden by the prompts, "
+            f"invisible to the notation gate)"
+        )
 
     if mode == "live" and sentences > 2:
         violations.append(f"Mode-1 reply has {sentences} sentences (contract: 1-2)")
@@ -643,7 +761,11 @@ def _run_probe(probe: Probe, fallback_flag: dict) -> ProbeResult:
         fell_back=fallback_flag["hit"],
         latency_s=latency,
     )
-    res.hallucination = phantom_piece_claims(reply, board) + phantom_check_claims(reply, board)
+    res.hallucination = (
+        phantom_piece_claims(reply, board)
+        + phantom_check_claims(reply, board)
+        + pawn_structure_claims(reply, board, player_color)
+    )
     res.accuracy = advantage_direction_violations(
         reply, engine_signal, player_color
     ) + material_claim_violations(reply, board, player_color)
@@ -882,6 +1004,13 @@ def test_selfcheck_advantage_direction() -> None:
     mate_for = {"evaluation": {"type": "mate", "band": "decisive_advantage", "side": "white"}}
     assert advantage_direction_violations("You are about to be mated.", mate_for, "white")
     assert not advantage_direction_violations("Mate is inevitable in your favour.", mate_for, "white")
+    # Quantified material forms defer to the material checker (a sound
+    # sacrifice: opponent IS ahead by material while the engine favours
+    # the player — real-example finding, 2026-07-06).
+    winning = {"evaluation": {"type": "cp", "band": "clear_advantage", "side": "white"}}
+    assert not advantage_direction_violations(
+        "Don't rush to grab the pawn your opponent is ahead by.", winning, "white"
+    )
     # Factor-scoped consolation inside an honest losing assessment
     # (real CI false positive, 2026-07-06) vs. an overall claim.
     assert not advantage_direction_violations(
@@ -904,6 +1033,27 @@ def test_selfcheck_material_claims() -> None:
     assert material_claim_violations("You are up a pawn here.", even, "white")
     assert material_claim_violations("You have lost material.", even, "white")
     assert not material_claim_violations("Material is even.", even, "white")
+    # Quantified "ahead by" forms are material claims, judged by the board.
+    assert material_claim_violations("You are ahead by a pawn.", board, "white")
+    assert not material_claim_violations("Your opponent is ahead by a piece.", board, "white")
+    assert material_claim_violations("Your opponent is ahead by a pawn.", even, "white")
+
+
+def test_selfcheck_pawn_structure() -> None:
+    clean = chess.Board(_FEN_EQ_OPEN)  # neither side doubled/isolated/passed
+    assert pawn_structure_claims("Your doubled pawns are a long-term weakness.", clean, "white")
+    assert pawn_structure_claims("Their isolated pawn is a target.", clean, "white")
+    # The real-example finding, verbatim shape:
+    assert pawn_structure_claims("Your doubled pawns on that file are weak.", clean, "white")
+    # Conditional / teaching phrasing is not a claim.
+    assert not pawn_structure_claims(
+        "If you capture that way, you could end up with doubled pawns.", clean, "white"
+    )
+    assert not pawn_structure_claims("Doubled pawns are usually a weakness.", clean, "white")
+    kp = chess.Board(_FEN_KP_END)  # White's e-pawn is isolated AND passed
+    assert not pawn_structure_claims("Your passed pawn decides the game.", kp, "white")
+    assert not pawn_structure_claims("Your isolated pawn is actually a strength here.", kp, "white")
+    assert pawn_structure_claims("Their passed pawn is dangerous.", kp, "white")
 
 
 def test_selfcheck_quality_contradiction() -> None:
@@ -942,4 +1092,17 @@ def test_selfcheck_style() -> None:
         mode="chat",
         style=None,
         coach_voice="terse",
+    )
+    # File-letter references are prompt-forbidden and gate-invisible.
+    assert style_violations(
+        "Open the d-file for your rook.", mode="chat", style=None, coach_voice=None
+    )
+    assert style_violations(
+        "Push your e-pawn and trade.", mode="live", style=None, coach_voice=None
+    )
+    assert not style_violations(
+        "Advance your queenside pawns to open a file.", mode="chat", style=None, coach_voice=None
+    )
+    assert not style_violations(
+        "Send me an e-mail about it.", mode="chat", style=None, coach_voice=None
     )
