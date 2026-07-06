@@ -584,7 +584,14 @@ class MainActivity : AppCompatActivity() {
         } else false
 
         if (!resumed) {
-            startNewGameSession()
+            // Only a genuine "New game" launch (no sheet to open) may be
+            // hard-blocked by the paywall.  HomeActivity routes Past games /
+            // Coach / You / Lessons through MainActivity with EXTRA_OPEN_SHEET;
+            // those are NAVIGATION, not a request to play, so they must never
+            // bounce the user to the paywall — the game gate is about PLAYING.
+            startNewGameSession(
+                allowPaywallOnLimit = intent?.getStringExtra(EXTRA_OPEN_SHEET) == null,
+            )
         } else {
             // Already in-progress server-side from before the resume —
             // refresh the chapter header so it reads "Move N" instead
@@ -1122,7 +1129,17 @@ class MainActivity : AppCompatActivity() {
         if (::reviewNavBar.isInitialized) reviewNavBar.visibility = View.GONE
     }
 
-    private fun startNewGameSession() {
+    /**
+     * Starts a new server game session.
+     *
+     * @param allowPaywallOnLimit when true (a genuine "New game" / "Reset"
+     *   intent), a free-tier daily-limit 402 hard-blocks: show the paywall
+     *   and finish() back to Home.  When false (the launch only wanted to
+     *   open a sheet — Past games / Coach / You / Lessons), the 402 is
+     *   swallowed so navigation is never blocked; the requested sheet still
+     *   opens and the user keeps full access to the drawer.
+     */
+    private fun startNewGameSession(allowPaywallOnLimit: Boolean = true) {
         exitReviewMode()
         bumpGameNumber()
         currentServerGameId = null
@@ -1136,17 +1153,21 @@ class MainActivity : AppCompatActivity() {
                     Log.d("GAME", "Session started: ${r.data.gameId}")
                 }
                 is ApiResult.HttpError -> {
-                    // Free-tier daily game limit (1 game/day) → hard block.
-                    // The server returned no game_id, so there is no playable
-                    // game: surface the paywall and leave MainActivity so the
-                    // user lands back on Home ("come back tomorrow").  Any
-                    // other HTTP error is the pre-existing best-effort no-op
-                    // (the local board still works; /game/finish tolerates a
-                    // null server game id).
+                    // Free-tier daily game limit (1 game/day) → hard block,
+                    // but ONLY when the user actually asked to play (New game
+                    // / Reset).  Navigation launches (EXTRA_OPEN_SHEET) pass
+                    // allowPaywallOnLimit=false so opening history/settings/
+                    // chat is never bounced to the paywall.
                     if (r.code == 402 && GameLimitNotice.fromBody(r.body) != null) {
-                        Log.d("GAME", "startGame blocked — daily game limit")
-                        startActivity(Intent(this@MainActivity, PaywallActivity::class.java))
-                        finish()
+                        if (allowPaywallOnLimit) {
+                            Log.d("GAME", "startGame blocked — daily game limit")
+                            startActivity(Intent(this@MainActivity, PaywallActivity::class.java))
+                            finish()
+                        } else {
+                            // Nav-only launch: no playable server game, but the
+                            // drawer + requested sheet stay fully usable.
+                            Log.d("GAME", "daily game limit on nav launch — not blocking navigation")
+                        }
                     } else {
                         Log.w("GAME", "startGame HTTP ${r.code}")
                     }
