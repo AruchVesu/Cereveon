@@ -77,15 +77,20 @@ jobs:
           COACH_DEEPSEEK_API_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY }}
         run: python -m pytest -q llm/rag/tests/llm/test_llm_regression.py
 
+      # Categories C/D/G are INDEPENDENT suites — `!cancelled()` lets each
+      # run and report its own verdict when an earlier one fails (the job
+      # still fails on any red step).  First real execution of this
+      # workflow (2026-07-06 — the secret had been missing since inception)
+      # had Category D fail and silently skip C and G behind it.
       - name: Run DeepSeek smoke test (Category C)
-        if: env.HAS_DEEPSEEK_KEY == 'true'
+        if: env.HAS_DEEPSEEK_KEY == 'true' && !cancelled()
         env:
           RUN_DEEPSEEK_TESTS: "1"
           COACH_DEEPSEEK_API_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY }}
         run: python -m pytest -q llm/rag/tests/llm/test_deepseek_smoke.py
 
       - name: Run LLM stress test (Category G — hallucination / accuracy / level-style)
-        if: env.HAS_DEEPSEEK_KEY == 'true'
+        if: env.HAS_DEEPSEEK_KEY == 'true' && !cancelled()
         env:
           RUN_DEEPSEEK_TESTS: "1"
           COACH_DEEPSEEK_API_KEY: ${{ secrets.COACH_DEEPSEEK_API_KEY }}
