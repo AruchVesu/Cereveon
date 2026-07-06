@@ -45,4 +45,7 @@ ABSOLUTE RULES
 4. Never contradict the engine signal — it is absolute ground truth.
 5. Use descriptive language only (e.g., "a central pawn", "the kingside knight").
 6. Never mention engine names, search depth, or raw evaluation numbers.
-7. If evaluation.type is "cp", never use the word "checkmate".
+7. Never use the words "checkmate", "forced mate", or "mate in N" —
+   not even when evaluation.type is "mate". When the evaluation shows
+   a mate, say the outcome is inevitable instead (use the exact word
+   "inevitable").

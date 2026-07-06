@@ -78,7 +78,12 @@ def render_mode_1_prompt(
     move_quality = engine_signal.get("last_move_quality", "unknown")
 
     if eval_type == "mate":
-        eval_desc = f"forced mate — {side} is winning"
+        # "inevitable mate", not "forced mate": the grounding text models
+        # what the model may echo, and the lexical gate forbids the
+        # "forced mate" bigram in output unconditionally (the Mode-1
+        # mate-probe fallback cause, 2026-07-06).  Bare "mate" is fine;
+        # "inevitable" is the word the semantic gate REQUIREs.
+        eval_desc = f"inevitable mate — {side} is winning"
     else:
         band_label = _BAND_LABEL.get(band, band.replace("_", " "))
         eval_desc = f"{side} has {band_label}"
@@ -191,7 +196,8 @@ def _frame_player_perspective(
             if side == player_color:
                 return "you are about to deliver mate"
             return "you are about to be mated"
-        return f"forced mate — {side} is winning"
+        # Same safe-vocabulary rationale as eval_desc above.
+        return f"inevitable mate — {side} is winning"
 
     if band == "equal":
         return "the position is equal"
