@@ -1148,12 +1148,15 @@ class MainActivity : AppCompatActivity() {
     /**
      * Starts a new server game session.
      *
+     * On a free-tier daily-limit 402 the board is LOCKED (no play) and the
+     * upgrade chip is shown, but the activity is never finished — the drawer
+     * and any requested sheet stay usable, so only PLAYING is blocked.
+     *
      * @param allowPaywallOnLimit when true (a genuine "New game" / "Reset"
-     *   intent), a free-tier daily-limit 402 hard-blocks: show the paywall
-     *   and finish() back to Home.  When false (the launch only wanted to
-     *   open a sheet — Past games / Coach / You / Lessons), the 402 is
-     *   swallowed so navigation is never blocked; the requested sheet still
-     *   opens and the user keeps full access to the drawer.
+     *   intent), the 402 additionally pops the paywall.  When false (the
+     *   launch only wanted to open a sheet — Past games / Coach / You /
+     *   Lessons), the board still locks but the paywall is not popped, so
+     *   navigation is never interrupted.
      */
     private fun startNewGameSession(allowPaywallOnLimit: Boolean = true) {
         exitReviewMode()
@@ -1166,23 +1169,34 @@ class MainActivity : AppCompatActivity() {
                     getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                         .putString(PREF_LAST_GAME_SERVER_ID, r.data.gameId)
                         .apply()
+                    // A real game was granted — ensure the board is playable
+                    // and any prior daily-limit lock is cleared.
+                    chessBoard.isInteractive = true
+                    txtUpgradeChip.visibility = View.GONE
                     Log.d("GAME", "Session started: ${r.data.gameId}")
                 }
                 is ApiResult.HttpError -> {
-                    // Free-tier daily game limit (1 game/day) → hard block,
-                    // but ONLY when the user actually asked to play (New game
-                    // / Reset).  Navigation launches (EXTRA_OPEN_SHEET) pass
-                    // allowPaywallOnLimit=false so opening history/settings/
-                    // chat is never bounced to the paywall.
                     if (r.code == 402 && GameLimitNotice.fromBody(r.body) != null) {
+                        // Free-tier daily game limit reached.  The chess board
+                        // is LOCAL-first, so merely refusing the server game
+                        // would leave it playable — and /live/move with a null
+                        // game_id fails open with coaching, so the user could
+                        // keep playing unmetered.  LOCK the board so no new
+                        // game can actually be played until tomorrow/upgrade.
+                        // We do NOT finish() — the drawer (Settings / Game
+                        // history / Exit to Home) and any requested sheet stay
+                        // fully usable, so only PLAYING is blocked, never
+                        // navigation.  A genuine play intent (New game / Reset)
+                        // also pops the paywall; a nav launch just shows the
+                        // upgrade chip behind its sheet.
+                        Log.d("GAME", "daily game limit — locking board (paywall=$allowPaywallOnLimit)")
+                        chessBoard.isInteractive = false
+                        txtUpgradeChip.visibility = View.VISIBLE
+                        coachText.text =
+                            "Daily game reached. Upgrade for unlimited games, " +
+                                "or come back tomorrow."
                         if (allowPaywallOnLimit) {
-                            Log.d("GAME", "startGame blocked — daily game limit")
                             startActivity(Intent(this@MainActivity, PaywallActivity::class.java))
-                            finish()
-                        } else {
-                            // Nav-only launch: no playable server game, but the
-                            // drawer + requested sheet stay fully usable.
-                            Log.d("GAME", "daily game limit on nav launch — not blocking navigation")
                         }
                     } else {
                         Log.w("GAME", "startGame HTTP ${r.code}")
