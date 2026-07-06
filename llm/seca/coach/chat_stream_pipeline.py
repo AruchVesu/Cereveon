@@ -136,6 +136,7 @@ def stream_chat_reply(
     coach_voice: str | None = None,
     last_move: str | None = None,
     stockfish_json: dict | None = None,
+    player_color: str = "white",
 ) -> Iterator[StreamEvent]:
     """Yield validated coaching reply chunks as DeepSeek generates them.
 
@@ -161,6 +162,7 @@ def stream_chat_reply(
             past_mistakes=past_mistakes,
             coach_voice=coach_voice,
             last_move=last_move,
+            player_color=player_color,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Mode-2 stream prompt build failed (%s: %s); fallback", type(exc).__name__, exc)

@@ -1789,6 +1789,8 @@ async def chat(
         req.coach_voice,
         req.last_move,
         stockfish_json,
+        False,  # force_deterministic
+        req.player_color or "white",
     )
     response = {
         "reply": result.reply,
@@ -1821,6 +1823,7 @@ async def chat(
             req.last_move,
             stockfish_json,
             True,  # force_deterministic — skip LLM, emit hand-tuned fallback
+            req.player_color or "white",
         )
         response = {
             "reply": fallback.reply,
@@ -2028,6 +2031,7 @@ async def chat_stream(
             req.last_move,
             stockfish_json,
             True,  # force_deterministic
+            req.player_color or "white",
         )
 
     def _generate():
@@ -2042,6 +2046,7 @@ async def chat_stream(
             req.coach_voice,
             req.last_move,
             stockfish_json,
+            req.player_color or "white",
         ):
             if isinstance(event, _StreamChunk):
                 yield _sse({"type": "chunk", "text": event.text})

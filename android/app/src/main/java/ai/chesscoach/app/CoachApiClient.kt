@@ -55,6 +55,9 @@ interface CoachApiClient {
         // The player's last move (UCI) so the coach can name it in plain
         // English; null → no move line in the prompt.
         lastMove: String? = null,
+        // "black" when chatting on an imported/replayed game the user played
+        // as Black; null → server anchors White (live-game default).
+        playerColor: String? = null,
     ): ApiResult<ChatResponseBody>
 
     /**
@@ -80,10 +83,14 @@ interface CoachApiClient {
         // (HttpCoachApiClient) forwards it; this non-stream fallback drops it.
         gameId: String? = null,
         lastMove: String? = null,
+        playerColor: String? = null,
     ): Flow<StreamChunk> = flow {
         when (
             val result =
-                chat(fen, messages, playerProfile, pastMistakes, moveCount, coachVoice, lastMove)
+                chat(
+                    fen, messages, playerProfile, pastMistakes, moveCount, coachVoice,
+                    lastMove, playerColor,
+                )
         ) {
             is ApiResult.Success -> {
                 emit(StreamChunk.Chunk(result.data.reply))
@@ -205,6 +212,7 @@ class HttpCoachApiClient(
         moveCount: Int?,
         coachVoice: String?,
         lastMove: String?,
+        playerColor: String?,
     ): ApiResult<ChatResponseBody> = withRetry(maxAttempts = 2) {
         http.request(
             path = CHAT_PATH,
@@ -213,6 +221,7 @@ class HttpCoachApiClient(
             body = buildJson(
                 fen, messages, playerProfile, pastMistakes, moveCount, coachVoice,
                 lastMove = lastMove,
+                playerColor = playerColor,
             ),
             onResponse = refreshOnSuccess(),
             parse = ::parseResponse,
@@ -228,6 +237,7 @@ class HttpCoachApiClient(
         coachVoice: String?,
         gameId: String?,
         lastMove: String?,
+        playerColor: String?,
     ): Flow<StreamChunk> = channelFlow {
         withContext(Dispatchers.IO) {
             // Declared outside the body try so the finally block can
@@ -264,7 +274,7 @@ class HttpCoachApiClient(
                     it.write(
                         buildJson(
                             fen, messages, playerProfile, pastMistakes, moveCount, coachVoice,
-                            gameId, lastMove,
+                            gameId, lastMove, playerColor,
                         ),
                     )
                 }
@@ -426,6 +436,7 @@ class HttpCoachApiClient(
         coachVoice: String?,
         gameId: String? = null,
         lastMove: String? = null,
+        playerColor: String? = null,
     ): String = ApiJson.encodeToString(
         ChatRequestBody(
             fen = fen,
@@ -436,6 +447,7 @@ class HttpCoachApiClient(
             coachVoice = coachVoice?.takeIf { it.isNotBlank() },
             gameId = gameId?.takeIf { it.isNotBlank() },
             lastMove = lastMove?.takeIf { it.isNotBlank() },
+            playerColor = playerColor?.takeIf { it.isNotBlank() },
         )
     )
 

@@ -154,6 +154,30 @@ class ChatStreamApiClientIntegrationTest {
         )
     }
 
+    @Test
+    fun `STREAM_PLAYER_COLOR_SENT - player_color reaches the wire when provided`() = runBlocking {
+        enqueueSse()
+        client().chatStream(startingFen, emptyList(), playerColor = "black").toList()
+        val body = server.takeRequest(10, TimeUnit.SECONDS)!!.body.readUtf8()
+        assertTrue(
+            "player_color must be in the request body, was: $body",
+            "\"player_color\":\"black\"" in body,
+        )
+    }
+
+    @Test
+    fun `STREAM_PLAYER_COLOR_OMITTED - null player_color stays off the wire`() = runBlocking {
+        // Back-compat: the server anchors White when the field is absent, so
+        // live games (null) must not serialize it at all (encodeDefaults=false).
+        enqueueSse()
+        client().chatStream(startingFen, emptyList()).toList()
+        val body = server.takeRequest(10, TimeUnit.SECONDS)!!.body.readUtf8()
+        assertTrue(
+            "player_color must be omitted when null, was: $body",
+            "player_color" !in body,
+        )
+    }
+
     // ---------------------------------------------------------------------------
     // 4–7  Flow item types and content
     // ---------------------------------------------------------------------------

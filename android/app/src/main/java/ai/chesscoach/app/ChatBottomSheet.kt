@@ -80,6 +80,11 @@ class ChatBottomSheet : DialogFragment() {
     // send time so the coach can name it in plain English. Null → no move line.
     private var currentLastMove: String? = null
 
+    // The seat the player is on ("black" while reviewing an imported game
+    // played as Black), refreshed from [MainActivity] at send time so the
+    // coach's "you" framing follows the player's side. Null → White anchor.
+    private var currentPlayerColor: String? = null
+
     /**
      * Current server game id, refreshed from [MainActivity] at send/load time
      * so chat saves + history are scoped to this game. Null → player-global.
@@ -755,6 +760,7 @@ class ChatBottomSheet : DialogFragment() {
             moveCount = act.currentMoveCount()
             currentLastMove = act.currentLastMove()
             gameId = act.currentGameId()
+            currentPlayerColor = act.currentPlayerColor()
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
@@ -832,6 +838,9 @@ class ChatBottomSheet : DialogFragment() {
                     gameId = gameId,
                     // The player's last move, so the coach names it in words.
                     lastMove = currentLastMove,
+                    // The player's seat ("black" on imported-Black replays) so
+                    // the coach's "you" isn't inverted.
+                    playerColor = currentPlayerColor,
                 ).collect { chunk ->
                     when (chunk) {
                         is StreamChunk.Chunk -> accumulated += chunk.text

@@ -66,8 +66,13 @@ data class ChatRequestBody(
     // thread (per-game chat history). Null when no active game → player-global.
     @SerialName("game_id") val gameId: String? = null,
     // The player's last move (UCI), so the coach can describe it in plain
-    // English ("your f-pawn") instead of misreading the raw FEN. Null → omitted.
+    // English instead of misreading the raw FEN. Null → omitted.
     @SerialName("last_move") val lastMove: String? = null,
+    // The colour the player is playing, for the coach's "you" framing.
+    // "black" when chat is opened on an imported/replayed game where the
+    // user played Black (the review board orients to their side); null for
+    // live games → omitted → server anchors White (pre-feature behaviour).
+    @SerialName("player_color") val playerColor: String? = null,
 )
 
 /**
