@@ -44,7 +44,15 @@ Engine → ESV mapping
 
 RAG retrieval
 
-Mode-2 prompt injection
+Mode-2 prompt injection — the snapshot pins the PRODUCTION composition
+(the live `system_v2_mode_2.SYSTEM_PROMPT` + the `render_mode_2`
+renderer that `llm/rag/deploy/embedded.py` uses), so rewriting the
+production prompt breaks a per-push test and forces a deliberate
+snapshot regeneration (`llm/scripts/regenerate_prompt_snapshots.py`).
+Category D renders through the same canonical `render_case`, so the
+weekly-regressed prompt is byte-identical to the pinned one.  (The
+former `mode_2/system_v1.txt` / `render_v1` pair had zero production
+consumers and was retired 2026-07-06.)
 
 Commands
 

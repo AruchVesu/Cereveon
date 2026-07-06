@@ -36,8 +36,8 @@ import pytest
 from llm.rag.llm.deepseek import DeepseekLLM
 from llm.rag.llm.run_mode_2 import run_mode_2
 
-# The instruction lines mirror the rule both production prompts carry
-# (system_v2_mode_2.txt rule 5 / system_v1.txt SPECIAL CASES): the
+# The instruction lines mirror the production prompt's rule
+# (system_v2_mode_2.txt rule 5): the
 # semantic gate REQUIREs "inevitable"/"forced" on a mate-type signal
 # while the lexical gate FORBIDS "checkmate" / "mate in N" / "forced
 # mate".  Without the instruction the live model routinely writes
