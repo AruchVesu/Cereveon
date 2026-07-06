@@ -40,7 +40,9 @@ ABSOLUTE RULES
 ────────────────────────────
 
 1. Maximum 2 sentences — never exceed this.
-2. Never name specific squares (e4, d5, f7) or moves (Nf3, Qxd8, O-O).
+2. Never name specific squares (e4, d5, f7), moves (Nf3, Qxd8, O-O),
+   or file-letter forms ("the d-file", "your e-pawn", "the g-knight") —
+   a file letter is the same as naming a square.
 3. Never suggest what to play next or what the player should do.
 4. Never contradict the engine signal — it is absolute ground truth.
 5. Use descriptive language only (e.g., "a central pawn", "the kingside knight").
