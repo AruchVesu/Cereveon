@@ -787,3 +787,68 @@ class TestLLMSafetyValidators:
         )
         assert result.mode == "LIVE_V1"
         assert result.hint.strip()
+
+
+# ---------------------------------------------------------------------------
+# Transient-check staleness — the PROMPT-side leak paths (PR #313 follow-up,
+# 2026-07-06).  Mode-1 hints are read AFTER the engine's reply, so a check
+# the player just gave is already answered; PR #313 dropped the check fact
+# from the prose grounding but the raw engine_signal JSON dump still carried
+# ``check:*_to_move``, and describe_threats fed present-tense "now attacks"
+# claims about a piece that may already be captured.
+# ---------------------------------------------------------------------------
+
+
+class TestMode1TransientStaleness:
+    # 1.e4 e5 2.Nf3 Nc6 3.Bb5 d6 4.Bxc6+ — player gave check; the bishop
+    # also hangs (bxc6/dxc6 recaptures next).
+    _CHECK_FEN = "r1bqkbnr/ppp2ppp/2Bp4/4p3/4P3/5N2/PPPP1PPP/R1BQK2R b KQkq - 0 4"
+    _SIGNAL = {
+        "evaluation": {"type": "cp", "band": "small_advantage", "side": "white"},
+        "eval_delta": "stable",
+        "last_move_quality": "good",
+        "tactical_flags": ["check:black_to_move", "hanging_piece:white"],
+        "position_flags": [],
+        "phase": "opening",
+    }
+
+    def _prompt(self) -> str:
+        from llm.rag.prompts.mode_1.render import render_mode_1_prompt
+
+        return render_mode_1_prompt(
+            system_prompt="SYSTEM",
+            engine_signal=self._SIGNAL,
+            fen=self._CHECK_FEN,
+            explanation_style="intermediate",
+            player_color="white",
+            last_move_phrase="captured a knight with your bishop",
+            last_move_uci="b5c6",
+        )
+
+    def test_check_flag_stripped_from_prompt_dump(self):
+        prompt = self._prompt()
+        assert "check:black_to_move" not in prompt, (
+            "the transient check flag must not reach the Mode-1 prompt "
+            "(neither prose facts nor the structured JSON dump)"
+        )
+        # The strip is prompt-copy-only: the caller's signal is untouched
+        # (the validators must keep seeing the real tactical state).
+        assert "check:black_to_move" in self._SIGNAL["tactical_flags"]
+        # Non-transient flags still reach the model.
+        assert "hanging_piece:white" in prompt
+
+    def test_threat_line_is_past_tense_in_mode_1(self):
+        prompt = self._prompt()
+        assert " now attacks" not in prompt and " now bears on" not in prompt, (
+            "Mode-1's threat grounding must be past-tense — present tense "
+            "invites a stale 'is attacking' claim about a piece the engine "
+            "reply may already have captured"
+        )
+        assert "attacked" in prompt or "bore on" in prompt, (
+            "the threat fact itself must still be present (past tense), "
+            "not dropped"
+        )
+
+    def test_task_block_forbids_current_check_claims(self):
+        prompt = self._prompt()
+        assert "never present a momentary state as current" in prompt

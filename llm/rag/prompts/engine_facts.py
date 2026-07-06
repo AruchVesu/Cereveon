@@ -66,6 +66,10 @@ _FLAG_FACT: dict[str, str] = {
 # looking at.
 _CHECK_FLAGS: frozenset[str] = frozenset({"check:white_to_move", "check:black_to_move"})
 
+#: Public alias for callers outside this module (the Mode-1 renderer strips
+#: these from its prompt-side signal dump for the same transiency reason).
+TRANSIENT_CHECK_FLAGS = _CHECK_FLAGS
+
 
 def _eval_fact(evaluation: dict, player_color: str = "white") -> str:
     """Player-perspective sentence for the eval band / mate, or "" if unknown.
