@@ -96,16 +96,18 @@ class MistakeStudyPlan(Base):
     # ``anchor_category`` below.
     theme: Mapped[str] = mapped_column(String, nullable=False, default="generic")
 
-    # The player's aggregate dominant weakness this week's plan is built
-    # around — one of the four ``MistakeCategory`` values
-    # (``opening_preparation`` / ``tactical_vision`` / ``positional_play``
-    # / ``endgame_technique``) computed by
-    # ``HistoricalAnalysisPipeline`` over recent games at /game/finish.
-    # The day-3 / day-7 practice puzzles are selected from this
-    # category's theme set (see ``library.pick_two_puzzles_for_category``).
+    # The player's aggregate dominant weakness — one of the four
+    # ``MistakeCategory`` values (``opening_preparation`` /
+    # ``tactical_vision`` / ``positional_play`` / ``endgame_technique``)
+    # computed by ``HistoricalAnalysisPipeline`` over recent games at
+    # /game/finish.  Surfaced as the week's focus label ("This week:
+    # Tactics").  For day-3 / day-7 puzzle SELECTION it is only the
+    # BACKFILL pool: the practice puzzles lead with the day-0 mistake's
+    # own ``theme`` and fall back to this category's theme set when that
+    # theme is too thin (see ``library.pick_two_puzzles_theme_first``).
     # Nullable: legacy plans and plans created when the player has too
-    # little history to surface a dominant category (``None``) fall back
-    # to the day-0 mistake's own ``theme`` for puzzle selection.
+    # little history to surface a dominant category (``None``) — the
+    # backfill then degrades to the generic bucket.
     anchor_category: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # LLM-written retrospective verdict explaining the mistake.
