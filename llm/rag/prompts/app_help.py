@@ -189,6 +189,36 @@ _APP_HELP_TOKENS: tuple[str, ...] = (
     "what can cereveon",
     "how does this app",
     "how do i use the app",
+    "in the app",
+    "in this app",
+    # Natural phrasings real users type WITHOUT an app noun (a 10-example
+    # live test, 2026-07-08, showed the noun-only set missed these and the
+    # question then fell to a nonsense "I can only help with chess"
+    # refusal).  Each is an app-flavoured verb+object combination with low
+    # chess collision: "the board" is common in chess, but "change the
+    # board" / "how the board looks" are about its APPEARANCE; "my games"
+    # is app-ish already, and "games i played" / "look back at" mean past
+    # games; "didn't finish" / "left off" / "pick up where" mean resume.
+    "the board look",
+    "board looks",
+    "how the board",
+    "change the board",
+    "look of the board",
+    "games i played",
+    "games i've played",
+    "look back at",
+    "old games",
+    "earlier games",
+    "previous games",
+    "didn't finish",
+    "did not finish",
+    "unfinished game",
+    "left off",
+    "pick up where",
+    "continue my game",
+    "continue a game",
+    "back to a game",
+    "back to my game",
 )
 
 
