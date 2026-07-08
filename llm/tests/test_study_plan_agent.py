@@ -43,7 +43,7 @@ Pinned invariants
 28. CATEGORY_FALLS_BACK_GENERIC           no on-theme puzzles → generic pair.
 29. CATEGORY_MAP_COVERS_ALL               every MistakeCategory maps to >=1 theme.
 30. ANCHOR_CATEGORY_PERSISTED             generate_plan stores dominant_category on the plan.
-31. ANCHOR_SELECTS_FROM_CATEGORY          days 3/7 follow the category, not the LLM theme.
+31. THEME_SELECTS_OVER_CATEGORY           days 3/7 follow the day-0 mistake theme; category is only backfill.
 32. ONE_ACTIVE_PLAN                       a new game while active returns the existing plan.
 33. REGEN_AFTER_COMPLETION                completing the active plan lets the next game mint a new one.
 """
@@ -1289,6 +1289,179 @@ class TestPuzzleLibraryCategoryPicker:
             assert _CATEGORY_TO_THEMES[category]
 
 
+class TestPuzzleLibraryThemeFirstPicker:
+    """``library.pick_two_puzzles_theme_first`` — the production selector.
+
+    Leads with the day-0 mistake's own theme so a king-safety mistake
+    yields king-safety practice; the aggregate dominant weakness is only
+    a backfill pool, consulted ahead of the generic bucket when the
+    specific theme is too thin to fill both days."""
+
+    def _puzzle(self, pid, theme, difficulty="intermediate"):
+        from llm.seca.coach.study_plan.library import LibraryPuzzle
+
+        return LibraryPuzzle(
+            id=pid,
+            theme=theme,
+            difficulty=difficulty,
+            fen="8/4P3/8/8/8/8/8/4K2k w - - 0 1",
+            expected_move_uci="e7e8q",
+            description="stub",
+        )
+
+    def test_theme_wins_over_category(self):
+        """THEME_FIRST_THEME_WINS — a theme with >= 2 puzzles fills both
+        days on-theme even when a different aggregate category is given.
+        The category's puzzles are never reached."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_theme_first
+
+        library = {
+            "king_safety": [
+                self._puzzle("ks1", "king_safety"),
+                self._puzzle("ks2", "king_safety"),
+            ],
+            "fork": [self._puzzle("fk1", "fork"), self._puzzle("fk2", "fork")],
+            "pin": [self._puzzle("pn1", "pin")],
+            "generic": [self._puzzle("gn1", "generic")],
+        }
+        d3, d7 = pick_two_puzzles_theme_first(
+            library, "king_safety", "tactical_vision", "intermediate", "plan-1"
+        )
+        assert {d3.theme, d7.theme} == {"king_safety"}
+        assert d3.id != d7.id
+
+    def test_thin_theme_backfills_from_category_before_generic(self):
+        """THEME_FIRST_CATEGORY_BACKFILL — one on-theme puzzle keeps day 3;
+        day 7 is drawn from the aggregate CATEGORY's pool (fork/pin for
+        tactical_vision), NOT the generic bucket that also has entries."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_theme_first
+
+        library = {
+            "king_safety": [self._puzzle("ks1", "king_safety")],
+            "fork": [self._puzzle("fk1", "fork")],
+            "pin": [self._puzzle("pn1", "pin")],
+            "generic": [self._puzzle("gn1", "generic")],
+        }
+        d3, d7 = pick_two_puzzles_theme_first(
+            library, "king_safety", "tactical_vision", "intermediate", "plan-1"
+        )
+        assert d3.id == "ks1", "the on-theme puzzle stays on day 3"
+        assert d7.theme in {"fork", "pin"}, "day 7 from the category, not generic"
+        assert d3.id != d7.id
+
+    def test_thin_theme_falls_to_generic_when_category_empty(self):
+        """THEME_FIRST_GENERIC_BACKFILL — one on-theme puzzle, an empty
+        category, non-empty generic → day 7 backfills from generic."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_theme_first
+
+        library = {
+            "king_safety": [self._puzzle("ks1", "king_safety")],
+            # tactical_vision themes all empty:
+            "fork": [],
+            "pin": [],
+            "back_rank": [],
+            "hung_piece": [],
+            "queen_safety": [],
+            "generic": [self._puzzle("gn1", "generic"), self._puzzle("gn2", "generic")],
+        }
+        d3, d7 = pick_two_puzzles_theme_first(
+            library, "king_safety", "tactical_vision", "intermediate", "plan-1"
+        )
+        assert d3.id == "ks1"
+        assert d7.theme == "generic"
+        assert d3.id != d7.id
+
+    def test_thin_theme_repeats_when_no_backfill_anywhere(self):
+        """THEME_FIRST_REPEAT_SINGLE — one on-theme puzzle, empty category
+        and empty generic → same puzzle both days (degraded but still
+        spaced repetition of the right motif)."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_theme_first
+
+        library = {"king_safety": [self._puzzle("ks1", "king_safety")], "generic": []}
+        d3, d7 = pick_two_puzzles_theme_first(
+            library, "king_safety", "positional_play", "intermediate", "plan-1"
+        )
+        assert d3.id == "ks1" and d7.id == "ks1"
+
+    def test_empty_theme_defers_to_category(self):
+        """THEME_FIRST_EMPTY_THEME_DEFERS — when the mistake theme has NO
+        puzzles, selection defers entirely to the aggregate-category
+        path (here tactical_vision → fork)."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_theme_first
+
+        library = {
+            "king_safety": [],
+            "fork": [self._puzzle("fk1", "fork"), self._puzzle("fk2", "fork")],
+            "generic": [],
+        }
+        d3, d7 = pick_two_puzzles_theme_first(
+            library, "king_safety", "tactical_vision", "intermediate", "plan-1"
+        )
+        assert {d3.theme, d7.theme} == {"fork"}
+        assert d3.id != d7.id
+
+    def test_generic_theme_defers_to_category(self):
+        """THEME_FIRST_GENERIC_THEME_DEFERS — a ``"generic"`` mistake theme
+        (LLM couldn't classify) is treated as no specific theme and defers
+        to the aggregate category."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_theme_first
+
+        library = {
+            "fork": [self._puzzle("fk1", "fork"), self._puzzle("fk2", "fork")],
+            "generic": [self._puzzle("gn1", "generic")],
+        }
+        d3, d7 = pick_two_puzzles_theme_first(
+            library, "generic", "tactical_vision", "intermediate", "plan-1"
+        )
+        assert {d3.theme, d7.theme} == {"fork"}
+
+    def test_all_empty_returns_none(self):
+        """THEME_FIRST_ALL_EMPTY — theme, category, and generic all empty →
+        (None, None); the caller leaves days 3/7 at the mistake position."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_theme_first
+
+        result = pick_two_puzzles_theme_first(
+            {"king_safety": [], "generic": []},
+            "king_safety",
+            "tactical_vision",
+            "intermediate",
+            "plan-1",
+        )
+        assert result == (None, None)
+
+    def test_no_fallback_category_uses_theme_then_generic(self):
+        """THEME_FIRST_NO_CATEGORY — a null anchor (new player) still leads
+        with the theme; a thin theme backfills straight from generic."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_theme_first
+
+        library = {
+            "king_safety": [self._puzzle("ks1", "king_safety")],
+            "generic": [self._puzzle("gn1", "generic")],
+        }
+        d3, d7 = pick_two_puzzles_theme_first(
+            library, "king_safety", None, "intermediate", "plan-1"
+        )
+        assert d3.id == "ks1"
+        assert d7.theme == "generic"
+
+    def test_deterministic_per_plan_id(self):
+        """THEME_FIRST_DETERMINISTIC — same plan_id → same two picks, so a
+        re-fired BackgroundTask can't reshuffle the schedule."""
+        from llm.seca.coach.study_plan.library import pick_two_puzzles_theme_first
+
+        library = {
+            "king_safety": [self._puzzle(f"ks{i}", "king_safety") for i in range(5)],
+            "generic": [],
+        }
+        a = pick_two_puzzles_theme_first(
+            library, "king_safety", "positional_play", "intermediate", "plan-9"
+        )
+        b = pick_two_puzzles_theme_first(
+            library, "king_safety", "positional_play", "intermediate", "plan-9"
+        )
+        assert (a[0].id, a[1].id) == (b[0].id, b[1].id)
+
+
 class TestAgentLibraryIntegration:
     """``generate_plan`` end-to-end with verdict + library wired."""
 
@@ -1440,22 +1613,31 @@ class TestAgentAggregateAnchor:
         )
         assert plan.anchor_category is None
 
-    def test_days_3_7_drawn_from_category_not_llm_theme(self, db_session, player, game_event):
-        """ANCHOR_SELECTS_FROM_CATEGORY — with an anchor category, the
-        day-3/7 puzzles come from that category's theme set, NOT the
-        day-0 mistake's LLM-classified theme."""
+    def test_days_3_7_follow_mistake_theme_over_category(self, db_session, player, game_event):
+        """THEME_SELECTS_OVER_CATEGORY — the day-3/7 puzzles follow the
+        day-0 mistake's OWN theme, not the aggregate category.  The LLM
+        classifies the mistake as king_safety while the aggregate weakness
+        is tactical_vision; selection must serve the king_safety puzzles
+        (the specific mistake wins) and never the category's fork/pin
+        puzzles.  This is the user-facing contract: "I walked my king out
+        too early → give me king-safety practice."  (Category is used only
+        as a backfill for a thin theme — see the theme-first picker tests.)"""
         from llm.seca.coach.study_plan.models import (
             PUZZLE_SOURCE_LIBRARY,
             PUZZLE_SOURCE_ORIGINAL,
         )
 
         llm = _ScriptedLLM([f'{{"theme": "king_safety", "verdict": "{self._CLEAN_VERDICT}"}}'])
-        # LLM classifies the day-0 mistake as king_safety, but the
-        # aggregate weakness is tactical_vision — selection must follow
-        # the category (fork/pin), not the king_safety LLM theme.
-        ks_fen = "8/4P3/8/8/8/8/8/4K2k w - - 0 1"
+        # king_safety (the mistake theme) carries two puzzles, so both
+        # practice days fill on-theme; fork/pin (the tactical_vision
+        # category) must NOT be reached.
+        ks_fen_1 = "8/4P3/8/8/8/8/8/4K2k w - - 0 1"
+        ks_fen_2 = "4k3/8/8/8/3b4/4Q3/8/4K3 w - - 0 1"
         library = {
-            "king_safety": [self._puzzle("ks_x", "king_safety", ks_fen, "e7e8q")],
+            "king_safety": [
+                self._puzzle("ks_x1", "king_safety", ks_fen_1, "e7e8q"),
+                self._puzzle("ks_x2", "king_safety", ks_fen_2, "e3d4"),
+            ],
             "fork": [self._puzzle("fk_a", "fork", "7k/4q3/8/4N3/8/8/8/K7 w - - 0 1", "e5g6")],
             "pin": [self._puzzle("pn_a", "pin", "4k3/4q3/8/8/8/8/8/4R2K w - - 0 1", "e1e7")],
             "generic": [],
@@ -1476,7 +1658,9 @@ class TestAgentAggregateAnchor:
         for off in (3, 7):
             assert by_offset[off].source_type == PUZZLE_SOURCE_LIBRARY
         chosen = {by_offset[3].fen, by_offset[7].fen}
-        assert ks_fen not in chosen  # king_safety (LLM theme) NOT chosen
+        # Both practice days are king_safety (the mistake theme); the
+        # tactical_vision category's fork/pin puzzles are never chosen.
+        assert chosen == {ks_fen_1, ks_fen_2}
         assert by_offset[3].fen != by_offset[7].fen
 
     def test_one_active_plan_blocks_a_new_one(self, db_session, player):

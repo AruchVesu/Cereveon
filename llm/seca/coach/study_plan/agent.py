@@ -54,8 +54,7 @@ from llm.seca.auth.models import Player
 from llm.seca.coach.study_plan.library import (
     LibraryPuzzle,
     load_library,
-    pick_two_puzzles,
-    pick_two_puzzles_for_category,
+    pick_two_puzzles_theme_first,
 )
 from llm.seca.coach.study_plan.models import (
     PLAN_DAY_OFFSETS,
@@ -132,14 +131,16 @@ def generate_plan(
     dominant_category:
         The player's aggregate biggest weakness across recent games —
         one of the four ``MistakeCategory`` values, computed by
-        ``HistoricalAnalysisPipeline`` at /game/finish.  When provided,
-        the week is *anchored* on it: stored in ``plan.anchor_category``
-        and used to select the day-3 / day-7 practice puzzles from that
-        category's theme set (``pick_two_puzzles_for_category``).  Day 0
-        always stays the player's real mistake position.  ``None`` (new
-        player / too little history) falls back to the pre-anchor path:
-        days 3 / 7 drawn from the day-0 mistake's own LLM-classified
-        theme.
+        ``HistoricalAnalysisPipeline`` at /game/finish.  Stored in
+        ``plan.anchor_category`` (surfaced as the week's focus label) and
+        used as the BACKFILL pool for day-3 / day-7 selection: the
+        practice puzzles lead with the day-0 mistake's OWN LLM-classified
+        theme (``king_safety`` etc.), and fall back to this category's
+        theme set only when that theme is too thin to fill both days
+        (``pick_two_puzzles_theme_first``).  Day 0 always stays the
+        player's real mistake position.  ``None`` (new player / too
+        little history) just means the backfill degrades to the generic
+        bucket.
     llm:
         Optional ``BaseLLM`` instance.  ``None`` (the default) skips
         the verdict generation step and leaves the plan at the
@@ -354,39 +355,37 @@ def _populate_library_variants(
 ) -> None:
     """Phase 3: replace day-3 / day-7 stub puzzles with theme-matched
     library variants.  Day 0 (the player's actual mistake) is never
-    touched.  Selection is deterministic per plan_id (see
-    ``library.pick_two_puzzles``) so a re-fired BackgroundTask doesn't
-    shuffle the schedule under the user.
+    touched.  Selection leads with the day-0 mistake's own theme and
+    uses ``plan.anchor_category`` as a backfill (see
+    ``library.pick_two_puzzles_theme_first``); it is deterministic per
+    plan_id so a re-fired BackgroundTask doesn't shuffle the schedule
+    under the user.
 
-    When the requested theme AND the ``"generic"`` fallback bucket
-    are both empty, no update happens — the day-3 / day-7 rows stay
-    at the phase-1 stub (original mistake position).
+    When the mistake theme, the aggregate-category backfill, AND the
+    ``"generic"`` bucket are all empty, no update happens — the
+    day-3 / day-7 rows stay at the phase-1 stub (original mistake
+    position).
     """
     try:
         player = db.query(Player).filter(Player.id == player_id).first()
         rating = float(player.rating) if player is not None else 1500.0
         skill_hint = skill_hint_for_rating(rating)
 
-        # Aggregate-weakness anchor: when the plan carries a dominant
-        # category, draw the day-3 / day-7 practice puzzles from that
-        # category's theme set so the week trains the player's biggest
-        # recurring weakness.  Fall back to the day-0 mistake's own
-        # LLM-classified theme when there's no anchor category (new
-        # player / too little history).
-        if plan.anchor_category:
-            puzzle_day_3, puzzle_day_7 = pick_two_puzzles_for_category(
-                library=library,
-                category=plan.anchor_category,
-                skill_hint=skill_hint,
-                plan_id=plan.id,
-            )
-        else:
-            puzzle_day_3, puzzle_day_7 = pick_two_puzzles(
-                library=library,
-                theme=plan.theme,
-                skill_hint=skill_hint,
-                plan_id=plan.id,
-            )
+        # Theme-first selection: draw the day-3 / day-7 practice puzzles
+        # from the day-0 mistake's OWN motif (``plan.theme``, e.g.
+        # ``king_safety`` for "walked the king out too early") so the week
+        # trains the specific mistake the player just made.  The player's
+        # aggregate dominant weakness (``plan.anchor_category``) is only a
+        # BACKFILL pool — used, ahead of the generic bucket, when the
+        # specific theme is too thin to fill both days (or when the LLM
+        # couldn't classify the mistake and ``theme`` is ``"generic"``).
+        puzzle_day_3, puzzle_day_7 = pick_two_puzzles_theme_first(
+            library=library,
+            theme=plan.theme,
+            fallback_category=plan.anchor_category,
+            skill_hint=skill_hint,
+            plan_id=plan.id,
+        )
         if puzzle_day_3 is None or puzzle_day_7 is None:
             logger.info(
                 "study_plan no library puzzles for theme=%s; days 3/7 stay at mistake position",

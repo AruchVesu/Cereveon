@@ -1740,8 +1740,12 @@ Phase 3 (live): the endpoint serves the persisted plan with
 LLM-generated `theme` + `verdict` (phase 2) AND with day-3 / day-7
 puzzles replaced by theme-matched library variants from the curated
 YAML corpus.  Day-0 is always the player's original mistake position.
-The Android `TodaysDrillCard` is still pending (phase 4) so no
-client polls this endpoint in production today.
+The day-3 / day-7 variants lead with the day-0 mistake's OWN `theme`
+(a king-safety mistake yields king-safety practice); the aggregate
+`anchor_category` is only a backfill pool, consulted when that specific
+theme is too thin to fill both days.  The Android `TodaysDrillCard` is
+still pending (phase 4) so no client polls this endpoint in production
+today.
 
 The `theme` field is one of the following tags:
 
@@ -1802,7 +1806,7 @@ No body.  Reads the authenticated player from the bearer token.
 | `plan_id` | `string` | UUID of the `mistake_study_plans` row.  Stable for the life of the plan.  Pass it (with a `day_offset`) to `POST /coach/plan/puzzle/complete` (§35) when a day is solved. |
 | `theme` | `string` | Theme tag of the mistake, from a fixed vocabulary (see below).  Populated by a single-shot LLM call run in the background after `/game/finish`.  Falls back to `"generic"` when the LLM was unreachable, returned out-of-vocabulary, or its output failed the Mode-2 validators on both retries. |
 | `verdict` | `string` | LLM-written ≤ 60-word retrospective on the originating mistake.  Mode-2-validator-clean: no specific moves (no algebraic notation, no UCI), no engine mentions, no advisory phrasing.  Empty string when the LLM path failed unrecoverably; Android `TodaysDrillCard` hides the coach-note line in that case. |
-| `anchor_category` | `string \| null` | The player's aggregate dominant weakness the week is built around — one of `opening_preparation` / `tactical_vision` / `positional_play` / `endgame_technique` (from `HistoricalAnalysisPipeline` over recent games at `/game/finish`).  The day-3 / day-7 practice puzzles are drawn from this category's theme set; the overview renders it as the week's focus ("This week: Tactics").  `null` for legacy plans and players with too little history to surface a dominant category — those fall back to the day-0 mistake's own `theme` for puzzle selection.  Distinct from `theme`, which describes the day-0 mistake's own motif. |
+| `anchor_category` | `string \| null` | The player's aggregate dominant weakness — one of `opening_preparation` / `tactical_vision` / `positional_play` / `endgame_technique` (from `HistoricalAnalysisPipeline` over recent games at `/game/finish`).  The overview renders it as the week's focus ("This week: Tactics").  For puzzle SELECTION it is only the backfill: day-3 / day-7 lead with the day-0 mistake's own `theme` and fall back to this category's theme set when that theme is too thin.  `null` for legacy plans and players with too little history to surface a dominant category (the backfill then degrades to the generic bucket).  Distinct from `theme`, which describes — and now drives the practice for — the day-0 mistake's own motif. |
 | `status` | `string` | Plan lifecycle: `"active"` while the week is in progress, `"completed"` once every day is solved.  `GET` only ever returns `"active"` plans (a completed plan returns `null`); `POST /coach/plan/puzzle/complete` (§35) returns the freshly-`"completed"` plan so the client can show the week-complete state. |
 | `total_days` | `int` | Number of puzzles in the plan.  Always `3` in phase 1; surfaced as a field so the UI can render "Day N of M" without hard-coding. |
 | `today_puzzle` | `object \| null` | The FIRST incomplete day — the next one to solve (sequential pacing).  `null` only when every day is solved (the plan is about to flip to `completed`). |

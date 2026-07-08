@@ -44,6 +44,10 @@ TEST_TARGETS = [
     "llm/tests/test_mistake_analytics.py",
     "llm/tests/test_chat_pipeline.py",
     "llm/tests/test_chat_stream.py",
+    # Cereveon app-help layer: detector precision/recall, prompt injection
+    # wiring, and guide-text safety (no forbidden output / no engine
+    # reveal / no unimplemented-feature claims).
+    "llm/tests/test_app_help.py",
     "llm/tests/test_live_move_pipeline.py",
     "llm/tests/test_historical_pipeline.py",
     "llm/tests/test_api_security.py",

@@ -49,6 +49,15 @@ is empty for all themes):
    becomes day 7.  When only one puzzle is available, BOTH days use
    the same one (degraded but still serves the spaced-repetition
    pedagogy — repeat exposure beats no second exposure at all).
+
+Production entry point
+----------------------
+The agent calls ``pick_two_puzzles_theme_first`` — it leads with the
+day-0 mistake's own theme (so a king-safety mistake trains king safety)
+and uses the aggregate dominant weakness (``anchor_category``) only as a
+backfill pool.  ``pick_two_puzzles`` (single theme, generic backfill) and
+``pick_two_puzzles_for_category`` (aggregate weakness) are the building
+blocks it composes.
 """
 
 from __future__ import annotations
@@ -424,6 +433,74 @@ def pick_two_puzzles_for_category(
     """
     on_theme = _candidates_for_category(library, category)
     return _pick_two_with_backfill(library, on_theme, skill_hint, plan_id)
+
+
+def pick_two_puzzles_theme_first(
+    library: dict[str, list[LibraryPuzzle]],
+    theme: str,
+    fallback_category: str | None,
+    skill_hint: str,
+    plan_id: str,
+) -> tuple[LibraryPuzzle | None, LibraryPuzzle | None]:
+    """Pick two distinct day-3 / day-7 puzzles, led by the player's
+    ACTUAL mistake motif.
+
+    ``theme`` is the plan's LLM-classified tag for the day-0 mistake
+    (e.g. ``"king_safety"`` for "walked the king out too early").  The
+    week's practice trains that specific motif so a king-safety mistake
+    yields king-safety puzzles.  The aggregate dominant weakness
+    (``fallback_category``, e.g. ``"positional_play"``) is only a
+    BACKFILL pool — consulted, ahead of the ``"generic"`` catch-all,
+    when the specific theme is too thin to fill both days.
+
+    Preference order, all deterministic in ``plan_id``:
+
+    1. ``theme`` has >= 2 puzzles  → two distinct on-theme picks
+       (skill-filtered).  The shipped corpus carries >= 2 per named
+       theme, so this is the COMMON path.
+    2. ``theme`` has exactly 1     → keep it on day 3; backfill day 7
+       from ``fallback_category``'s pool, then ``"generic"`` — distinct
+       when anything is available, else repeat the single on-theme
+       puzzle (degraded but still spaced-repetition).
+    3. ``theme`` has 0 (or is ``"generic"`` / empty) → defer entirely to
+       the aggregate-category path (``pick_two_puzzles_for_category``),
+       which itself backfills from ``"generic"``.  When there is no
+       fallback category either, fall through to the single-theme
+       ``pick_two_puzzles`` (generic-only backfill).
+
+    Returns ``(None, None)`` only when the theme, the fallback category,
+    and the generic bucket are ALL empty — the caller then leaves
+    day-3 / day-7 at the day-0 mistake position.
+    """
+    on_theme = list(library.get(theme, [])) if theme and theme != "generic" else []
+
+    if len(on_theme) >= 2:
+        return _pick_two_from(on_theme, skill_hint, plan_id)
+
+    if len(on_theme) == 1:
+        day3 = on_theme[0]
+        # Backfill day 7: prefer the aggregate weakness category's pool;
+        # only fall to the generic bucket when the category yields
+        # nothing — keeps the player's aggregate weakness ahead of
+        # generic filler.
+        backfill = _pick_one_excluding(
+            _candidates_for_category(library, fallback_category or ""),
+            day3.id,
+            skill_hint,
+            plan_id,
+        )
+        if backfill is None:
+            backfill = _pick_one_excluding(
+                list(library.get("generic", [])), day3.id, skill_hint, plan_id
+            )
+        if backfill is None:
+            return (day3, day3)
+        return (day3, backfill)
+
+    # No specific-theme puzzles: fall back to the aggregate weakness.
+    if fallback_category:
+        return pick_two_puzzles_for_category(library, fallback_category, skill_hint, plan_id)
+    return pick_two_puzzles(library, theme, skill_hint, plan_id)
 
 
 def _filter_by_skill(candidates: list[LibraryPuzzle], skill_hint: str) -> list[LibraryPuzzle]:

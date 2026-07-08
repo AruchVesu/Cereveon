@@ -282,12 +282,14 @@ def init_schema() -> None:
             "INTEGER DEFAULT 0",
         )
 
-        # Weekly-curriculum anchor (aggregate-weakness re-anchor).  Records
-        # the player's dominant MistakeCategory the study plan is built
-        # around so the day-3 / day-7 practice puzzles can be selected from
-        # that category's theme set.  Nullable: legacy plan rows and plans
-        # created before a dominant category could be derived have none, and
-        # fall back to the day-0 mistake's own theme.  Postgres needs the
+        # Weekly-curriculum anchor (aggregate-weakness label + backfill).
+        # Records the player's dominant MistakeCategory, surfaced as the
+        # week's focus label.  For day-3 / day-7 puzzle selection it is only
+        # the BACKFILL pool — the practice puzzles lead with the day-0
+        # mistake's own theme and fall back to this category's theme set when
+        # that theme is too thin.  Nullable: legacy plan rows and plans
+        # created before a dominant category could be derived have none (the
+        # backfill then degrades to the generic bucket).  Postgres needs the
         # ADD COLUMN because create_all skips existing tables; SQLite for
         # dev files that pre-date the column.
         _ensure_column(

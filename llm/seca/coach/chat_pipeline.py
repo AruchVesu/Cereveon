@@ -42,6 +42,7 @@ from dataclasses import dataclass
 import chess
 
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
+from llm.rag.prompts.app_help import build_app_help_block
 from llm.rag.prompts.engine_facts import describe_threats, render_engine_facts
 from llm.rag.prompts.move_phrase import describe_move_plain
 from llm.seca.coach.context_compact import compact_history, should_compact
@@ -418,6 +419,14 @@ def _build_chat_prompt(
     if retry_hint:
         clean_query = clean_query + retry_hint
 
+    # Cereveon app-help: injected ONLY when the turn names an app concept
+    # (build_app_help_block returns "" otherwise), so a pure-chess turn's
+    # prompt is byte-identical to before this feature — no token cost and
+    # no dilution of the mate / missing-data REQUIRE gates.  Detect on the
+    # sanitized query WITHOUT any retry-hint suffix (the hint is our own
+    # appended text, not the player's words).
+    app_help_block = build_app_help_block(_sanitize(raw_query))
+
     # Format conversation history (exclude latest user message)
     history_turns = messages[:-1] if messages else []
     history_lines: list[str] = []
@@ -529,6 +538,7 @@ def _build_chat_prompt(
         + voice_block
         + perspective_block
         + facts_block
+        + app_help_block
         + "\n\n"
         + style_block
         + history_block
