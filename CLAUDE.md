@@ -132,6 +132,8 @@ See `.env.example` for the full reference. Key variables:
 | `COACH_DEEPSEEK_MODEL` | `deepseek-chat` | DeepSeek-V3. Alternative: `deepseek-reasoner` (chain-of-thought, ~4× cost) |
 | `STOCKFISH_PATH` | auto-detected | Override Stockfish binary path |
 | `REDIS_URL` | *(unset)* | Redis for move cache; omit for in-memory only |
+| `STUDY_PLAN_LICHESS_ENABLED` | `1` | Fetch study-plan day-3/day-7 practice puzzles live from Lichess (`/api/puzzle/next`), matched to the day-0 mistake's theme + side. Set `0` to use the local corpus only. Falls back to the corpus on any failure regardless. |
+| `STUDY_PLAN_LICHESS_MAX_FETCHES` | `5` | Max `/api/puzzle/next` calls per plan (clamped 1..10). |
 | `TRUSTED_PROXIES` | prod: empty (XFF not trusted, warning logged); dev: loopback | Comma-separated proxy IPs / CIDRs. **Required in prod** for per-client rate limiting; otherwise every request behind the reverse proxy keys on the same bucket. See README and `docs/DEPLOYMENT.md` > Trusted Proxies. |
 
 **HTTP-level contracts** (no env vars; pinned constants):

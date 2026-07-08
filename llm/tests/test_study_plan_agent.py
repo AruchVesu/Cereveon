@@ -53,6 +53,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta
 
+import chess
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -61,6 +62,9 @@ from starlette.requests import Request as StarletteRequest
 os.environ.setdefault("SECA_API_KEY", "ci-test-key")
 os.environ.setdefault("SECA_ENV", "dev")
 os.environ.setdefault("SECRET_KEY", "ci-secret-key-that-is-32-chars-long!!")
+# Default the study-plan Lichess puzzle fetch OFF so no test in this file
+# touches the network; the Lichess-sourcing tests stub the fetcher directly.
+os.environ.setdefault("STUDY_PLAN_LICHESS_ENABLED", "0")
 
 # Import all model modules so create_all sees every table.
 import llm.seca.auth.models  # noqa: F401
@@ -76,6 +80,7 @@ from llm.seca.shared_limiter import limiter
 from llm.seca.coach.study_plan.agent import generate_plan
 from llm.seca.coach.study_plan.models import (
     PLAN_DAY_OFFSETS,
+    PUZZLE_SOURCE_LIBRARY,
     PUZZLE_SOURCE_ORIGINAL,
     STATUS_ACTIVE,
     STATUS_COMPLETED,
@@ -198,6 +203,17 @@ def game_event(db_session, player):
     db_session.commit()
     db_session.refresh(ev)
     return ev
+
+
+@pytest.fixture(autouse=True)
+def _no_live_lichess(monkeypatch):
+    """Keep every test in this file on the local-corpus path by default — no
+    test may hit the live Lichess puzzle API.  The Lichess-sourcing tests in
+    ``TestLichessVariantSourcing`` re-stub this with their own behaviour
+    (monkeypatch's last write wins and reverts at test end)."""
+    from llm.seca.coach.study_plan import lichess_puzzles
+
+    monkeypatch.setattr(lichess_puzzles, "fetch_side_matched_variants", lambda **kw: [])
 
 
 def _call_today(player, db):
@@ -2183,3 +2199,160 @@ class TestCompletePuzzleEndpoint:
         with pytest.raises(HTTPException) as exc:
             _call_complete(player, db_session, plan.id, 99)
         assert exc.value.status_code == 404
+
+
+class TestLichessVariantSourcing:
+    """Days 3/7 prefer live Lichess puzzles matched to the day-0 mistake's
+    side + theme (``agent._populate_library_variants`` -> Source 1), and fall
+    back to the local corpus on any shortfall.
+
+    ``_MISTAKE_FEN`` is a Black-to-move position, so these double as the
+    headline regression: a Black-side blunder must yield Black-to-move
+    practice, not the all-White local corpus."""
+
+    _CLEAN_JSON = (
+        '{"theme": "king_safety", "verdict": "Bringing the king toward the '
+        "centre with pieces still on the board exposes it to a quick attack; "
+        "the resulting tempo loss let the opponent build pressure faster than "
+        'it could be defended."}'
+    )
+
+    def _variant(self, pid, fen, move):
+        from llm.seca.coach.study_plan.library import LibraryPuzzle
+
+        return LibraryPuzzle(
+            id=pid,
+            theme="king_safety",
+            difficulty="intermediate",
+            fen=fen,
+            expected_move_uci=move,
+            description="lichess stub",
+        )
+
+    def test_day0_fixture_is_black_to_move(self):
+        """Sanity anchor: the shared mistake fixture is Black-to-move, so
+        'the player's side' is Black for the regression assertions below."""
+        assert chess.Board(_MISTAKE_FEN).turn == chess.BLACK
+
+    def test_lichess_pair_used_and_side_matches_day0(
+        self, db_session, player, game_event, monkeypatch
+    ):
+        """LICHESS_VARIANTS_USED — a full side-matched pair fills days 3/7 on
+        the player's (Black) side; day-0 stays the real mistake; the fetcher
+        is asked for the day-0 side + theme."""
+        from llm.seca.coach.study_plan import lichess_puzzles
+
+        b1 = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
+        b2 = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 2 3"
+        variants = [
+            self._variant("lichess_x1", b1, "b8c6"),
+            self._variant("lichess_x2", b2, "g8f6"),
+        ]
+        captured: dict = {}
+
+        def _fake(**kw):
+            captured.update(kw)
+            return list(variants)
+
+        monkeypatch.setattr(lichess_puzzles, "fetch_side_matched_variants", _fake)
+
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=_ScriptedLLM([self._CLEAN_JSON]),
+        )
+        by_offset = {p.day_offset: p for p in plan.puzzles}
+
+        # Day 0 is the real mistake, untouched.
+        assert by_offset[0].fen == _MISTAKE_FEN
+        assert by_offset[0].source_type == PUZZLE_SOURCE_ORIGINAL
+        # Days 3/7 are the Lichess variants, on the player's (Black) side.
+        assert by_offset[3].fen == b1
+        assert by_offset[7].fen == b2
+        assert by_offset[3].source_type == PUZZLE_SOURCE_LIBRARY
+        assert by_offset[7].source_type == PUZZLE_SOURCE_LIBRARY
+        assert chess.Board(by_offset[3].fen).turn == chess.BLACK
+        assert chess.Board(by_offset[7].fen).turn == chess.BLACK
+        # The fetcher was asked for the day-0 mistake's side + theme.
+        assert captured["side_to_move"] == chess.BLACK
+        assert captured["theme"] == "king_safety"
+
+    def test_empty_result_falls_back_to_corpus(
+        self, db_session, player, game_event, monkeypatch
+    ):
+        """LICHESS_EMPTY_FALLBACK — no side-matched Lichess pair -> the local
+        corpus fills days 3/7 (behaviour identical to before this feature)."""
+        from llm.seca.coach.study_plan import lichess_puzzles
+
+        monkeypatch.setattr(lichess_puzzles, "fetch_side_matched_variants", lambda **kw: [])
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=_ScriptedLLM([self._CLEAN_JSON]),
+        )
+        by_offset = {p.day_offset: p for p in plan.puzzles}
+        # Corpus variants replaced the day-3/day-7 stubs.
+        assert by_offset[3].source_type == PUZZLE_SOURCE_LIBRARY
+        assert by_offset[7].source_type == PUZZLE_SOURCE_LIBRARY
+        assert by_offset[3].fen != _MISTAKE_FEN
+        assert by_offset[0].fen == _MISTAKE_FEN
+
+    def test_single_result_falls_back_to_corpus(
+        self, db_session, player, game_event, monkeypatch
+    ):
+        """LICHESS_PARTIAL_FALLBACK — a lone side-matched puzzle isn't enough
+        (using it would mix sides across days), so the agent uses the corpus
+        for both days rather than the single Lichess puzzle."""
+        from llm.seca.coach.study_plan import lichess_puzzles
+
+        b1 = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
+        monkeypatch.setattr(
+            lichess_puzzles,
+            "fetch_side_matched_variants",
+            lambda **kw: [self._variant("lichess_x1", b1, "b8c6")],
+        )
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=_ScriptedLLM([self._CLEAN_JSON]),
+        )
+        by_offset = {p.day_offset: p for p in plan.puzzles}
+        assert by_offset[3].fen != b1
+        assert by_offset[7].fen != b1
+        assert by_offset[3].source_type == PUZZLE_SOURCE_LIBRARY
+
+    def test_fetcher_exception_does_not_escape(
+        self, db_session, player, game_event, monkeypatch
+    ):
+        """LICHESS_FETCHER_RAISE_SAFE — if the fetcher raises (contract
+        violation), the agent contains it: the plan is still created and days
+        3/7 stay at the phase-1 stub (the mistake position)."""
+        from llm.seca.coach.study_plan import lichess_puzzles
+
+        def _boom(**kw):
+            raise RuntimeError("fetcher blew up")
+
+        monkeypatch.setattr(lichess_puzzles, "fetch_side_matched_variants", _boom)
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=_ScriptedLLM([self._CLEAN_JSON]),
+        )
+        assert plan is not None
+        by_offset = {p.day_offset: p for p in plan.puzzles}
+        assert by_offset[0].fen == _MISTAKE_FEN
+        # The variant write never happened -> days 3/7 remain the stub.
+        assert by_offset[3].fen == _MISTAKE_FEN
+        assert by_offset[7].fen == _MISTAKE_FEN

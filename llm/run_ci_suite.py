@@ -206,6 +206,13 @@ TEST_TARGETS = [
     # library variants, and Android Home card.  Tests cover the data
     # model, dedup contract, scheduling layout, and endpoint shape.
     "llm/tests/test_study_plan_agent.py",
+    # Study-plan Lichess puzzle source: the /api/puzzle/next client wrapper
+    # (angle/difficulty allowlist, pgn->solver-FEN derivation, fail-closed
+    # legality guard, HTTP-error taxonomy) and the side-matched fetcher that
+    # feeds day-3/day-7 (side filter, difficulty fan-out, dedup, bounded call
+    # count, feature flag, best-effort []-on-error).  httpx / the client are
+    # mocked so no live Lichess call runs in CI.
+    "llm/tests/test_lichess_puzzle_fetch.py",
     # Weekly-digest agent (v1) was retired in study-plan phase 4
     # (2026-05-21) — its "top-3 holes + 3 microtasks" framing
     # competed with the per-mistake study-plan agent's Home-screen
