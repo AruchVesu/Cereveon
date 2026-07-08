@@ -190,20 +190,38 @@ def _targeted_retry_hint(exc: Exception) -> str:
     m = _INVENTED_TACTIC_RE.search(msg)
     if m:
         word = m.group(1)
+        # Only the BARE NOUN is blocked (whole-word) — the verb / adjective
+        # form and plain descriptions pass.  This is the fix for a question
+        # that is ABOUT the motif ("when should I sacrifice a piece?"): the
+        # concept can't be dropped, so steer to a form that survives.
+        forms = {
+            "sacrifice": "\"sacrificing a piece\", \"a sacrificial attack\", or "
+            "\"giving up material for the initiative\"",
+            "fork": "\"a forking idea\", \"attacking two pieces at once\", or "
+            "\"hitting two things at the same time\"",
+            "pin": "\"pinning the piece\", \"a pinning idea\", or \"tying the "
+            "piece down\"",
+        }.get(word, f"the verb form or a plain description instead of the bare \"{word}\"")
         return (
-            f"\n\nIMPORTANT: do not use the bare word \"{word}\" — the engine "
-            f"shows no such tactic in THIS position.  If you are describing a "
-            f"general idea (a gambit is a pawn offer), say \"giving up a pawn "
-            f"for activity\" or \"a pawn offer\" instead of a bare "
-            f"\"{word}\"." + _RETRY_KEEP_NATURAL
+            f"\n\nIMPORTANT: do not use the bare word \"{word}\" — the current "
+            f"position shows no such concrete tactic, so the bare noun reads as "
+            f"a claim about the board.  You may absolutely explain the IDEA: use "
+            f"{forms} instead of the standalone word \"{word}\"." + _RETRY_KEEP_NATURAL
         )
 
     m = _SPECULATIVE_RE.search(msg)
     if m:
         word = m.group(1)
+        extra = (
+            "  You are the coach who has already digested the analysis — never "
+            "mention it as \"the engine\"; just state the assessment."
+            if word.lower() == "engine"
+            else ""
+        )
         return (
-            f"\n\nIMPORTANT: avoid the word \"{word}\".  Phrase your guidance as "
-            f"plain, confident coaching rather than speculation." + _RETRY_KEEP_NATURAL
+            f"\n\nIMPORTANT: do not use the word \"{word}\".  Phrase your "
+            f"guidance as plain, confident coaching rather than speculation."
+            + extra + _RETRY_KEEP_NATURAL
         )
 
     if "Mate not described" in msg:

@@ -989,15 +989,28 @@ class TestTargetedRetryHint:
         assert "strong attack" in hint.lower() or "initiative" in hint.lower()
         assert "natural" in hint.lower()
 
-    def test_invented_tactic_hint_offers_pawn_offer_rephrase(self):
+    def test_invented_tactic_hint_steers_to_verb_form(self):
         from llm.rag.validators.mode_2_semantic import Mode2Violation
         from llm.seca.coach.chat_pipeline import _targeted_retry_hint
 
+        # Only the BARE NOUN is blocked (whole-word), so the hint steers to
+        # the verb/adjective form ("sacrificing"/"sacrificial") which passes
+        # — the fix for a question that is ABOUT the motif ("when should I
+        # sacrifice a piece?") where "give up a pawn" doesn't fit.
         hint = _targeted_retry_hint(
             Mode2Violation("Invented tactic without flag: 'sacrifice'")
         )
-        assert "sacrifice" in hint
-        assert "pawn offer" in hint.lower() or "giving up a pawn" in hint.lower()
+        assert "sacrificing" in hint.lower() and "sacrificial" in hint.lower()
+        # a fork/pin question gets its own idea-preserving rephrase too
+        fork = _targeted_retry_hint(Mode2Violation("Invented tactic without flag: 'fork'"))
+        assert "two pieces" in fork.lower() or "forking" in fork.lower()
+
+    def test_engine_speculative_hint_reinforces_coach_voice(self):
+        from llm.rag.validators.mode_2_semantic import Mode2Violation
+        from llm.seca.coach.chat_pipeline import _targeted_retry_hint
+
+        hint = _targeted_retry_hint(Mode2Violation("Speculative language detected: 'engine'"))
+        assert "engine" in hint.lower() and "coach" in hint.lower()
 
     def test_notation_hint_says_no_notation(self):
         from llm.seca.coach.chat_pipeline import _targeted_retry_hint
