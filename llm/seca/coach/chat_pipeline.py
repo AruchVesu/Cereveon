@@ -972,16 +972,24 @@ def _build_reply_deterministic(
         # Natural sentence instead of the "Last move quality: good." readout.
         parts.append(_MOVE_QUALITY_PHRASE.get(move_quality, ""))
 
+    # Once mate is inevitable the game is decided, so the generic phase
+    # tip ("push your passed pawns") and the open-ended question advice
+    # ("think about your next two or three moves") read as incongruous
+    # filler tacked onto a finished game (surfaced 2026-07-09 testing the
+    # warmed fallback on real positions).  The mate sentence + move-quality
+    # line already answer the user; suppress both generic blocks on mate.
+    is_mate = engine_signal.get("evaluation", {}).get("type") == "mate"
+
     # Phase tip — Mode-2 includes it by default, but it's exactly the
     # kind of generic filler the user opted out of in terse mode.
-    if voice != "terse":
+    if voice != "terse" and not is_mate:
         phase = engine_signal.get("phase", "middlegame")
         phase_tip = _PHASE_HINT.get(phase, "")
         if phase_tip:
             parts.append(phase_tip)
 
     query = user_query.strip()
-    if query:
+    if query and not is_mate:
         # _detect_question_type reads the raw query (lowercased keyword
         # match) but the result is never substituted back into the reply —
         # see prior-turn note above for the same Mode-2-leak rationale.
