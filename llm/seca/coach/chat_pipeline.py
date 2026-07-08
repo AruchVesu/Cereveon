@@ -36,13 +36,18 @@ Constraints
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 
 import chess
 
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
-from llm.rag.prompts.app_help import build_app_help_block
+from llm.rag.prompts.app_help import (
+    APP_HELP_REMINDER,
+    build_app_help_block,
+    is_app_help_query,
+)
 from llm.rag.prompts.engine_facts import describe_threats, render_engine_facts
 from llm.rag.prompts.move_phrase import describe_move_plain
 from llm.seca.coach.context_compact import compact_history, should_compact
@@ -99,6 +104,31 @@ _CHAT_RETRY_HINT = (
     "\n\nIMPORTANT: Follow MODE-2 rules strictly. "
     "Do NOT speculate, invent moves, or mention engine intentions."
 )
+
+# Deterministic backstop for the app-help feature: on an app-flavoured
+# turn the LLM occasionally (~1/10, evening variance) leads with a canned
+# position-refusal ("There is not enough information ...", "I can only
+# help with chess") despite the always-on guide + first-sentence
+# directive.  A pure refusal to a clear "how do I use Cereveon?" question
+# is not "acting properly", so the retry loop treats it as a soft failure
+# and re-asks with this hint.  Only fires when the turn looks like an app
+# question (``is_app_help_query``) AND the reply is a bare refusal, so a
+# legitimate missing-data / off-topic refusal is never retried.
+_APP_HELP_RETRY_HINT = (
+    "\n\nThe player is asking how to USE THE CEREVEON APP.  Answer their "
+    "question directly from the CEREVEON APP GUIDE — name the tab or "
+    "Settings row and the steps.  Do NOT reply that there is not enough "
+    "information and do NOT say you can only help with chess."
+)
+_APP_REFUSAL_RE = re.compile(
+    r"not enough information to assess this position|i can only help with chess",
+    re.IGNORECASE,
+)
+
+
+def _is_app_refusal(reply: str, latest_user_query: str) -> bool:
+    """True when an app-flavoured turn got a bare position-refusal reply."""
+    return bool(_APP_REFUSAL_RE.search(reply)) and is_app_help_query(latest_user_query)
 
 # ---------------------------------------------------------------------------
 # Label tables (deterministic fallback)
@@ -419,13 +449,14 @@ def _build_chat_prompt(
     if retry_hint:
         clean_query = clean_query + retry_hint
 
-    # Cereveon app-help: injected ONLY when the turn names an app concept
-    # (build_app_help_block returns "" otherwise), so a pure-chess turn's
-    # prompt is byte-identical to before this feature — no token cost and
-    # no dilution of the mate / missing-data REQUIRE gates.  Detect on the
-    # sanitized query WITHOUT any retry-hint suffix (the hint is our own
-    # appended text, not the player's words).
-    app_help_block = build_app_help_block(_sanitize(raw_query))
+    # Cereveon app-help: ALWAYS injected (see app_help.py) — a keyword gate
+    # can't guarantee an app question is recognised, and a missed one falls
+    # through to the constitution's "I can only help with chess" refusal,
+    # which the product forbids.  The block is inert on a chess turn (the
+    # model ignores it) and decisive on an app turn.  Placed right after the
+    # static system prompt below so it sits in the cacheable prefix and the
+    # position-specific content the mate gate depends on keeps recency.
+    app_help_block = build_app_help_block()
 
     # Format conversation history (exclude latest user message)
     history_turns = messages[:-1] if messages else []
@@ -535,15 +566,16 @@ def _build_chat_prompt(
 
     system = (
         _SYSTEM_PROMPT
+        + app_help_block
         + voice_block
         + perspective_block
         + facts_block
-        + app_help_block
         + "\n\n"
         + style_block
         + history_block
         + player_block
         + (_TERSE_REMINDER if coach_voice == "terse" else "")
+        + APP_HELP_REMINDER  # truly last — the first-sentence directive needs max recency
     )
 
     prompt = _render(
@@ -868,6 +900,10 @@ def generate_chat_reply(
     if should_compact(messages):
         messages = compact_history(messages)
 
+    # Latest user turn, for the app-refusal backstop below.
+    _user_turns = [t for t in messages if t.role == "user"]
+    _latest_user_query = _user_turns[-1].content if _user_turns else ""
+
     # --- LLM path with retry ---
     if _LLM_AVAILABLE and not force_deterministic:
         retry_hint = ""
@@ -895,6 +931,15 @@ def generate_chat_reply(
                     last_move=last_move,
                     player_color=player_color,
                 )
+                # App-help backstop: a bare position-refusal to an app
+                # question is a soft failure — re-ask with an explicit
+                # app-answer hint rather than shipping the refusal.  Only
+                # on non-final attempts; the final attempt returns whatever
+                # it got (still a valid Mode-2 reply).
+                if attempt < _CHAT_MAX_RETRIES and _is_app_refusal(reply, _latest_user_query):
+                    logger.debug("Chat app-help backstop: refusal to an app question; retrying")
+                    retry_hint = _APP_HELP_RETRY_HINT
+                    continue
                 # ESV structural integrity check (programming-error guard; never from LLM).
                 _EngineSignalSchema.model_validate(engine_signal)
                 return ChatReply(reply=reply, engine_signal=engine_signal, mode="CHAT_V1")
