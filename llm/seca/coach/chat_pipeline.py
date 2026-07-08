@@ -265,22 +265,41 @@ _BAND_LABEL: dict[str, str] = {
     "decisive_advantage": "a decisive advantage",
 }
 
+# Warm, flowing phase plans (de-robotified 2026-07-08 — the old
+# "In the opening, prioritise development and centre control." read like a
+# textbook heading).  Each keeps its "In the {phase}" opener so the
+# phase-tip pins (``test_chat_pipeline._PHASE_TIPS``) still match, but
+# reads like a coach talking.
 _PHASE_HINT: dict[str, str] = {
-    "opening": "In the opening, prioritise development and centre control.",
-    "middlegame": "In the middlegame, look for tactical motifs and improve piece activity.",
-    "endgame": "In the endgame, activate the king and convert any material advantage.",
+    "opening": "In the opening, the main things are to get your pieces out "
+    "toward the centre and tuck your king away safely.",
+    "middlegame": "In the middlegame, look to get your pieces active and stay "
+    "alert for any tactics that come up.",
+    "endgame": "In the endgame, bring your king into the game and push your "
+    "passed pawns.",
 }
 
+# Delta phrased the way a coach would say it, not a clipped readout.  Kept
+# as full sentences because ``_format_engine_context`` joins them after the
+# eval sentence's period.  "stable" adds nothing worth saying aloud (the
+# eval sentence already frames a steady position), so it is empty.
 _DELTA_HINT: dict[str, str] = {
-    "increase": "The position is improving for the side to move.",
-    "decrease": "The position has deteriorated — caution is warranted.",
-    # "The position is stable." replaces an earlier "The evaluation is
-    # stable." — the literal word ``evaluation`` framed the coach as a
-    # readout of engine data rather than a player-facing assessment, and
-    # the user perceived it as the LLM leaking the engine signal even
-    # when it came from the deterministic fallback.  The new phrasing
-    # carries the same delta information.
-    "stable": "The position is stable.",
+    "increase": "The momentum is heading that way right now.",
+    "decrease": "It's a moment to steady the ship.",
+    "stable": "",
+}
+
+# Move-quality as a natural sentence, not the "Last move quality: good."
+# readout (de-robotified 2026-07-08).  Validator-safe (no notation / engine
+# / mate vocabulary).
+_MOVE_QUALITY_PHRASE: dict[str, str] = {
+    "best": "That last move was the best choice available.",
+    "excellent": "That last move was excellent.",
+    "good": "That was a good, solid move.",
+    "ok": "That last move was fine.",
+    "inaccuracy": "That last move was a slight inaccuracy.",
+    "mistake": "That last move was a mistake worth learning from.",
+    "blunder": "That last move was a blunder — one to watch out for next time.",
 }
 
 # ---------------------------------------------------------------------------
@@ -801,21 +820,31 @@ def _format_engine_context(engine_signal: dict, player_color: str = "unknown") -
         else:
             eval_sentence = "Mate is inevitable — the decisive outcome is sealed."
     elif band == "equal":
-        # Equal-band: avoid the "{side} has equal" phrasing (awkward) and
-        # the "Evaluation:" prefix (reads as engine readout).  The
-        # FORBIDDEN_EQUAL list still applies — "roughly equal" is OK
-        # (the gate looks for "slight advantage" / "better" / etc., not
-        # "equal" itself).
-        eval_sentence = f"The position is roughly equal in the {phase}."
+        # Equal-band: warm, flowing phrasing (de-robotified 2026-07-08 —
+        # the old clipped "The position is roughly equal in the opening."
+        # was the reply the user flagged as robotic).  Keeps the literal
+        # "roughly equal" exactly once (the FORBIDDEN_EQUAL gate looks for
+        # "slight advantage"/"winning", not "equal"; the phrase-count pin
+        # in test_chat_pipeline forbids a DUPLICATE).
+        eval_sentence = (
+            f"You're in the {phase}, and the position is roughly equal — "
+            f"balanced, with chances for both sides."
+        )
     else:
         band_label = _BAND_LABEL.get(band, band.replace("_", " "))
-        # Plain natural-language assessment.  Drops the pre-Sprint-5.A
-        # "Engine" prefix (forbidden by FORBIDDEN_ENGINE_SPECULATION)
-        # and the "Evaluation:" prefix that succeeded it (reads as an
-        # engine readout rather than a coaching assessment — see
-        # _DELTA_HINT["stable"] for the same rationale).  All three
-        # Mode-2 gates pass on the resulting sentence by construction.
-        eval_sentence = f"{side.capitalize()} has {band_label} in the {phase}."
+        # Natural-language assessment (warmed 2026-07-08).  Frame from the
+        # player's seat ("you" / "your opponent") to match the mate branch
+        # and drop the detached lowercase "{side} has ..." readout.  Keeps
+        # the band vocabulary ("advantage") the phrasing pins assert.
+        # Unknown colour OR side falls back to a capitalised side name.
+        side_l = side.lower() if isinstance(side, str) else ""
+        color_l = player_color.lower() if isinstance(player_color, str) else ""
+        if color_l in ("white", "black") and side_l in ("white", "black"):
+            subject = "you have" if side_l == color_l else "your opponent has"
+            eval_sentence = f"Here in the {phase}, {subject} {band_label}."
+        else:
+            side_label = side.capitalize() if isinstance(side, str) and side else side
+            eval_sentence = f"Here in the {phase}, {side_label} has {band_label}."
 
     delta_hint = _DELTA_HINT.get(delta, "")
     return f"{eval_sentence} {delta_hint}".strip()
@@ -940,7 +969,8 @@ def _build_reply_deterministic(
 
     move_quality = engine_signal.get("last_move_quality", "")
     if move_quality and move_quality not in ("unknown", ""):
-        parts.append(f"Last move quality: {move_quality}.")
+        # Natural sentence instead of the "Last move quality: good." readout.
+        parts.append(_MOVE_QUALITY_PHRASE.get(move_quality, ""))
 
     # Phase tip — Mode-2 includes it by default, but it's exactly the
     # kind of generic filler the user opted out of in terse mode.
