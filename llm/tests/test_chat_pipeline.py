@@ -967,3 +967,55 @@ class TestStockfishSignal:
         sig = _chat_engine_signal(_STARTING_FEN, None)
         assert sig["evaluation"]["type"] == "cp"
         assert any(f.startswith("material:") for f in sig["position_flags"])
+
+
+class TestTargetedRetryHint:
+    """The retry hint names the exact validator-rejected token so the model
+    rephrases and PASSES on retry, instead of re-failing the same way and
+    exhausting to the robotic deterministic fallback (the 'how do I play a
+    gambit?' → templated-reply complaint, 2026-07-08).  Does NOT weaken any
+    validator — it steers the model toward a compliant, natural reply."""
+
+    def test_equal_band_advantage_hint_names_the_word_and_offers_concept(self):
+        from llm.rag.validators.mode_2_semantic import Mode2Violation
+        from llm.seca.coach.chat_pipeline import _targeted_retry_hint
+
+        hint = _targeted_retry_hint(
+            Mode2Violation("Equal position described as advantage: 'winning'")
+        )
+        assert "winning" in hint
+        assert "level" in hint.lower()
+        # offers a natural, concept-level rephrase (not just "don't")
+        assert "strong attack" in hint.lower() or "initiative" in hint.lower()
+        assert "natural" in hint.lower()
+
+    def test_invented_tactic_hint_offers_pawn_offer_rephrase(self):
+        from llm.rag.validators.mode_2_semantic import Mode2Violation
+        from llm.seca.coach.chat_pipeline import _targeted_retry_hint
+
+        hint = _targeted_retry_hint(
+            Mode2Violation("Invented tactic without flag: 'sacrifice'")
+        )
+        assert "sacrifice" in hint
+        assert "pawn offer" in hint.lower() or "giving up a pawn" in hint.lower()
+
+    def test_notation_hint_says_no_notation(self):
+        from llm.seca.coach.chat_pipeline import _targeted_retry_hint
+
+        hint = _targeted_retry_hint(
+            AssertionError("Forbidden MODE-2 pattern detected: pattern `\b[KQRBN]?[a-h][1-8]\b`")
+        )
+        assert "notation" in hint.lower()
+        assert "role" in hint.lower()
+
+    def test_mate_hint_says_inevitable(self):
+        from llm.rag.validators.mode_2_semantic import Mode2Violation
+        from llm.seca.coach.chat_pipeline import _targeted_retry_hint
+
+        hint = _targeted_retry_hint(Mode2Violation("Mate not described as forced/inevitable"))
+        assert "inevitable" in hint.lower()
+
+    def test_unknown_message_falls_back_to_generic_hint(self):
+        from llm.seca.coach.chat_pipeline import _CHAT_RETRY_HINT, _targeted_retry_hint
+
+        assert _targeted_retry_hint(AssertionError("something unrecognised")) == _CHAT_RETRY_HINT

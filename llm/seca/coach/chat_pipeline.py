@@ -152,6 +152,90 @@ def _is_spurious_refusal(reply: str, engine_signal: dict) -> bool:
         return bool(engine_signal.get("evaluation"))
     return False
 
+
+# Targeted retry hints — the generic ``_CHAT_RETRY_HINT`` told the model
+# to "follow the rules" but not WHICH word tripped, so it re-failed the
+# same way and exhausted to the robotic deterministic fallback.  A common
+# case: explaining a general opening idea ("how do I play a gambit?") the
+# model writes "a winning attack" or a bare "sacrifice", which the
+# position-grounded semantic gate rejects on a level / quiet board even
+# though the words describe the CONCEPT, not the position.  Naming the
+# exact word and giving a natural rephrase lets the model recover on the
+# next attempt instead of falling back.  This does NOT weaken any
+# validator — it helps the model produce a reply that PASSES them.
+_RETRY_KEEP_NATURAL = "  Keep your answer warm and natural — do not become terse or robotic."
+
+_EQUAL_ADV_RE = re.compile(r"described as advantage: '([^']+)'")
+_INVENTED_TACTIC_RE = re.compile(r"[Ii]nvented tactic without flag: '([^']+)'")
+_SPECULATIVE_RE = re.compile(r"[Ss]peculative language detected: '([^']+)'")
+_FORBIDDEN_PATTERN_RE = re.compile(r"pattern `([^`]+)`|forbidden section `([^`]+)`")
+
+
+def _targeted_retry_hint(exc: Exception) -> str:
+    """Turn a validator exception into a specific, natural rephrase hint."""
+    msg = str(exc)
+
+    m = _EQUAL_ADV_RE.search(msg)
+    if m:
+        word = m.group(1)
+        return (
+            f"\n\nIMPORTANT: you used \"{word}\", but the CURRENT position is "
+            f"level — do not call it {word}.  If you are explaining a general "
+            f"idea (like how a gambit works), describe it as a concept — e.g. "
+            f"\"a strong attack\", \"active, aggressive play\", \"the initiative\" "
+            f"— rather than saying the position in front of the player is "
+            f"{word}." + _RETRY_KEEP_NATURAL
+        )
+
+    m = _INVENTED_TACTIC_RE.search(msg)
+    if m:
+        word = m.group(1)
+        return (
+            f"\n\nIMPORTANT: do not use the bare word \"{word}\" — the engine "
+            f"shows no such tactic in THIS position.  If you are describing a "
+            f"general idea (a gambit is a pawn offer), say \"giving up a pawn "
+            f"for activity\" or \"a pawn offer\" instead of a bare "
+            f"\"{word}\"." + _RETRY_KEEP_NATURAL
+        )
+
+    m = _SPECULATIVE_RE.search(msg)
+    if m:
+        word = m.group(1)
+        return (
+            f"\n\nIMPORTANT: avoid the word \"{word}\".  Phrase your guidance as "
+            f"plain, confident coaching rather than speculation." + _RETRY_KEEP_NATURAL
+        )
+
+    if "Mate not described" in msg:
+        return (
+            "\n\nIMPORTANT: the engine signal shows a forced mate — state that "
+            "the outcome is \"inevitable\" (use that word), and never write "
+            "\"checkmate\", \"forced mate\", or \"mate in N\"." + _RETRY_KEEP_NATURAL
+        )
+
+    m = _FORBIDDEN_PATTERN_RE.search(msg)
+    if m:
+        pat = m.group(1) or m.group(2) or ""
+        if "[a-h]" in pat or "0-0" in pat or "O-O" in pat:
+            return (
+                "\n\nIMPORTANT: do not write any square or move notation "
+                "(e4, Nf3, O-O).  Name pieces by role — \"your kingside knight\", "
+                "\"the central pawn\", \"your king's bishop\"." + _RETRY_KEEP_NATURAL
+            )
+        if "white can" in pat or "black can" in pat:
+            return (
+                "\n\nIMPORTANT: do not phrase advice as \"White can\" / \"Black "
+                "can\" or a move list; write it as flowing coaching prose."
+                + _RETRY_KEEP_NATURAL
+            )
+        return (
+            f"\n\nIMPORTANT: remove the phrase matching `{pat}` (an engine / "
+            "notation / advisory term); explain the idea as a coach who has "
+            "already digested the analysis." + _RETRY_KEEP_NATURAL
+        )
+
+    return _CHAT_RETRY_HINT
+
 # ---------------------------------------------------------------------------
 # Label tables (deterministic fallback)
 # ---------------------------------------------------------------------------
@@ -969,18 +1053,19 @@ def generate_chat_reply(
                 break
             except AssertionError as exc:
                 # Mode-2 negative OR structure validator failed — retry
-                # with stricter hint; the retry path is the right one
-                # because LLMs often recover when re-asked with explicit
-                # rules.
+                # with a TARGETED hint naming the exact offending token so
+                # the model rephrases and passes, instead of re-failing the
+                # same way and exhausting to the robotic fallback.
                 last_validator_exc = exc
-                retry_hint = _CHAT_RETRY_HINT
+                retry_hint = _targeted_retry_hint(exc)
             except _Mode2Violation as exc:
                 # Mode-2 semantic violation (equal-band drift, mate
-                # misframing, invented tactic).  Same retry behaviour as
-                # AssertionError above so the LLM gets a second chance
-                # with the stricter system prompt addition.
+                # misframing, invented tactic).  Targeted rephrase hint —
+                # this is the common "how do I play a gambit?" fallback
+                # cause ("winning"/"sacrifice" as a concept on a level
+                # board).
                 last_validator_exc = exc
-                retry_hint = _CHAT_RETRY_HINT
+                retry_hint = _targeted_retry_hint(exc)
             except Exception as exc:  # noqa: BLE001
                 # Production-impacting: Ollama unreachable, model not
                 # pulled, transport timeout, etc.  All callers continue
