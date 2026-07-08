@@ -47,6 +47,7 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+import chess
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 
@@ -282,11 +283,13 @@ def generate_plan(
             llm=llm,
         )
 
-        # Phase 3: replace day-3 / day-7 puzzles with theme-matched
-        # library variants.  Runs AFTER the verdict commit so the
-        # selector sees the LLM-classified theme.  Defensive: any
-        # selector / commit failure leaves day-3 / day-7 at the
-        # phase-1 stub (original mistake position).
+        # Phase 3: replace day-3 / day-7 puzzles with theme- AND
+        # side-matched variants.  Prefers ready-made puzzles fetched live
+        # from Lichess (matched to the day-0 mistake's side); falls back to
+        # the local curated corpus.  Runs AFTER the verdict commit so the
+        # selector sees the LLM-classified theme.  Defensive: any fetch /
+        # selector / commit failure leaves day-3 / day-7 at the phase-1 stub
+        # (original mistake position).
         active_library = library if library is not None else _LIBRARY
         _populate_library_variants(
             db=db,
@@ -346,6 +349,17 @@ def _populate_verdict(
         db.rollback()
 
 
+def _side_to_move(fen: str) -> chess.Color | None:
+    """Side to move in ``fen`` (the day-0 mistake position = the player's
+    side), or ``None`` if the FEN doesn't parse.  The detector already
+    validated the FEN at /game/finish, so ``None`` is only a defensive
+    guard — it just skips the side-matched live path and uses the corpus."""
+    try:
+        return chess.Board(fen).turn
+    except ValueError:
+        return None
+
+
 def _populate_library_variants(
     *,
     db: DBSession,
@@ -353,39 +367,77 @@ def _populate_library_variants(
     player_id: str,
     library: dict[str, list[LibraryPuzzle]],
 ) -> None:
-    """Phase 3: replace day-3 / day-7 stub puzzles with theme-matched
-    library variants.  Day 0 (the player's actual mistake) is never
-    touched.  Selection leads with the day-0 mistake's own theme and
-    uses ``plan.anchor_category`` as a backfill (see
-    ``library.pick_two_puzzles_theme_first``); it is deterministic per
-    plan_id so a re-fired BackgroundTask doesn't shuffle the schedule
-    under the user.
+    """Phase 3: replace day-3 / day-7 stub puzzles with theme- AND
+    side-matched practice variants.  Day 0 (the player's actual mistake) is
+    never touched.
 
-    When the mistake theme, the aggregate-category backfill, AND the
-    ``"generic"`` bucket are all empty, no update happens — the
-    day-3 / day-7 rows stay at the phase-1 stub (original mistake
-    position).
+    Two sources, tried in order:
+
+    1. **Live Lichess** (``lichess_puzzles.fetch_side_matched_variants``) —
+       ready-made puzzles matched to BOTH the day-0 mistake's theme and its
+       side-to-move ("the weakest player's side").  Best-effort: used only
+       when it yields a full pair, so day 3 / day 7 land on one consistent
+       side.
+    2. **Local curated corpus** (``library.pick_two_puzzles_theme_first``) —
+       the deterministic fallback when Lichess is disabled, unreachable, or
+       can't supply two side-matched puzzles.  Leads with the day-0 theme and
+       backfills from ``plan.anchor_category`` then ``"generic"``.
+
+    The whole method runs at most once per plan (a re-fired BackgroundTask
+    short-circuits on the existing-plan guard in ``generate_plan`` before
+    reaching here), so the live source's non-determinism can't reshuffle a
+    live user's schedule.
+
+    When both sources come up empty, no update happens — the day-3 / day-7
+    rows stay at the phase-1 stub (original mistake position).
     """
     try:
         player = db.query(Player).filter(Player.id == player_id).first()
         rating = float(player.rating) if player is not None else 1500.0
         skill_hint = skill_hint_for_rating(rating)
 
-        # Theme-first selection: draw the day-3 / day-7 practice puzzles
-        # from the day-0 mistake's OWN motif (``plan.theme``, e.g.
-        # ``king_safety`` for "walked the king out too early") so the week
-        # trains the specific mistake the player just made.  The player's
-        # aggregate dominant weakness (``plan.anchor_category``) is only a
-        # BACKFILL pool — used, ahead of the generic bucket, when the
-        # specific theme is too thin to fill both days (or when the LLM
-        # couldn't classify the mistake and ``theme`` is ``"generic"``).
-        puzzle_day_3, puzzle_day_7 = pick_two_puzzles_theme_first(
-            library=library,
-            theme=plan.theme,
-            fallback_category=plan.anchor_category,
-            skill_hint=skill_hint,
-            plan_id=plan.id,
-        )
+        db.refresh(plan)
+        by_offset = {p.day_offset: p for p in plan.puzzles}
+
+        # The player's side is the side to move in the day-0 mistake position.
+        day0 = by_offset.get(0)
+        side_to_move = _side_to_move(day0.fen) if day0 is not None else None
+
+        puzzle_day_3: LibraryPuzzle | None = None
+        puzzle_day_7: LibraryPuzzle | None = None
+
+        # Source 1: live Lichess, theme- + side-matched.  Only taken when it
+        # returns a full pair (see fetch_side_matched_variants); anything less
+        # falls through to the corpus rather than mixing sides.
+        if side_to_move is not None:
+            from llm.seca.coach.study_plan.lichess_puzzles import (  # noqa: PLC0415
+                fetch_side_matched_variants,
+            )
+
+            variants = fetch_side_matched_variants(
+                theme=plan.theme,
+                side_to_move=side_to_move,
+                skill_hint=skill_hint,
+            )
+            if len(variants) >= 2:
+                puzzle_day_3, puzzle_day_7 = variants[0], variants[1]
+                logger.info(
+                    "study_plan days 3/7 sourced from Lichess (theme=%s side=%s)",
+                    plan.theme,
+                    "white" if side_to_move == chess.WHITE else "black",
+                )
+
+        # Source 2: local corpus fallback (theme-first, category + generic
+        # backfill).  Deterministic per plan_id.
+        if puzzle_day_3 is None or puzzle_day_7 is None:
+            puzzle_day_3, puzzle_day_7 = pick_two_puzzles_theme_first(
+                library=library,
+                theme=plan.theme,
+                fallback_category=plan.anchor_category,
+                skill_hint=skill_hint,
+                plan_id=plan.id,
+            )
+
         if puzzle_day_3 is None or puzzle_day_7 is None:
             logger.info(
                 "study_plan no library puzzles for theme=%s; days 3/7 stay at mistake position",
@@ -393,8 +445,6 @@ def _populate_library_variants(
             )
             return
 
-        db.refresh(plan)
-        by_offset = {p.day_offset: p for p in plan.puzzles}
         for offset, picked in ((3, puzzle_day_3), (7, puzzle_day_7)):
             row = by_offset.get(offset)
             if row is None:

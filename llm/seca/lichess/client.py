@@ -26,8 +26,10 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from typing import Iterator
 
+import chess
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -207,24 +209,36 @@ def _request_json_bounded(
     *,
     headers: dict[str, str],
     data: dict[str, str] | None = None,
+    params: dict[str, str] | None = None,
+    timeout: httpx.Timeout | None = None,
+    max_bytes: int = _MAX_OAUTH_BODY_BYTES,
     context: str,
 ) -> _BoundedResponse:
-    """Issue a request in streaming mode, reading at most _MAX_OAUTH_BODY_BYTES.
+    """Issue a request in streaming mode, reading at most ``max_bytes``.
 
     Transport failures surface as ``LichessUpstreamError``; an oversized
     body surfaces as ``LichessParseError`` (fail closed) without ever
-    buffering more than the cap.
+    buffering more than the cap.  ``params`` (query string), ``timeout``,
+    and ``max_bytes`` default to the OAuth-surface values so existing
+    callers are unchanged; the puzzle-fetch surface overrides them with a
+    shorter timeout and a smaller cap.
     """
+    # Forward ``params`` only when present so the OAuth / token surfaces
+    # (which pass none) keep their exact prior call shape — their test doubles
+    # stub ``stream(method, url, headers, data)`` without a ``params`` kwarg.
+    stream_kwargs: dict = {"headers": headers, "data": data}
+    if params is not None:
+        stream_kwargs["params"] = params
     try:
-        with httpx.Client(timeout=_OAUTH_TIMEOUT) as client:
-            with client.stream(method, url, headers=headers, data=data) as response:
+        with httpx.Client(timeout=timeout or _OAUTH_TIMEOUT) as client:
+            with client.stream(method, url, **stream_kwargs) as response:
                 chunks: list[bytes] = []
                 seen = 0
                 for chunk in response.iter_bytes():
                     seen += len(chunk)
-                    if seen > _MAX_OAUTH_BODY_BYTES:
+                    if seen > max_bytes:
                         raise LichessParseError(
-                            f"{context}: response body exceeded {_MAX_OAUTH_BODY_BYTES} bytes"
+                            f"{context}: response body exceeded {max_bytes} bytes"
                         )
                     chunks.append(chunk)
                 return _BoundedResponse(
@@ -522,3 +536,191 @@ def fetch_user_games(
         # Network errors (connect/read timeout, DNS failure, etc.)
         # surface as upstream errors so the route layer returns 502.
         raise LichessUpstreamError(f"games stream failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Puzzle fetch — GET /api/puzzle/next (per-mistake study-plan practice)
+# ---------------------------------------------------------------------------
+#
+# The study-plan agent (llm/seca/coach/study_plan/) fills a mistake's day-3 /
+# day-7 practice slots with puzzles that match the day-0 mistake's THEME and
+# SIDE-to-move.  This surface fetches one theme-matched puzzle at a time; the
+# study-plan layer loops it (varying difficulty) to collect a side-matched
+# pair.  Anonymous access works; an optional LICHESS_OAUTH_TOKEN raises the
+# per-IP rate limit (already threaded through _headers()).
+#
+# Trust boundary: the puzzle is a training POSITION, not an engine
+# evaluation.  Its solver move is stored only as a display / short-circuit
+# hint — whether a replay is "solved" is judged by the LOCAL engine on
+# POST /training/verify-replay (llm/seca/mistakes/verify.py), never by the
+# Lichess-supplied move.  Lichess's own evals are never requested here.
+
+# Lichess "angle" theme slugs we allow into the /api/puzzle/next URL.  The
+# study-plan layer maps our internal THEME_VOCABULARY onto this set; pinning
+# an allowlist here (defense in depth, mirroring _validated_username) means a
+# bug or a hostile internal caller cannot smuggle an arbitrary query-string /
+# path payload toward the upstream request.
+_PUZZLE_ANGLE_ALLOWED: frozenset[str] = frozenset(
+    {"fork", "pin", "backRankMate", "hangingPiece", "exposedKing", "opening", "endgame"}
+)
+
+# Difficulty bands accepted by ?difficulty= on /api/puzzle/next.
+_PUZZLE_DIFFICULTY_ALLOWED: frozenset[str] = frozenset(
+    {"easiest", "easier", "normal", "harder", "hardest"}
+)
+
+# Defensive caps applied to the puzzle response before python-chess touches
+# it.  A real game pgn is a few hundred bytes; these bound the work push_san()
+# does under a hostile / misbehaving upstream body.
+_MAX_PUZZLE_PGN_CHARS = 8192
+_MAX_PUZZLE_SOLUTION_MOVES = 64
+_MAX_PUZZLE_BODY_BYTES = 256 * 1024  # /api/puzzle/next is a few KB in practice
+
+# Shorter than the OAuth timeout: this runs (looped) inside the /game/finish
+# background task, so bound each call tightly.
+_PUZZLE_TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
+
+
+@dataclass(frozen=True)
+class LichessPuzzle:
+    """One Lichess puzzle reduced to the solver's decision point.
+
+    ``solver_fen`` is the position the human faces; ``side`` is the side to
+    move there (the solver's colour); ``solver_move_uci`` is Lichess's first
+    solution move — a display / short-circuit hint only, NOT a correctness
+    oracle (the local engine judges the replay).  All three are derived and
+    legality-checked at fetch time so a malformed upstream response fails
+    closed instead of shipping a broken position downstream.
+    """
+
+    id: str
+    rating: int
+    themes: tuple[str, ...]
+    solver_fen: str
+    solver_move_uci: str
+    side: chess.Color
+
+
+def _parse_puzzle_payload(payload: object) -> LichessPuzzle:
+    """Validate a /api/puzzle/next body and derive the solver position.
+
+    Derivation (verified 2026-07-08 against 6 live puzzles, both sides): the
+    ``game.pgn`` is truncated to ``initialPly + 1`` plies; replaying that many
+    lands on the solver's position, where ``solution[0]`` is legal and the
+    side to move is the solver's colour.  We replay ``min(len(sans),
+    initialPly + 1)`` so a future full-length-pgn change can't overshoot, then
+    require ``solution[0]`` to be legal — the fail-closed guard against a
+    derivation drift.
+
+    Raises ``LichessParseError`` on any structural problem (fail closed).
+    """
+    if not isinstance(payload, dict):
+        raise LichessParseError("puzzle payload was not a JSON object")
+    game = payload.get("game")
+    puzzle = payload.get("puzzle")
+    if not isinstance(game, dict) or not isinstance(puzzle, dict):
+        raise LichessParseError("puzzle payload missing game/puzzle objects")
+
+    pid = puzzle.get("id")
+    pgn = game.get("pgn")
+    solution = puzzle.get("solution")
+    initial_ply = puzzle.get("initialPly")
+    if not isinstance(pid, str) or not pid.strip():
+        raise LichessParseError("puzzle payload missing id")
+    if not isinstance(pgn, str) or not pgn.strip():
+        raise LichessParseError("puzzle payload missing pgn")
+    if len(pgn) > _MAX_PUZZLE_PGN_CHARS:
+        raise LichessParseError("puzzle pgn exceeds cap")
+    if not isinstance(solution, list) or not solution:
+        raise LichessParseError("puzzle payload missing solution")
+    if len(solution) > _MAX_PUZZLE_SOLUTION_MOVES:
+        raise LichessParseError("puzzle solution exceeds cap")
+    sol0 = solution[0]
+    if not isinstance(sol0, str) or not sol0:
+        raise LichessParseError("puzzle solution[0] not a string")
+    # ``bool`` is an ``int`` subclass; exclude it explicitly so a JSON
+    # ``true`` can't masquerade as a ply count.
+    if not isinstance(initial_ply, int) or isinstance(initial_ply, bool) or initial_ply < 0:
+        raise LichessParseError("puzzle payload missing initialPly")
+
+    rating_raw = puzzle.get("rating")
+    rating = rating_raw if isinstance(rating_raw, int) and not isinstance(rating_raw, bool) else 0
+    themes_raw = puzzle.get("themes")
+    themes = (
+        tuple(t for t in themes_raw if isinstance(t, str)) if isinstance(themes_raw, list) else ()
+    )
+
+    sans = pgn.split()
+    replay_count = min(len(sans), initial_ply + 1)
+    board = chess.Board()
+    for san in sans[:replay_count]:
+        try:
+            board.push_san(san)
+        except ValueError as exc:  # covers Illegal/Invalid/Ambiguous move errors
+            raise LichessParseError(f"puzzle pgn replay failed: {exc}") from exc
+
+    try:
+        move = chess.Move.from_uci(sol0)
+    except ValueError as exc:
+        raise LichessParseError(f"puzzle solution move not UCI: {exc}") from exc
+    if move not in board.legal_moves:
+        raise LichessParseError("puzzle solution[0] not legal in derived position")
+
+    return LichessPuzzle(
+        id=pid.strip(),
+        rating=rating,
+        themes=themes,
+        solver_fen=board.fen(),
+        solver_move_uci=sol0,
+        side=board.turn,
+    )
+
+
+def fetch_puzzle_by_theme(angle_slug: str, *, difficulty: str | None = None) -> LichessPuzzle:
+    """Fetch one theme-matched puzzle via ``GET /api/puzzle/next``.
+
+    ``angle_slug`` MUST be in ``_PUZZLE_ANGLE_ALLOWED`` and ``difficulty``
+    (when given) in ``_PUZZLE_DIFFICULTY_ALLOWED`` — both validated before they
+    touch the URL (SSRF / injection guard, same discipline as
+    ``_validated_username``).  A non-conforming value is a programming error
+    and raises ``ValueError``.
+
+    Returns a fully-derived, legality-checked :class:`LichessPuzzle`.  Raises
+    the client's typed errors (``LichessRateLimited`` / ``LichessUpstreamError``
+    / ``LichessParseError``); a structurally malformed body or an illegal
+    ``solution[0]`` surfaces as ``LichessParseError`` (fail closed) so the
+    caller can fall back to the local corpus.
+    """
+    if not isinstance(angle_slug, str) or angle_slug not in _PUZZLE_ANGLE_ALLOWED:
+        raise ValueError(f"unsupported puzzle angle: {angle_slug!r}")
+    if difficulty is not None and difficulty not in _PUZZLE_DIFFICULTY_ALLOWED:
+        raise ValueError(f"unsupported puzzle difficulty: {difficulty!r}")
+
+    params: dict[str, str] = {"angle": angle_slug}
+    if difficulty is not None:
+        params["difficulty"] = difficulty
+
+    response = _request_json_bounded(
+        "GET",
+        f"{LICHESS_API_BASE}/api/puzzle/next",
+        headers=_headers(),
+        params=params,
+        timeout=_PUZZLE_TIMEOUT,
+        max_bytes=_MAX_PUZZLE_BODY_BYTES,
+        context="puzzle fetch",
+    )
+
+    if response.status_code == 429:
+        raise LichessRateLimited(
+            "puzzle fetch: rate limited", retry_after=_retry_after_seconds(response.headers)
+        )
+    if response.status_code >= 500:
+        raise LichessUpstreamError(f"puzzle fetch: upstream {response.status_code}")
+    if response.status_code >= 400:
+        raise LichessUpstreamError(f"puzzle fetch: unexpected status {response.status_code}")
+
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise LichessParseError(f"puzzle body was not JSON: {exc}") from exc
+    return _parse_puzzle_payload(payload)
