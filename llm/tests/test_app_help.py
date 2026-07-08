@@ -40,6 +40,11 @@ _APP_QUERIES = [
     "How do I resume my game?",
     "How do I change the board style?",
     "How do I get started?",
+    # Natural phrasings without an app noun — must still detect (the recall
+    # fix from the 2026-07-08 10-example live test).
+    "Can I look back at the games I played earlier?",
+    "How do I change the way the board looks?",
+    "How do I get back to a game I didn't finish?",
 ]
 
 # Ordinary chess-coaching turns — must NOT trip app detection even though
@@ -55,6 +60,12 @@ _CHESS_QUERIES = [
     "What went wrong with my opening?",
     "How do I make progress in this position?",
     "What should I focus on?",
+    # Precision guards: "board" / "games" in their CHESS sense must NOT trip
+    # the natural-phrase tokens ("change the board" / "how the board looks"
+    # / "games i played").
+    "How do I control the centre of the board?",
+    "Is the whole board balanced right now?",
+    "What can I learn from the games of the great attackers?",
 ]
 
 
