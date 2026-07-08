@@ -244,13 +244,20 @@ class TestFetchPuzzleByTheme:
 # ===========================================================================
 
 
+# Side-consistent stand-in FENs.  In the real client LichessPuzzle.side is
+# DERIVED from solver_fen, so a fake must keep them in agreement or a
+# side-to-move assertion on the adapted LibraryPuzzle.fen is meaningless.
+_WHITE_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+_BLACK_FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+
+
 def _lp(pid: str, side: chess.Color, rating: int = 1500) -> LichessPuzzle:
     return LichessPuzzle(
         id=pid,
         rating=rating,
         themes=("fork",),
-        solver_fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        solver_move_uci="e2e4",
+        solver_fen=_BLACK_FEN if side == chess.BLACK else _WHITE_FEN,
+        solver_move_uci="a7a6" if side == chess.BLACK else "e2e4",
         side=side,
     )
 

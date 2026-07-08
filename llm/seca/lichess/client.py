@@ -223,9 +223,15 @@ def _request_json_bounded(
     callers are unchanged; the puzzle-fetch surface overrides them with a
     shorter timeout and a smaller cap.
     """
+    # Forward ``params`` only when present so the OAuth / token surfaces
+    # (which pass none) keep their exact prior call shape — their test doubles
+    # stub ``stream(method, url, headers, data)`` without a ``params`` kwarg.
+    stream_kwargs: dict = {"headers": headers, "data": data}
+    if params is not None:
+        stream_kwargs["params"] = params
     try:
         with httpx.Client(timeout=timeout or _OAUTH_TIMEOUT) as client:
-            with client.stream(method, url, headers=headers, data=data, params=params) as response:
+            with client.stream(method, url, **stream_kwargs) as response:
                 chunks: list[bytes] = []
                 seen = 0
                 for chunk in response.iter_bytes():
