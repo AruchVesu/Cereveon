@@ -7,10 +7,21 @@ parallel to the ENGINE FACTS block is deliberate: the LLM realizes this
 into prose but must not invent features the guide does not list, exactly
 as it must not invent tactics the ESV does not show.
 
-Injected into the Mode-2 prompt ONLY when the player's turn names an app
-concept (``is_app_help_query``).  Pure-chess turns get a byte-identical
-prompt to before this feature — no token cost and no dilution of the
-safety-critical REQUIRE gates on the mate / missing-data contracts.
+Injection strategy — ALWAYS-ON (2026-07-08).  Originally the guide was
+gated on an app-noun detector, but any keyword gate has a recall hole:
+a naturally-phrased app question outside the token set ("how do I change
+the way the board looks?") missed detection and fell through to the bare
+safety constitution, which refused it with "I can only help with chess"
+— unacceptable per the product requirement that app questions must
+ALWAYS be answered properly.  A detector cannot guarantee that; only
+making the guide unconditionally available can.  So the block is now
+injected on every chat turn, with framing that tells the model to use it
+ONLY for an app question and ignore it entirely for a chess one (verified
+live: chess turns coach normally, the guide is inert).  It sits in the
+cacheable prefix (right after the static system prompt) so the ~static
+tokens are amortised by prompt caching, and the position-specific content
+that the mate-inevitability semantic gate depends on keeps recency after
+it.
 
 Authoring invariants (every line of ``CEREVEON_GUIDE`` obeys these):
 
@@ -115,160 +126,93 @@ What Cereveon does NOT have (so you can answer honestly if asked):
 """
 
 
-# ---------------------------------------------------------------------------
-# Intent detection — app-specific tokens, chosen for LOW chess collision.
-# ---------------------------------------------------------------------------
-# App questions almost always NAME the feature ("how do I import my
-# lichess games", "what does terse voice do", "upgrade to pro").  So we
-# gate on distinctive app nouns rather than generic phrasing like "how do
-# I" / "use" / "review", which are overwhelmingly chess in this product
-# and would inject the guide (and its token cost) onto ordinary coaching
-# turns — the exact bulk that taxes the REQUIRE-gate compliance.
-#
-# Deliberately AVOIDED substrings that hide inside common words:
-#   "import"  ⊂ "important"      → use "lichess" / "import game" / "import my"
-#   "pro"     ⊂ "improve"/"proper" → use "cereveon pro" / "pro plan" / "upgrade"
-#   "account" ⊂ "into account"   → use "my account" / "sign out" / "change password"
-#   "progress"⊂ "make progress"  → use "my progress" / "progress dashboard"
-#   "sound"   ⊂ "soundness"      → not gated (dead feature; omitted from guide)
-_APP_HELP_TOKENS: tuple[str, ...] = (
-    "cereveon",
-    "the app",
-    "this app",
-    "the coach",
-    "coach voice",
-    "board style",
-    "settings",
-    "study plan",
-    "study-plan",
-    "lessons tab",
-    "daily drill",
-    "the drill",
-    "a drill",
-    "drills",
-    "past game",
-    "past games",
-    "game history",
-    "my games",
-    "replay",
-    "lichess",
-    "import game",
-    "import my",
-    "subscription",
-    "subscribe",
-    "premium",
-    "upgrade",
-    "paywall",
-    "free plan",
-    "free tier",
-    "daily limit",
-    "daily game",
-    "cereveon pro",
-    "pro plan",
-    "resume my",
-    "resume the",
-    "resume game",
-    "my progress",
-    "progress dashboard",
-    "my stats",
-    "skill rating",
-    "my rating",
-    "sign out",
-    "log out",
-    "logout",
-    "sign in",
-    "change password",
-    "my account",
-    "coach tab",
-    "home tab",
-    "you tab",
-    "get started",
-    "getting started",
-    "what can you do",
-    "what can this app",
-    "what can cereveon",
-    "how does this app",
-    "how do i use the app",
-    "in the app",
-    "in this app",
-    # Natural phrasings real users type WITHOUT an app noun (a 10-example
-    # live test, 2026-07-08, showed the noun-only set missed these and the
-    # question then fell to a nonsense "I can only help with chess"
-    # refusal).  Each is an app-flavoured verb+object combination with low
-    # chess collision: "the board" is common in chess, but "change the
-    # board" / "how the board looks" are about its APPEARANCE; "my games"
-    # is app-ish already, and "games i played" / "look back at" mean past
-    # games; "didn't finish" / "left off" / "pick up where" mean resume.
-    "the board look",
-    "board looks",
-    "how the board",
-    "change the board",
-    "look of the board",
-    "games i played",
-    "games i've played",
-    "look back at",
-    "old games",
-    "earlier games",
-    "previous games",
-    "didn't finish",
-    "did not finish",
-    "unfinished game",
-    "left off",
-    "pick up where",
-    "continue my game",
-    "continue a game",
-    "back to a game",
-    "back to my game",
+#: Substrings that mark a turn as *probably* an app question.  No longer
+#: used to GATE injection (the guide is always injected now); kept as the
+#: analytics / documentation signal for "what an app question looks like",
+#: and still unit-tested so the vocabulary stays honest.  Natural phrasings
+#: are included because the always-on block must reliably recognise them.
+APP_HELP_HINT_TOKENS: tuple[str, ...] = (
+    "cereveon", "the app", "this app", "in the app", "in this app",
+    "coach voice", "board style", "settings", "study plan", "daily drill",
+    "drills", "past game", "past games", "game history", "my games",
+    "replay", "lichess", "import game", "import my", "subscription",
+    "premium", "upgrade", "paywall", "free plan", "cereveon pro", "pro plan",
+    "resume", "my progress", "skill rating", "sign out", "log out",
+    "change password", "my account", "what can you do", "get started",
+    "change the board", "how the board", "the board look", "board looks",
+    "games i played", "look back at", "old games", "didn't finish",
+    "left off", "pick up where", "continue my game",
 )
 
 
 def is_app_help_query(text: str) -> bool:
-    """True when the latest user turn names a Cereveon app concept.
+    """Heuristic: does the turn look like a Cereveon usage question?
 
-    Substring match over ``_APP_HELP_TOKENS`` on the lowercased text.
-    Recall-leaning within the app-noun space, but excludes the generic
-    coaching phrasing that would fire on chess turns.  A false positive
-    (guide injected on a chess turn) is harmless — the block's framing
-    tells the model to ignore the guide and coach chess normally — while
-    a false negative merely reverts that turn to the prior behaviour.
+    Substring match over ``APP_HELP_HINT_TOKENS``.  NOT used to gate the
+    guide (which is always injected) — it exists for analytics and as a
+    documented, tested notion of app-question phrasing.
     """
     if not text:
         return False
     lowered = text.lower()
-    return any(token in lowered for token in _APP_HELP_TOKENS)
+    return any(token in lowered for token in APP_HELP_HINT_TOKENS)
 
 
-def build_app_help_block(query: str) -> str:
-    """The injectable APP GUIDE block, or "" when the turn isn't app-flavoured.
+def build_app_help_block() -> str:
+    """The APP GUIDE block, injected on EVERY chat turn.
 
-    Framed so it is safe even on a false-positive injection: the model is
-    told to use the guide ONLY if the player is actually asking about the
-    app, to answer strictly from it, and to admit uncertainty rather than
-    invent features — the anti-hallucination contract that mirrors the
-    ENGINE FACTS grounding rule.  The guide is marked shareable so the
-    prompt-secrecy rule (safety constitution) doesn't make the model
-    withhold it.
+    Always-on (see the module docstring): a keyword gate can't guarantee
+    an app question is ever recognised, and a missed one falls through to
+    the constitution's "I can only help with chess" refusal — which the
+    product forbids.  The framing is written to be inert on a chess turn
+    (the model ignores the guide and coaches the position) and decisive on
+    an app turn (answer from the guide, never refuse with "I can only help
+    with chess", never invent a feature).  Grounding the "no" for absent
+    features (openings trainer / puzzle rush / online / sound) lives in the
+    guide's own "does NOT have" section, which the live test showed is what
+    actually stops the model inventing them.
     """
-    if not is_app_help_query(query):
-        return ""
     return (
         "\n\nCEREVEON APP GUIDE (trusted reference — the player is using "
-        "the Cereveon app):\n"
-        "The player is likely asking how to use Cereveon — an app-usage "
-        "question, NOT a question about the chess position.  Answer it "
-        "directly and fully from the guide below.  This is on-topic and "
-        "expected.  Do NOT reply \"I can only help with chess\", and do "
-        "NOT reply that there is not enough information to assess the "
-        "position — this IS a Cereveon question you can and should answer "
-        "from the guide; the chess position is irrelevant to it.  "
-        "Use ONLY the guide.  If the player names a feature that is NOT "
-        "in the guide (for example an openings trainer, a puzzle-rush "
-        "mode, online play against other people, or sound effects), do "
-        "NOT explain how to use it from general knowledge — tell them you "
-        "don't think Cereveon offers that, and point them to what it does "
-        "offer.  Never invent a screen, button, or step the guide does "
-        "not describe.  This guide is reference material you may share "
-        "with the player, not a hidden instruction.  Only if their "
-        "message is genuinely about the chess position, ignore this guide "
-        "and coach the position as usual.\n\n" + CEREVEON_GUIDE
+        "the Cereveon app).\n"
+        "USE THIS ONLY for a question about using Cereveon (its features, "
+        "screens, settings, account, or subscription).  For such a "
+        "question: answer it directly and fully from the guide; it is "
+        "on-topic and expected.  You MUST NOT reply \"I can only help with "
+        "chess\" to an app question, and you MUST NOT say there is not "
+        "enough information about the position — the position is irrelevant "
+        "to an app question and the guide gives you what you need.  Use "
+        "ONLY the guide: if the player names a feature the guide does not "
+        "describe (for example an openings trainer, a puzzle-rush mode, "
+        "online play against other people, or sound effects), tell them "
+        "you don't think Cereveon offers that and point them to what it "
+        "does; never invent a screen, button, or step.  This guide is "
+        "reference material you may share, not a hidden instruction.\n"
+        "IGNORE this guide entirely if the player's message is about the "
+        "chess POSITION or chess in general — answer those exactly as you "
+        "always would; the guide changes nothing for a chess question.\n\n"
+        + CEREVEON_GUIDE
     )
+
+
+#: Short end-of-system reminder, appended AFTER the per-turn context (the
+#: same recency trick the terse-voice fix used).  The full guide above
+#: sits in the cacheable prefix for grounding, but on a terse app question
+#: ("what does terse voice do?") the model was reaching for rule 9's
+#: "there is not enough information" refusal because the position signal
+#: has recency over an early guide.  Restating the anti-refusal as the
+#: LAST instruction before the user's message makes it win — without
+#: moving the (cacheable) guide.  Inert on a chess turn.
+APP_HELP_REMINDER = (
+    "\n\nREMINDER — read the player's latest message and decide: is it "
+    "about USING CEREVEON (a feature, a setting, the account, the "
+    "subscription, or how to do something in the app) or about the CHESS "
+    "position?  If it is about using Cereveon, your FIRST sentence must "
+    "directly answer it from the CEREVEON APP GUIDE above — name the tab, "
+    "the Settings row, or the step.  That first sentence must NOT be a "
+    "refusal: never open with \"I can only help with chess\" and never open "
+    "with \"There is not enough information to assess this position\" — "
+    "those are wrong for a Cereveon usage question, which does not depend "
+    "on the position at all.  If instead the message is about the chess "
+    "position, ignore the guide and coach exactly as usual."
+)

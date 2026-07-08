@@ -85,16 +85,20 @@ def test_import_does_not_false_match_important() -> None:
     assert is_app_help_query("How do I import my games?")
 
 
-def test_block_is_conditional() -> None:
-    assert build_app_help_block("How do I attack the king?") == ""
-    block = build_app_help_block("How do I import my lichess games?")
-    assert "CEREVEON APP GUIDE" in block
-    # The anti-invention contract + the shareable-not-hidden framing must
-    # both be present (they are what keep the feature safe on a false
-    # positive and un-refused under the prompt-secrecy rule).
+def test_block_always_built_and_framed() -> None:
+    # Always-on (no gating): the builder takes no query and always returns
+    # the framed guide.  The three framing properties that make it safe:
+    block = build_app_help_block()
+    assert _GUIDE_HEADING in block
+    # never refuses an app question with the forbidden phrase,
+    assert 'must not reply "i can only help with chess"' in block.lower()
+    # never invents an absent feature,
     assert "never invent" in block.lower()
-    assert "share" in block.lower()
+    # and is inert on a chess turn.
     assert "ignore this guide" in block.lower()
+    assert "share" in block.lower()
+    # Deterministic / constant — identical every call (so it caches).
+    assert build_app_help_block() == block
 
 
 # ---------------------------------------------------------------------------
@@ -128,39 +132,81 @@ def _prompt_for(query: str) -> str:
 _GUIDE_HEADING = "CEREVEON — WHAT IT DOES AND HOW TO USE IT"
 
 
-def test_guide_injected_on_app_turn() -> None:
+def test_guide_present_on_app_turn() -> None:
     prompt = _prompt_for("How do I import my lichess games?")
     assert _GUIDE_HEADING in prompt
     assert "Import your Lichess games" in prompt
 
 
-def test_guide_absent_on_chess_turn() -> None:
+def test_guide_present_but_framed_inert_on_chess_turn() -> None:
+    # Always-on: the guide is in the prompt on a chess turn too, but the
+    # framing tells the model to IGNORE it and coach the position (verified
+    # live: chess turns are coached normally, the guide is inert).  This is
+    # the tradeoff that guarantees an app question can never miss the guide
+    # and fall to the "I can only help with chess" refusal.
     prompt = _prompt_for("How do I attack the king?")
-    assert _GUIDE_HEADING not in prompt
-    assert "Import your Lichess games" not in prompt
+    assert _GUIDE_HEADING in prompt
+    assert "ignore this guide" in prompt.lower()
 
 
-def test_chess_turn_prompt_unchanged_by_feature() -> None:
-    # The whole economics argument: a pure-chess turn must be byte-identical
-    # to what it would be with no app-help feature at all — i.e. adding the
-    # guide block is a no-op string on chess turns.
-    from llm.rag.prompts import app_help
+def test_anti_refusal_reminder_is_last_and_forbids_both_refusals() -> None:
+    # The full guide is early (cacheable); a short reminder is appended
+    # AFTER the per-turn context so the anti-refusal has recency over
+    # rule 9's "not enough information" — the fix for the 4/10 app
+    # misfire on the first always-on run.
+    prompt = _prompt_for("What does the terse coach voice do?")
+    low = prompt.lower()
+    assert "reminder" in low
+    # forbids BOTH canned position-refusals for an app question, and
+    # demands the first sentence actually answer it,
+    assert "i can only help with chess" in low
+    assert "there is not enough information" in low
+    assert "first sentence" in low
+    # Appended at the END of the system block (after the guide + the
+    # per-turn context) — the same end-of-system recency slot the terse
+    # reminder uses.  render_mode_2 then appends the FEN + user query, so
+    # the reminder precedes the FEN; what matters is it comes AFTER the
+    # guide and the position facts, not before the rendered board.
+    assert prompt.rindex("REMINDER") > prompt.index(_GUIDE_HEADING)
 
-    with_feature = _prompt_for("What is my plan in this position?")
-    # Simulate "feature absent" by forcing the block empty and rebuilding.
-    orig = app_help.build_app_help_block
-    try:
-        app_help.build_app_help_block = lambda *_a, **_k: ""
-        import llm.seca.coach.chat_pipeline as cp
 
-        cp.build_app_help_block = lambda *_a, **_k: ""
-        without_feature = _prompt_for("What is my plan in this position?")
-    finally:
-        app_help.build_app_help_block = orig
-        import llm.seca.coach.chat_pipeline as cp
+def test_app_refusal_backstop_predicate() -> None:
+    # The deterministic backstop: a bare position-refusal to an app-flavoured
+    # turn is retried (never shipped).  Guards that the predicate fires on
+    # exactly that and nothing else.
+    from llm.seca.coach.chat_pipeline import _is_app_refusal
 
-        cp.build_app_help_block = orig
-    assert with_feature == without_feature
+    # app turn + refusal → retry
+    assert _is_app_refusal(
+        "There is not enough information to assess this position.",
+        "How do I change the way the board looks?",
+    )
+    assert _is_app_refusal("I can only help with chess.", "How do I upgrade to Pro?")
+    # app turn + real answer → do NOT retry
+    assert not _is_app_refusal(
+        "Open Settings and choose a board style.", "How do I change the board style?"
+    )
+    # position question + refusal (legitimate missing-data) → do NOT retry
+    assert not _is_app_refusal(
+        "There is not enough information to assess this position.",
+        "Is my position winning?",
+    )
+    # off-topic + refusal → do NOT retry (is_app_help_query is False)
+    assert not _is_app_refusal("I can only help with chess.", "What's the weather?")
+
+
+def test_guide_sits_in_the_cacheable_prefix() -> None:
+    # The block is placed right after the static system prompt (before the
+    # per-turn voice / perspective / position content), so [system + guide]
+    # is a static prefix that prompt-caches and the mate-critical content
+    # keeps recency after it.  Assert the guide appears before the FEN /
+    # engine-signal section that render_mode_2 emits.
+    prompt = _prompt_for("What is my plan in this position?")
+    assert _GUIDE_HEADING in prompt
+    # The rendered FEN appears only in render_mode_2's tail (the system
+    # prompt refers to "the FEN" but never embeds the board string), so it
+    # is a clean marker for "the per-turn position content".
+    assert prompt.index(_GUIDE_HEADING) < prompt.index(_FEN)
 
 
 # ---------------------------------------------------------------------------
