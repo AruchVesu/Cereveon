@@ -170,29 +170,30 @@ def test_anti_refusal_reminder_is_last_and_forbids_both_refusals() -> None:
     assert prompt.rindex("REMINDER") > prompt.index(_GUIDE_HEADING)
 
 
-def test_app_refusal_backstop_predicate() -> None:
-    # The deterministic backstop: a bare position-refusal to an app-flavoured
-    # turn is retried (never shipped).  Guards that the predicate fires on
-    # exactly that and nothing else.
-    from llm.seca.coach.chat_pipeline import _is_app_refusal
+def test_spurious_refusal_backstop_predicate() -> None:
+    # The backstop fires on an OBJECTIVELY spurious refusal (no keyword
+    # detection — that inherited the recall hole).  "only help with chess"
+    # is never valid; "not enough information" is spurious iff the signal
+    # is populated (always true in the chat path).
+    from llm.seca.coach.chat_pipeline import _is_spurious_refusal
 
-    # app turn + refusal → retry
-    assert _is_app_refusal(
-        "There is not enough information to assess this position.",
-        "How do I change the way the board looks?",
+    populated = {"evaluation": {"type": "cp", "band": "equal", "side": "white"}}
+    empty = {}  # unparseable FEN → no evaluation
+
+    # "only help with chess" is always spurious — even the natural-phrased
+    # app question the detector would MISS still gets caught.
+    assert _is_spurious_refusal("I can only help with chess.", populated)
+    assert _is_spurious_refusal("I can only help with chess.", empty)
+    # "not enough information" with a populated signal is spurious...
+    assert _is_spurious_refusal(
+        "There is not enough information to assess this position.", populated
     )
-    assert _is_app_refusal("I can only help with chess.", "How do I upgrade to Pro?")
-    # app turn + real answer → do NOT retry
-    assert not _is_app_refusal(
-        "Open Settings and choose a board style.", "How do I change the board style?"
+    # ...but LEGITIMATE when the signal is genuinely empty (rule 9).
+    assert not _is_spurious_refusal(
+        "There is not enough information to assess this position.", empty
     )
-    # position question + refusal (legitimate missing-data) → do NOT retry
-    assert not _is_app_refusal(
-        "There is not enough information to assess this position.",
-        "Is my position winning?",
-    )
-    # off-topic + refusal → do NOT retry (is_app_help_query is False)
-    assert not _is_app_refusal("I can only help with chess.", "What's the weather?")
+    # a real answer is never a refusal.
+    assert not _is_spurious_refusal("Open Settings and pick a board style.", populated)
 
 
 def test_guide_sits_in_the_cacheable_prefix() -> None:

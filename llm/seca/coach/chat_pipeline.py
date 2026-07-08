@@ -105,30 +105,52 @@ _CHAT_RETRY_HINT = (
     "Do NOT speculate, invent moves, or mention engine intentions."
 )
 
-# Deterministic backstop for the app-help feature: on an app-flavoured
-# turn the LLM occasionally (~1/10, evening variance) leads with a canned
-# position-refusal ("There is not enough information ...", "I can only
-# help with chess") despite the always-on guide + first-sentence
-# directive.  A pure refusal to a clear "how do I use Cereveon?" question
-# is not "acting properly", so the retry loop treats it as a soft failure
-# and re-asks with this hint.  Only fires when the turn looks like an app
-# question (``is_app_help_query``) AND the reply is a bare refusal, so a
-# legitimate missing-data / off-topic refusal is never retried.
-_APP_HELP_RETRY_HINT = (
-    "\n\nThe player is asking how to USE THE CEREVEON APP.  Answer their "
-    "question directly from the CEREVEON APP GUIDE — name the tab or "
-    "Settings row and the steps.  Do NOT reply that there is not enough "
-    "information and do NOT say you can only help with chess."
+# Deterministic backstop for the app-help feature: the LLM occasionally
+# leads with a canned position-refusal ("There is not enough information
+# ...", "I can only help with chess") despite the always-on guide, on an
+# app question OR (rarely) a chess one.  A refusal to a clear "how do I
+# use Cereveon?" question is not "acting properly", so the retry loop
+# treats a SPURIOUS refusal as a soft failure and re-asks with this hint.
+#
+# The trigger is OBJECTIVE, not keyword detection (an earlier version
+# gated on ``is_app_help_query`` and inherited its recall hole — a
+# natural-phrased app question that missed the tokens got no backstop and
+# the refusal shipped, 2/10 on a fresh live test).  Instead:
+#   * "I can only help with chess" is ALWAYS spurious — the coach helps
+#     with chess AND the app, so this exact phrase is never correct.
+#   * "not enough information to assess this position" is legitimate ONLY
+#     when the engine signal is genuinely empty (rule 9 / an unparseable
+#     FEN).  In the chat path the signal is always populated (material
+#     fallback), so the refusal is spurious there regardless of how the
+#     question was phrased — no detector, no recall gap.
+# The neutral hint fixes both a mis-refused app question (answer from the
+# guide) and a mis-refused chess one (assess from the signal).
+_SPURIOUS_RETRY_HINT = (
+    "\n\nYou HAVE the analysis for this position.  Do NOT reply that there "
+    "is not enough information, and do NOT say you can only help with "
+    "chess.  If the player's message is about the chess position, assess "
+    "it from the engine signal.  If it is about using the Cereveon app, "
+    "answer it directly from the CEREVEON APP GUIDE above — name the tab "
+    "or Settings row and the steps."
 )
-_APP_REFUSAL_RE = re.compile(
-    r"not enough information to assess this position|i can only help with chess",
-    re.IGNORECASE,
+_ONLY_CHESS_RE = re.compile(r"i can only help with chess", re.IGNORECASE)
+_NOT_ENOUGH_RE = re.compile(
+    r"not enough information to assess this position", re.IGNORECASE
 )
 
 
-def _is_app_refusal(reply: str, latest_user_query: str) -> bool:
-    """True when an app-flavoured turn got a bare position-refusal reply."""
-    return bool(_APP_REFUSAL_RE.search(reply)) and is_app_help_query(latest_user_query)
+def _is_spurious_refusal(reply: str, engine_signal: dict) -> bool:
+    """True when the reply is a refusal that cannot be correct here.
+
+    ``i can only help with chess`` is never correct (chess + app scope).
+    ``not enough information`` is correct only on an empty signal; a
+    populated signal (always the case in the chat path) makes it spurious.
+    """
+    if _ONLY_CHESS_RE.search(reply):
+        return True
+    if _NOT_ENOUGH_RE.search(reply):
+        return bool(engine_signal.get("evaluation"))
+    return False
 
 # ---------------------------------------------------------------------------
 # Label tables (deterministic fallback)
@@ -900,10 +922,6 @@ def generate_chat_reply(
     if should_compact(messages):
         messages = compact_history(messages)
 
-    # Latest user turn, for the app-refusal backstop below.
-    _user_turns = [t for t in messages if t.role == "user"]
-    _latest_user_query = _user_turns[-1].content if _user_turns else ""
-
     # --- LLM path with retry ---
     if _LLM_AVAILABLE and not force_deterministic:
         retry_hint = ""
@@ -931,14 +949,14 @@ def generate_chat_reply(
                     last_move=last_move,
                     player_color=player_color,
                 )
-                # App-help backstop: a bare position-refusal to an app
-                # question is a soft failure — re-ask with an explicit
-                # app-answer hint rather than shipping the refusal.  Only
-                # on non-final attempts; the final attempt returns whatever
-                # it got (still a valid Mode-2 reply).
-                if attempt < _CHAT_MAX_RETRIES and _is_app_refusal(reply, _latest_user_query):
-                    logger.debug("Chat app-help backstop: refusal to an app question; retrying")
-                    retry_hint = _APP_HELP_RETRY_HINT
+                # Spurious-refusal backstop: a canned position-refusal that
+                # cannot be correct here (see _is_spurious_refusal) is a soft
+                # failure — re-ask with a neutral hint rather than shipping
+                # it.  Only on non-final attempts; the final attempt returns
+                # whatever it got (still a valid Mode-2 reply).
+                if attempt < _CHAT_MAX_RETRIES and _is_spurious_refusal(reply, engine_signal):
+                    logger.debug("Chat backstop: spurious refusal; retrying with neutral hint")
+                    retry_hint = _SPURIOUS_RETRY_HINT
                     continue
                 # ESV structural integrity check (programming-error guard; never from LLM).
                 _EngineSignalSchema.model_validate(engine_signal)
