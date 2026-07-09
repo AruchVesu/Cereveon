@@ -70,6 +70,14 @@ try:
     # ``validate_live_move_response``).
     from llm.seca.coach._mode_2_validators import validate_mode_2_or_raise  # type: ignore[import]
     from llm.rag.validators.mode_2_semantic import Mode2Violation as _Mode2Violation  # type: ignore[import]
+    from llm.rag.safety.output_firewall import OutputFirewallError as _OutputFirewallError  # type: ignore[import]
+    # Shared targeted-rephrase hints (retry parity with Mode-2 chat +
+    # stream, PRs #370/#371/#374): a validator rejection re-asks the LLM
+    # with a hint naming the exact offending token instead of repeating
+    # the identical prompt until exhaustion.  chat_stream_pipeline imports
+    # the same helper; chat_pipeline has no import back into this module,
+    # so the dependency is acyclic.
+    from llm.seca.coach.chat_pipeline import _targeted_retry_hint  # type: ignore[import]
     _LLM_AVAILABLE = True
 except Exception as _llm_import_exc:  # noqa: BLE001
     logger.warning("LLM imports unavailable — deterministic path only: %s", _llm_import_exc)
@@ -276,7 +284,22 @@ def _build_hint(
         eval_sentence = "The position is roughly equal."
     else:
         band_label = _BAND_LABEL.get(band, band.replace("_", " "))
-        eval_sentence = f"Position: {side} has {band_label}."
+        # Player-seat framing (de-robotified 2026-07-09, mirroring the
+        # Mode-2 fallback warm in PR #372): the old "Position: {side} has
+        # {band}." read as a labeled engine readout and ignored the
+        # player_color the caller already derives — a Black player was
+        # told "white has a clear advantage" in the detached third
+        # person.  Unknown colour OR side keeps a capitalised side name.
+        # Band vocabulary ("advantage") is preserved for the phrasing
+        # pins; stays one sentence for the max-2-sentence contract.
+        side_l = side.lower() if isinstance(side, str) else ""
+        color_l = player_color.lower() if isinstance(player_color, str) else ""
+        if color_l in ("white", "black") and side_l in ("white", "black"):
+            subject = "You have" if side_l == color_l else "Your opponent has"
+            eval_sentence = f"{subject} {band_label}."
+        else:
+            side_label = side.capitalize() if isinstance(side, str) and side else side
+            eval_sentence = f"{side_label} has {band_label}."
 
     if style == "simple":
         core = quality_comment if quality_comment else eval_sentence
@@ -346,10 +369,16 @@ def _build_hint_llm(
     explanation_style: str | None,
     fen: str,
     uci: str,
+    retry_hint: str = "",
 ) -> str:
     """Generate a coaching hint via the LLM (Mode-1 system prompt).
 
     Raises on any failure so the caller can fall back to _build_hint().
+
+    ``retry_hint`` is the targeted rephrase instruction built from the
+    previous attempt's validator exception (``_targeted_retry_hint``).
+    Appended AFTER the fully-rendered prompt so it has maximum recency —
+    the same end-of-prompt placement the Mode-2 chat retry loop uses.
     """
     rag_docs = _retrieve(engine_signal, _DOCS)
     player_color = _derive_player_color(fen)
@@ -363,6 +392,8 @@ def _build_hint_llm(
         last_move_phrase=describe_move_plain(fen, uci),
         last_move_uci=uci,
     )
+    if retry_hint:
+        prompt = prompt + retry_hint
     response = _call_llm(prompt).strip()
     if not response:
         raise ValueError("Empty LLM response")
@@ -431,11 +462,14 @@ def generate_live_reply(
 
     # --- LLM path with retry ---
     if _LLM_AVAILABLE and not force_deterministic:
+        retry_hint = ""
         for attempt in range(_LIVE_MAX_RETRIES + 1):
             if attempt > 0:
                 time.sleep(_LIVE_RETRY_DELAY_SECONDS)
             try:
-                hint = _build_hint_llm(engine_signal, explanation_style, fen, uci)
+                hint = _build_hint_llm(
+                    engine_signal, explanation_style, fen, uci, retry_hint=retry_hint
+                )
                 if not hint.strip():
                     raise ValueError("Empty hint from LLM")
                 return LiveMoveReply(
@@ -444,12 +478,40 @@ def generate_live_reply(
                     move_quality=move_quality,
                     mode="LIVE_V1",
                 )
+            except _OutputFirewallError:
+                # Working-as-intended safety event — never retried
+                # (parity with the Mode-2 chat and stream loops).
+                logger.debug(
+                    "Mode-1 LLM blocked by output firewall; using deterministic fallback"
+                )
+                break
+            except (AssertionError, _Mode2Violation) as exc:
+                # Validator rejection — retry with a TARGETED hint naming
+                # the exact offending token (retry parity with the Mode-2
+                # chat/stream loops, PRs #370/#371/#374) instead of
+                # re-sending the identical prompt until exhaustion.
+                retry_hint = _targeted_retry_hint(exc)
+                remaining = _LIVE_MAX_RETRIES - attempt
+                if remaining > 0:
+                    logger.debug(
+                        "Mode-1 validator rejection on attempt %d (%s); retrying with hint",
+                        attempt + 1,
+                        exc,
+                    )
+                else:
+                    logger.warning(
+                        "Mode-1 LLM failed after %d attempts (%s: %s); using deterministic fallback",
+                        attempt + 1,
+                        type(exc).__name__,
+                        exc,
+                    )
             except Exception as exc:  # noqa: BLE001
                 remaining = _LIVE_MAX_RETRIES - attempt
                 if remaining > 0:
                     # Per-attempt retry — kept at DEBUG since the
-                    # next iteration may succeed.  Only the
-                    # exhausted-retries path needs operator attention.
+                    # next iteration may succeed.  Transport errors keep
+                    # Mode-1's historical retry-without-hint behaviour
+                    # (a hint can't fix an unreachable provider).
                     logger.debug("Mode-1 LLM attempt %d failed (%s); retrying", attempt + 1, exc)
                 else:
                     # All attempts exhausted — production-impacting:
