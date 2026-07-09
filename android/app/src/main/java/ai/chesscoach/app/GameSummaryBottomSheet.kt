@@ -197,10 +197,35 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
         // directly, formatted inline at the call site.
 
         // difficultyProgress(Float) retired with the Float-based difficulty
-        // contract in 2026-05-25.  The post-game training card now sources
-        // its ProgressBar fill from TrainingSessionBottomSheet.difficultyProgress
-        // (String) which maps the band emitted by CurriculumPolicy
-        // ("easy" / "medium" / "hard") to a fixed 30 / 60 / 85.
+        // contract in 2026-05-25.  The String-band helpers below moved
+        // here from TrainingSessionBottomSheet.Companion when the
+        // standalone Lessons surface was removed — the post-game
+        // training card is their only remaining caller.
+
+        /**
+         * Format a difficulty band string as "Difficulty: Medium".
+         *
+         * ``CurriculumPolicy.choose_difficulty`` on the server returns one of
+         * ``"easy" | "medium" | "hard"``; anything else falls through to the
+         * raw string (capitalised) so a future band ("expert", "novice") still
+         * renders sensibly without a code change here.
+         */
+        fun formatDifficulty(difficulty: String): String =
+            "Difficulty: ${difficulty.replaceFirstChar { it.uppercase() }}"
+
+        /**
+         * Map a difficulty band string to a ProgressBar integer (0–100).
+         *
+         * The progress bar is a visual cue, not a quantitative scale — easy
+         * sits at 30, medium at 60, hard at 85, and any unknown band lands at
+         * the 50 midpoint so the bar still renders.
+         */
+        fun difficultyProgress(difficulty: String): Int = when (difficulty.lowercase()) {
+            "easy"   -> 30
+            "medium" -> 60
+            "hard"   -> 85
+            else     -> 50
+        }
 
         /**
          * Map a raw [learningStatus] string to a user-visible indicator label.
@@ -398,9 +423,9 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
                     // ProgressBar is a visual cue derived from a fixed
                     // band → percent map (easy=30 / medium=60 / hard=85).
                     view.findViewById<TextView>(R.id.txtTrainingGain).text =
-                        TrainingSessionBottomSheet.formatDifficulty(rec.difficulty)
+                        formatDifficulty(rec.difficulty)
                     view.findViewById<ProgressBar>(R.id.progressDifficulty).progress =
-                        TrainingSessionBottomSheet.difficultyProgress(rec.difficulty)
+                        difficultyProgress(rec.difficulty)
                     trainingCard.visibility  = View.VISIBLE
                     trainingEmpty.visibility = View.GONE
                 } else {

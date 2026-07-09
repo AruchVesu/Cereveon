@@ -141,7 +141,7 @@ class ChatBottomSheet : DialogFragment() {
     private var moveCount: Int = 0
 
     /**
-     * Optional seed prompt injected by [TrainingSessionBottomSheet].
+     * Optional seed prompt a caller can pass via [newInstance].
      * When non-null, it is auto-submitted as the first user turn instead of
      * showing the generic greeting.
      */

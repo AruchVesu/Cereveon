@@ -705,10 +705,13 @@ side-effect-free).
 
 ### Notes
 
-- Default ECOs (`C84`, `B22`, `D02`, `A04`) mirror the Android client's
-  `OpeningsActivity.DEFAULT_REPERTOIRE` exactly.  A drift test
+- Default ECOs (`C84`, `B22`, `D02`, `A04`) originally mirrored the
+  Android client's `OpeningsActivity.DEFAULT_REPERTOIRE`; that screen was
+  removed from the UI (the endpoint and its client methods survive for a
+  future repertoire surface), so the server list is now the single source
+  of the defaults.  A pin test
   (`test_repertoire_endpoint.py::test_default_mirrors_android_companion`)
-  pins them so first-vs-subsequent visits never show different defaults.
+  keeps first-vs-subsequent visits from showing different defaults.
 - Edit endpoints (add / delete / set-active / drill-result) are documented
   in §23–§26 below.  All four seed the default repertoire on first write
   so a user editing one of the canonical lines materialises a persistent

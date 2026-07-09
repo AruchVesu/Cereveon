@@ -286,8 +286,9 @@ data class CheckpointRequest(
 
 /**
  * One opening in the player's repertoire — wire shape of GET /repertoire.
- * Mirrors OpeningsActivity.OpeningEntry but lives in the API layer so
- * the client/UI conversion is explicit at the activity boundary.
+ * Kept (with the /repertoire client methods) after the Openings screen
+ * was removed from the UI — the backend contract (§14) is unchanged and
+ * a future repertoire surface can rewire without an API-layer change.
  */
 @Serializable
 data class RepertoireOpeningDto(

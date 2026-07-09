@@ -19,7 +19,7 @@
     parent: chessBoard, drawerLayout, txtCoach, txtCoachContainer,
     statusPulse, scoreRow, txtEngineScore, txtMistakeCategory,
     txtWeaknessTags, txtNextTrainingChip, btnReset,
-    btnUndo, btnChat, btnGameHistory, btnProgressDashboard, btnTraining,
+    btnUndo, btnChat, btnGameHistory, btnProgressDashboard,
     btnChangePassword, btnLogout.  (``txtRatingHeader`` was retired when
     the user-visible Elo rating was hidden from the UI — opponent
     matching still uses the cached rating internally; the drawer no
@@ -490,15 +490,6 @@
             android:layout_height="@dimen/atrium_tap_target"
             android:textSize="16sp"
             android:text="My progress"
-            android:layout_marginBottom="@dimen/atrium_space_8" />
-
-        <Button
-            android:id="@+id/btnTraining"
-            style="@style/Atrium.Button.Secondary"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/atrium_tap_target"
-            android:textSize="16sp"
-            android:text="Training session"
             android:layout_marginBottom="@dimen/atrium_space_8" />
 
         <Button

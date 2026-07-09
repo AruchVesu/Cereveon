@@ -223,7 +223,6 @@ class MainActivity : AppCompatActivity() {
         val btnUndo = findViewById<Button>(R.id.btnUndo)
         val btnChat = findViewById<Button>(R.id.btnChat)
         val btnGameHistory = findViewById<Button>(R.id.btnGameHistory)
-        val btnTraining = findViewById<Button>(R.id.btnTraining)
         val btnChangePassword = findViewById<Button>(R.id.btnChangePassword)
         val btnLogout = findViewById<Button>(R.id.btnLogout)
 
@@ -344,26 +343,6 @@ class MainActivity : AppCompatActivity() {
             val sheet = ProgressDashboardBottomSheet()
             sheet.gameApiClient = gameApiClient
             sheet.show(supportFragmentManager, "ProgressDashboardBottomSheet")
-        }
-
-        btnTraining.setOnClickListener {
-            drawerLayout.closeDrawer(GravityCompat.END)
-            lifecycleScope.launch {
-                when (val r = gameApiClient.getNextCurriculum()) {
-                    is ApiResult.Success -> {
-                        if (!supportFragmentManager.isStateSaved) {
-                            TrainingSessionBottomSheet
-                                .newInstance(r.data)
-                                .show(supportFragmentManager, "TrainingSessionBottomSheet")
-                        }
-                    }
-                    else -> Toast.makeText(
-                        this@MainActivity,
-                        "Training unavailable — try again later",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
-            }
         }
 
         // Atrium Settings sheet — preferences (coach voice, board
@@ -597,10 +576,10 @@ class MainActivity : AppCompatActivity() {
 
         if (!resumed) {
             // Only a genuine "New game" launch (no sheet to open) may be
-            // hard-blocked by the paywall.  HomeActivity routes Past games /
-            // Coach / You / Lessons through MainActivity with EXTRA_OPEN_SHEET;
-            // those are NAVIGATION, not a request to play, so they must never
-            // bounce the user to the paywall — the game gate is about PLAYING.
+            // hard-blocked by the paywall.  HomeActivity routes Past games
+            // through MainActivity with EXTRA_OPEN_SHEET; that is
+            // NAVIGATION, not a request to play, so it must never bounce
+            // the user to the paywall — the game gate is about PLAYING.
             startNewGameSession(
                 allowPaywallOnLimit = intent?.getStringExtra(EXTRA_OPEN_SHEET) == null,
             )
@@ -676,17 +655,14 @@ class MainActivity : AppCompatActivity() {
                 ?: "Solid move — tap for deeper analysis"
         }
 
-        // HomeActivity routes "Lessons" / "Past games" / "Coach" / "You"
-        // taps here with EXTRA_OPEN_SHEET so the existing sheet wiring
-        // is the single source of truth for those flows.  All four
-        // re-use the same buttons / openChat() the drawer uses; the
-        // performClick() path also closes the (already-closed) drawer
-        // harmlessly.
+        // HomeActivity routes "Past games" taps here with
+        // EXTRA_OPEN_SHEET so the drawer's btnGameHistory wiring stays
+        // the single source of truth for that flow (the performClick()
+        // path also closes the already-closed drawer harmlessly).  The
+        // other Home surfaces (Puzzles / You) host their sheets
+        // directly over HomeActivity and never route through here.
         when (intent?.getStringExtra(EXTRA_OPEN_SHEET)) {
-            OPEN_SHEET_TRAINING -> btnTraining.performClick()
-            OPEN_SHEET_HISTORY  -> btnGameHistory.performClick()
-            OPEN_SHEET_PROFILE  -> btnProgressDashboard.performClick()
-            OPEN_SHEET_CHAT     -> openChat()
+            OPEN_SHEET_HISTORY -> btnGameHistory.performClick()
         }
     }
 
@@ -782,11 +758,10 @@ class MainActivity : AppCompatActivity() {
         // open a specific bottom sheet on startup.  String constants
         // (rather than an enum) keep the Intent contract trivially
         // serialisable and let HomeActivity pass null for "no sheet".
-        const val EXTRA_OPEN_SHEET     = "open_sheet"
-        const val OPEN_SHEET_TRAINING  = "training"
-        const val OPEN_SHEET_HISTORY   = "history"
-        const val OPEN_SHEET_PROFILE   = "profile"
-        const val OPEN_SHEET_CHAT      = "chat"
+        // Past games is the only remaining sheet route — Puzzles / You
+        // sheets are hosted directly over HomeActivity.
+        const val EXTRA_OPEN_SHEET  = "open_sheet"
+        const val OPEN_SHEET_HISTORY = "history"
 
         /**
          * Format top [maxTags] skill-vector entries as weakness tag labels.
