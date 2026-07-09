@@ -111,7 +111,7 @@
                     android:lineSpacingMultiplier="1.4"
                     android:gravity="center_horizontal"
                     android:maxWidth="320dp"
-                    android:text="Continue your study with the full library, the chat coach, and adaptive opponents that grow with you." />
+                    android:text="Continue your study with unlimited games, the chat coach, and adaptive opponents that grow with you." />
 
                 <!-- ✦ ornament rule -->
                 <LinearLayout
