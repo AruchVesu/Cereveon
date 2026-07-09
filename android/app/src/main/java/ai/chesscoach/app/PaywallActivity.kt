@@ -413,12 +413,21 @@ class PaywallActivity : AppCompatActivity() {
         /**
          * Bullet copy for the feature list.  4 items per the design;
          * order matters (the most concrete benefit comes first).
+         *
+         * Every bullet must describe a benefit the live entitlements
+         * actually grant (llm/seca/entitlements/service.py): unlimited
+         * games (free: 1/day), full coach hints (free: degraded past
+         * the daily coached-game limit), and 30 chat questions/day
+         * (free: 3).  The old "Full curriculum · 12 chapters" and
+         * "Opening repertoire drills" bullets were retired with their
+         * UI surfaces (PR #379 removed the Lessons and Openings
+         * screens).
          */
         val DEFAULT_FEATURES: List<String> = listOf(
             "Unlimited adaptive games",
-            "Full curriculum · 12 chapters",
+            "Full coach hints in every game",
             "Coach chat · grounded in your games",
-            "Opening repertoire drills",
+            "30 coach questions a day",
         )
 
         /**
