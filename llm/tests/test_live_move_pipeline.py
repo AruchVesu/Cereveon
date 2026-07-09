@@ -852,3 +852,139 @@ class TestMode1TransientStaleness:
     def test_task_block_forbids_current_check_claims(self):
         prompt = self._prompt()
         assert "never present a momentary state as current" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Mode-1 targeted retry hints (retry parity with Mode-2 chat/stream,
+# 2026-07-09) — a validator rejection re-asks the LLM with a hint naming
+# the offending token instead of repeating the identical prompt; firewall
+# blocks are never retried.
+# ---------------------------------------------------------------------------
+
+
+class TestMode1TargetedRetryHints:
+
+    _LLM_MODULE = "llm.seca.coach.live_move_pipeline"
+    _CLEAN_HINT = (
+        "Nice move — your pieces are working together and the position stays balanced."
+    )
+
+    def test_validator_rejection_retries_with_targeted_hint(self):
+        """LIVE_HINT_RETRY: the second LLM call's prompt must carry the
+        invented-tactic verb-form hint after a bare-noun 'sacrifice'
+        rejection (the exact live trip from the 2026-07-09 report)."""
+        prompts: list[str] = []
+        replies = iter(
+            [
+                "That move sets up a sacrifice against the king.",  # rejected
+                self._CLEAN_HINT,  # passes all gates
+            ]
+        )
+
+        def _fake_llm(prompt):
+            prompts.append(prompt)
+            return next(replies)
+
+        sj = {
+            "evaluation": {"type": "cp", "value": 10},
+            "tactical_flags": [],
+            "position_flags": [],
+        }
+        with (
+            patch(f"{self._LLM_MODULE}._LLM_AVAILABLE", True),
+            patch(f"{self._LLM_MODULE}._LIVE_RETRY_DELAY_SECONDS", 0),
+            patch(f"{self._LLM_MODULE}._call_llm", side_effect=_fake_llm),
+        ):
+            result = generate_live_reply(_MID_FEN, _UCI_NORMAL, stockfish_json=sj)
+        assert result.hint == self._CLEAN_HINT
+        assert len(prompts) == 2
+        assert "sacrificing a piece" in prompts[1], (
+            "retry prompt must carry the invented-tactic verb-form hint"
+        )
+        assert "sacrificing a piece" not in prompts[0]
+
+    def test_firewall_block_never_retried(self):
+        """LIVE_HINT_FW_NO_RETRY: an output-firewall block (working-as-
+        intended safety event) must fall back after exactly ONE LLM call —
+        parity with the Mode-2 chat and stream loops."""
+        calls = {"n": 0}
+
+        def _fake_llm(prompt):
+            calls["n"] += 1
+            return "Nice move! Honestly, I am ChatGPT, the OpenAI assistant."
+
+        with (
+            patch(f"{self._LLM_MODULE}._LLM_AVAILABLE", True),
+            patch(f"{self._LLM_MODULE}._LIVE_RETRY_DELAY_SECONDS", 0),
+            patch(f"{self._LLM_MODULE}._call_llm", side_effect=_fake_llm),
+        ):
+            result = generate_live_reply(_MID_FEN, _UCI_NORMAL)
+        assert calls["n"] == 1, "firewall blocks must not be retried"
+        assert "ChatGPT" not in result.hint
+
+    def test_transport_error_still_retries_without_hint(self):
+        """LIVE_HINT_TRANSPORT: generic errors keep Mode-1's historical
+        retry-without-hint behaviour (a hint can't fix an unreachable
+        provider) and still exhaust to the deterministic fallback."""
+        calls = {"n": 0}
+
+        def _fake_llm(prompt):
+            calls["n"] += 1
+            raise RuntimeError("connection reset")
+
+        with (
+            patch(f"{self._LLM_MODULE}._LLM_AVAILABLE", True),
+            patch(f"{self._LLM_MODULE}._LIVE_RETRY_DELAY_SECONDS", 0),
+            patch(f"{self._LLM_MODULE}._call_llm", side_effect=_fake_llm),
+        ):
+            result = generate_live_reply(_MID_FEN, _UCI_NORMAL)
+        from llm.seca.coach.live_move_pipeline import _LIVE_MAX_RETRIES
+
+        assert calls["n"] == _LIVE_MAX_RETRIES + 1
+        assert isinstance(result.hint, str) and result.hint.strip()
+
+
+# ---------------------------------------------------------------------------
+# Mode-1 deterministic fallback: player-seat eval framing (de-robotified
+# 2026-07-09, mirror of the Mode-2 warm in PR #372).
+# ---------------------------------------------------------------------------
+
+
+class TestMode1FallbackPlayerSeatFraming:
+
+    def test_player_side_advantage_says_you(self):
+        signal = _make_signal(band="clear_advantage", side="white", move_quality="good")
+        hint = _build_hint(_UCI_NORMAL, signal, "", player_color="white")
+        assert "You have a clear advantage" in hint, hint
+        assert "Position:" not in hint
+
+    def test_opponent_side_advantage_says_your_opponent(self):
+        signal = _make_signal(band="decisive_advantage", side="black", move_quality="mistake")
+        hint = _build_hint(_UCI_NORMAL, signal, "", player_color="white")
+        assert "Your opponent has a decisive advantage" in hint, hint
+
+    def test_black_player_seat_flips(self):
+        signal = _make_signal(band="small_advantage", side="black", move_quality="good")
+        hint = _build_hint(_UCI_NORMAL, signal, "", player_color="black")
+        assert "You have a small advantage" in hint, hint
+
+    def test_unknown_color_keeps_capitalised_side(self):
+        signal = _make_signal(band="clear_advantage", side="white", move_quality="good")
+        hint = _build_hint(_UCI_NORMAL, signal, "")
+        assert "White has a clear advantage" in hint, hint
+        assert "Position:" not in hint
+
+    def test_warmed_fallback_passes_every_mode2_gate(self):
+        """The deterministic hint is the force_deterministic safety floor —
+        it must pass every boundary gate by construction for both seats."""
+        from llm.seca.coach._mode_2_validators import validate_mode_2_or_raise
+
+        for side, color in (("white", "white"), ("black", "white"), ("black", "black")):
+            signal = _make_signal(band="clear_advantage", side=side, move_quality="blunder")
+            hint = _build_hint(_UCI_NORMAL, signal, "", player_color=color)
+            validate_mode_2_or_raise(hint, signal)
+
+    def test_warmed_fallback_still_max_two_sentences(self):
+        signal = _make_signal(band="clear_advantage", side="white", move_quality="blunder")
+        hint = _build_hint(_UCI_NORMAL, signal, "", player_color="white")
+        assert _sentence_count(hint) <= 2, hint
