@@ -96,9 +96,16 @@ class Limit:
 
 
 #: The product spec, verbatim.  Free showcases the coach (one fully
-#: LLM-coached game + three chat questions a day) and degrades — never
-#: silences — after that; Pro is "unlimited" marketing-wise with soft
-#: caps that bound abuse while staying far above real usage.
+#: LLM-coached game + three chat questions a day); the daily game is
+#: HARD-blocked at /game/start (client shows the paywall), and the
+#: degrade behaviour below is defense-in-depth for clients that bypass
+#: the start gate.  Pro plays UNLIMITED games ("Unlimited adaptive
+#: games" on the paywall is literal): the /game/start gate never blocks
+#: pro; past the daily coached-game cap the hints degrade to the
+#: deterministic coach, which costs zero LLM tokens — so the caps below
+#: are the pro TOKEN ceiling, not a play ceiling.  Post-2×-price
+#: worst case ≈ €2/mo per pathological subscriber vs ~€7 net revenue
+#: (see the unit-economics memory / PaywallActivity pricing KDoc).
 LIMITS: dict[str, dict[str, Limit]] = {
     PLAN_FREE: {
         METRIC_COACHED_GAME: Limit(1, _DAILY, BEHAVIOR_DEGRADE),
@@ -107,7 +114,10 @@ LIMITS: dict[str, dict[str, Limit]] = {
     },
     PLAN_PRO: {
         METRIC_COACHED_GAME: Limit(10, _DAILY, BEHAVIOR_DEGRADE),
-        METRIC_CHAT_TURN: Limit(100, _DAILY, BEHAVIOR_BLOCK),
+        # 30/day (was 100): far above honest use (heavy testing runs
+        # ~3/day) but it halves the pathological token ceiling — chat
+        # is the priciest per-unit surface.
+        METRIC_CHAT_TURN: Limit(30, _DAILY, BEHAVIOR_BLOCK),
         METRIC_IMPORT_ANALYSIS: Limit(50, _MONTHLY, BEHAVIOR_BLOCK),
     },
 }

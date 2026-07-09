@@ -11,7 +11,9 @@ into a non-dismissible paywall.  Pinned here:
     first move is free — a misclick or rethink costs nothing).
 3.  Flag ON, free, 1 marker (daily game already played): 402 with the
     documented ``game_daily_limit`` body; no game row created.
-4.  Flag ON, pro: blocked only at the far-higher 10/day soft cap.
+4.  Flag ON, pro: NEVER hard-blocked ("Unlimited adaptive games") —
+    past the coached-game cap the game still starts and /live/move
+    degrades the hints instead (the token ceiling).
 
 Direct endpoint-call style (fake request, limiter disabled, real bound
 DB) per test_game_checkpoint.py.  ``start_game`` is sync, so it's called
@@ -163,7 +165,7 @@ class TestFlagOnFree:
 
 
 # ---------------------------------------------------------------------------
-# 4. Pro plan — far higher cap
+# 4. Pro plan — NEVER hard-blocked at /game/start
 # ---------------------------------------------------------------------------
 
 
@@ -175,16 +177,21 @@ class TestFlagOnPro:
 
         result = _call(temp_db, player)
 
-        assert isinstance(result, dict), "pro's daily cap is 10, not 1"
+        assert isinstance(result, dict), "pro plays unlimited games"
         assert result.get("game_id")
 
-    def test_pro_blocked_at_ten(self, temp_db, no_limiter, monkeypatch):
+    def test_pro_never_blocked_even_past_coached_cap(self, temp_db, no_limiter, monkeypatch):
+        """The paywall sells "Unlimited adaptive games" — a paying
+        subscriber must NEVER see the Subscribe block on /game/start.
+        Past pro's daily coached-game cap the game still starts; the
+        /live/move admission degrades the hints to the deterministic
+        coach instead (zero LLM tokens), which is what caps the token
+        spend — see entitlements.LIMITS and its service tests."""
         monkeypatch.setenv("SECA_ENTITLEMENTS_ENFORCED", "true")
         player = _make_player(temp_db, email="pro10@test.com", plan="pro")
-        _seed_game_markers(temp_db, player, count=10)
+        _seed_game_markers(temp_db, player, count=10)  # coached cap exhausted
 
         result = _call(temp_db, player)
 
-        assert isinstance(result, JSONResponse)
-        assert result.status_code == 402
-        assert _body_of(result)["plan"] == "pro"
+        assert isinstance(result, dict), "pro over the coached cap still gets a game"
+        assert result.get("game_id")

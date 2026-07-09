@@ -15,7 +15,7 @@ enforces the freemium LIMITS table.  These tests pin:
     2nd distinct game_id the same day degrades with NO marker, both
     decisions are idempotent per game, and a missing game_id fails
     OPEN (pre-game_id clients are never punished).
-6.  Pro thresholds — same machinery, higher numbers (10/100/50).
+6.  Pro thresholds — same machinery, higher numbers (10/30/50).
 7.  set_plan — flips the row, rejects unknown plans, re-raises after
     rollback on commit failure (billing must observe the failure).
 8.  Freeze-guard cleanliness — the production FORBIDDEN_PATTERNS from
@@ -216,15 +216,18 @@ class TestCoachedGameAdmission:
 
 
 class TestProThresholds:
-    def test_pro_chat_reaches_100(self, db, enforced):
+    def test_pro_chat_reaches_30(self, db, enforced):
+        # 30/day (lowered from 100, 2026-07-06): far above honest use,
+        # but chat is the priciest per-unit surface, so the tighter rail
+        # halves the pathological token ceiling per subscriber.
         player = _make_player(db, plan="pro")
-        _seed_counter(db, player, service.METRIC_CHAT_TURN, "2026-07-03", 99)
+        _seed_counter(db, player, service.METRIC_CHAT_TURN, "2026-07-03", 29)
         assert service.check(db, player, service.METRIC_CHAT_TURN, now=_JULY_3).allowed
 
         service.record(db, player, service.METRIC_CHAT_TURN, now=_JULY_3)
         blocked = service.check(db, player, service.METRIC_CHAT_TURN, now=_JULY_3)
         assert not blocked.allowed
-        assert (blocked.plan, blocked.limit, blocked.used) == ("pro", 100, 100)
+        assert (blocked.plan, blocked.limit, blocked.used) == ("pro", 30, 30)
 
     def test_pro_admits_ten_games(self, db, enforced):
         player = _make_player(db, plan="pro")
