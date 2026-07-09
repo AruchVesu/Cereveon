@@ -227,16 +227,25 @@ the client.**
   forwarded only once it is at least `_LOOKAHEAD_WORDS` words behind the
   frontier, so the leading word of a multi-word forbidden phrase can never
   escape before the phrase completes and the gate fires.  A FORBID
-  violation aborts the stream; because of the lookahead, nothing forbidden
+  violation aborts the attempt; because of the lookahead, nothing forbidden
   was emitted.
 - REQUIRE gates are whole-reply properties, so they run once at stream end
   (the full reply is then re-validated with `validate_mode_2_or_raise`,
-  identical to the non-streaming contract).  An unmet REQUIRE aborts.
-- Any abort (FORBID mid-stream, REQUIRE at end, empty reply, provider
-  error) discards the LLM text and serves the Deterministic Fallback
-  (below) via a terminal `abort` event the client renders in place of the
-  partial.  The only thing a user can briefly see and have replaced is
-  clean-but-incomplete text on the rare mate/missing-data abort — never
+  identical to the non-streaming contract).  An unmet REQUIRE aborts the
+  attempt.
+- A rejected attempt (FORBID mid-stream, REQUIRE at end, or an empty
+  stream) is RETRIED with the same targeted rephrase hints the
+  non-streaming loop uses (`chat_pipeline._targeted_retry_hint`; same
+  `MAX_MODE_2_RETRIES` budget — retry-loop parity, 2026-07-09).  If the
+  rejected attempt already emitted chunks, the retry runs buffered and a
+  success is delivered as a `StreamRecovered` terminal — the route sends
+  it on the same `abort`-shaped wire payload the fallback uses, which
+  deployed clients already render as a full replacement of the partial
+  text.  If nothing was emitted yet, the retry streams live.
+- Firewall blocks (working-as-intended safety events), transport errors,
+  and retry exhaustion discard the LLM text and serve the Deterministic
+  Fallback (below) via the terminal `abort` event.  The only thing a user
+  can briefly see and have replaced is clean-but-incomplete text — never
   forbidden content.
 
 The trust boundary is therefore preserved: notation, move suggestions,

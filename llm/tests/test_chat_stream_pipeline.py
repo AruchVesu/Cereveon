@@ -25,11 +25,18 @@ from llm.seca.coach.chat_stream_pipeline import (
     StreamAbort,
     StreamChunk,
     StreamDone,
+    StreamRecovered,
     stream_chat_reply,
 )
 
 # Quiet equal opening: arms the equal-band + invented-tactic FORBID gates.
 _FEN = "r1bqkb1r/pppp1ppp/2n2n2/4p3/2P5/2N2N2/PP1PPPPP/R1BQKB1R w KQkq - 4 4"
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_delay(monkeypatch):
+    """Zero the inter-attempt sleep so retry tests don't slow the suite."""
+    monkeypatch.setattr(csp, "_RETRY_DELAY_SECONDS", 0)
 
 
 def _fake_stream(tokens):
@@ -39,6 +46,26 @@ def _fake_stream(tokens):
         for t in tokens:
             yield t
 
+    return _gen
+
+
+def _fake_stream_sequence(*token_lists, prompts=None):
+    """A ``_call_llm_stream`` stand-in whose output differs per call: call N
+    yields ``token_lists[N]`` (the last list repeats if called more).  When a
+    ``prompts`` list is supplied, each call's prompt is appended to it so
+    tests can assert on the retry hint."""
+
+    calls = {"n": 0}
+
+    def _gen(prompt):
+        if prompts is not None:
+            prompts.append(prompt)
+        idx = min(calls["n"], len(token_lists) - 1)
+        calls["n"] += 1
+        for t in token_lists[idx]:
+            yield t
+
+    _gen.calls = calls  # type: ignore[attr-defined]
     return _gen
 
 
@@ -174,3 +201,144 @@ def test_empty_stream_aborts(monkeypatch):
     assert isinstance(terminal, StreamAbort)
     assert terminal.reason == "empty"
     assert chunks == []
+
+
+# ---------------------------------------------------------------------------
+# Retry parity with the non-streaming loop (2026-07-09): a validator
+# rejection retries with the targeted hint instead of aborting straight to
+# the deterministic fallback.  Contract under test:
+#   * violation AFTER chunks were emitted → silent buffered retry →
+#     StreamRecovered carrying the full validated replacement reply;
+#   * violation BEFORE any emission → the retry streams LIVE (chunks +
+#     StreamDone), indistinguishable from a clean first attempt;
+#   * exhaustion (every attempt rejected) → StreamAbort, exactly
+#     _MAX_STREAM_RETRIES + 1 LLM calls, nothing forbidden ever emitted;
+#   * the retry prompt carries the targeted rephrase hint;
+#   * empty streams retry (2026-07-06 incident: transient empty responses);
+#   * firewall blocks NEVER retry (parity: working-as-intended safety event).
+# ---------------------------------------------------------------------------
+
+_CLEAN_RETRY_REPLY = _words(
+    "Give", "up", "material", "only", "when", "your", "pieces", "spring",
+    "to", "life", "and", "the", "enemy", "king", "becomes", "exposed",
+)
+
+
+def _drain_events(fen, fake, monkeypatch, *, esv=None):
+    monkeypatch.setattr(csp, "_call_llm_stream", fake)
+    if esv is not None:
+        monkeypatch.setattr(csp, "_chat_engine_signal", lambda *a, **k: esv)
+    chunks, terminal = [], None
+    for ev in stream_chat_reply(fen, [ChatTurn(role="user", content="When should I sacrifice?")]):
+        if isinstance(ev, StreamChunk):
+            chunks.append(ev.text)
+        else:
+            terminal = ev
+    return chunks, terminal
+
+
+def test_forbid_after_emission_recovers_buffered(monkeypatch):
+    # Attempt 1 emits >0 chunks (violation lands beyond the lookahead),
+    # then trips the invented-tactic gate on the bare noun "sacrifice" —
+    # the exact prod trip from the 2026-07-09 report.  Attempt 2 is clean,
+    # so the terminal must be StreamRecovered with the FULL clean reply.
+    bad = _words(
+        "Knowing", "when", "to", "give", "up", "material", "matters,",
+        "and", "a", "sacrifice",
+    )
+    fake = _fake_stream_sequence(bad, _CLEAN_RETRY_REPLY)
+    chunks, terminal = _drain_events(_FEN, fake, monkeypatch)
+    assert isinstance(terminal, StreamRecovered), terminal
+    assert terminal.reply == "".join(_CLEAN_RETRY_REPLY).strip()
+    assert terminal.mode == "CHAT_V1"
+    assert chunks, "violation beyond the lookahead must have emitted chunks first"
+    emitted = "".join(chunks).lower()
+    assert "sacrifice" not in emitted, f"forbidden noun leaked: {emitted!r}"
+    assert fake.calls["n"] == 2
+
+
+def test_forbid_before_emission_retries_live(monkeypatch):
+    # Attempt 1 violates within the lookahead (nothing emitted), so the
+    # retry may stream live: chunks + StreamDone, like a clean first try.
+    bad = _words("White", "is", "clearly", "winning")
+    fake = _fake_stream_sequence(bad, _CLEAN_RETRY_REPLY)
+    chunks, terminal = _drain_events(_FEN, fake, monkeypatch)
+    assert isinstance(terminal, StreamDone), terminal
+    assert "".join(chunks) == "".join(_CLEAN_RETRY_REPLY)
+    assert "winning" not in "".join(chunks).lower()
+    assert fake.calls["n"] == 2
+
+
+def test_retries_exhausted_aborts_with_no_leak(monkeypatch):
+    bad = _words(
+        "Knowing", "when", "to", "give", "up", "material", "matters,",
+        "and", "a", "sacrifice",
+    )
+    fake = _fake_stream_sequence(bad)  # same violation every attempt
+    chunks, terminal = _drain_events(_FEN, fake, monkeypatch)
+    assert isinstance(terminal, StreamAbort)
+    assert terminal.reason == "forbid"
+    assert fake.calls["n"] == csp._MAX_STREAM_RETRIES + 1
+    assert "sacrifice" not in "".join(chunks).lower()
+
+
+def test_require_failure_recovers_buffered(monkeypatch):
+    # Mate ESV; attempt 1 streams a clean reply that never says
+    # "inevitable" (REQUIRE fails at stream end, after chunks were
+    # emitted); attempt 2 satisfies the REQUIRE → StreamRecovered.
+    from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
+
+    esv = extract_engine_signal({}, fen=_FEN)
+    esv["evaluation"]["type"] = "mate"
+    esv["evaluation"]["band"] = "decisive_advantage"
+    esv["tactical_flags"] = ["mate_threat"]
+
+    no_require = _words(
+        "Your", "attack", "is", "very", "strong", "and", "the", "king",
+        "is", "badly", "exposed", "now",
+    )
+    with_require = _words(
+        "The", "mate", "is", "inevitable", "and", "cannot", "be",
+        "stopped", "now", "here",
+    )
+    fake = _fake_stream_sequence(no_require, with_require)
+    chunks, terminal = _drain_events(_FEN, fake, monkeypatch, esv=esv)
+    assert isinstance(terminal, StreamRecovered), terminal
+    assert "inevitable" in terminal.reply.lower()
+    assert fake.calls["n"] == 2
+
+
+def test_empty_stream_retries_then_succeeds(monkeypatch):
+    fake = _fake_stream_sequence([], _CLEAN_RETRY_REPLY)
+    chunks, terminal = _drain_events(_FEN, fake, monkeypatch)
+    # Nothing was emitted by the empty attempt, so the retry streams live.
+    assert isinstance(terminal, StreamDone), terminal
+    assert "".join(chunks) == "".join(_CLEAN_RETRY_REPLY)
+    assert fake.calls["n"] == 2
+
+
+def test_retry_prompt_carries_targeted_hint(monkeypatch):
+    prompts: list[str] = []
+    bad = _words(
+        "Knowing", "when", "to", "give", "up", "material", "matters,",
+        "and", "a", "sacrifice",
+    )
+    fake = _fake_stream_sequence(bad, _CLEAN_RETRY_REPLY, prompts=prompts)
+    _drain_events(_FEN, fake, monkeypatch)
+    assert len(prompts) == 2
+    assert "sacrificing a piece" in prompts[1], (
+        "retry prompt must carry the invented-tactic verb-form hint"
+    )
+    assert "sacrificing a piece" not in prompts[0]
+
+
+def test_firewall_block_never_retries(monkeypatch):
+    # Category P (prompt-leak) trigger — a working-as-intended safety
+    # event must abort immediately, exactly like the non-streaming loop.
+    bad = _words("I", "am", "instructed", "to", "avoid", "this")
+    fake = _fake_stream_sequence(bad, _CLEAN_RETRY_REPLY)
+    chunks, terminal = _drain_events(_FEN, fake, monkeypatch)
+    assert isinstance(terminal, StreamAbort)
+    assert terminal.reason == "forbid"
+    assert fake.calls["n"] == 1, "firewall blocks must not be retried"
+    assert "instructed" not in "".join(chunks).lower()

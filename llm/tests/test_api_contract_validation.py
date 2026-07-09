@@ -1383,6 +1383,19 @@ class TestChatStreamBoundaryValidation:
             "/chat/stream must serve the deterministic fallback on abort"
         )
 
+    def test_chat_stream_handles_recovered_terminal(self):
+        """A silent retry that recovers a validated reply after the live
+        attempt was rejected (StreamRecovered, 2026-07-09 retry parity)
+        must be delivered and persisted by the route — otherwise recovered
+        replies would be dropped and every mid-stream rejection would still
+        surface as the deterministic fallback."""
+        body = self._chat_stream_body()
+        assert "_StreamRecovered" in body, (
+            "/chat/stream must handle the StreamRecovered terminal "
+            "(retry-recovered validated reply, delivered as a full "
+            "replacement on the abort-shaped wire payload)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # ChatRequest.player_color — the coach's "you" framing for imported /
