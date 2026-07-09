@@ -275,7 +275,9 @@ is wire-backward-compatible with any unknown client.
   ```
 
   `plan` / `limit` / `used` reflect the caller's plan (`free` = 3/day,
-  `pro` = 100/day soft cap). Non-2xx, so no `X-Auth-Token` rotation
+  `pro` = 30/day anti-abuse rail — ~10× honest heavy use; lowered from
+  100 on 2026-07-06 to halve the pathological per-subscriber token
+  ceiling). Non-2xx, so no `X-Auth-Token` rotation
   header ships (the presented JWT stays valid — see §10). The turn is
   **not** consumed. Clients render this as the upgrade/paywall surface.
   A successful reply consumes one turn at the same 2xx side-effect
@@ -596,8 +598,12 @@ Pair with `POST /game/finish` (see §3) and `POST /game/{game_id}/checkpoint`
   `game_id`. Starting or resetting a game **before** the first move is
   not blocked (`remaining >= 1`): a misclick or opening rethink costs
   nothing. Resuming an existing game does not call `/game/start` and is
-  never gated. `pro` is blocked only at its far-higher soft cap
-  (10/day). Non-2xx, so no `X-Auth-Token` rotation header ships.
+  never gated. `pro` is **never** hard-blocked here — the paywall sells
+  "Unlimited adaptive games", so a subscriber always gets a `game_id`;
+  past pro's daily coached-game cap (10/day) the `/live/move` admission
+  degrades hints to the deterministic coach instead (`coach_tier.degraded`,
+  §4), which is what caps token spend. Non-2xx, so no `X-Auth-Token`
+  rotation header ships.
 
 ---
 

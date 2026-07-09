@@ -338,21 +338,23 @@ class TestFlagOnStream:
 
 
 class TestProPlan:
-    def test_pro_allowed_at_99(self, db, player, spy, monkeypatch):
+    def test_pro_allowed_at_29(self, db, player, spy, monkeypatch):
         monkeypatch.setenv("SECA_ENTITLEMENTS_ENFORCED", "true")
         player.plan = "pro"
         db.commit()
-        _seed_chat_counter(db, player, count=99)
+        _seed_chat_counter(db, player, count=29)
 
         assert isinstance(_call_chat(db, player), dict)
 
-    def test_pro_blocked_at_100(self, db, player, spy, monkeypatch):
+    def test_pro_blocked_at_30(self, db, player, spy, monkeypatch):
+        # 30/day (lowered from 100, 2026-07-06) — the anti-abuse rail on
+        # the priciest per-unit surface; still ~10x honest heavy use.
         monkeypatch.setenv("SECA_ENTITLEMENTS_ENFORCED", "true")
         player.plan = "pro"
         db.commit()
-        _seed_chat_counter(db, player, count=100)
+        _seed_chat_counter(db, player, count=30)
 
         blocked = _call_chat(db, player)
         assert isinstance(blocked, JSONResponse) and blocked.status_code == 402
         body = _body_of(blocked)
-        assert (body["plan"], body["limit"], body["used"]) == ("pro", 100, 100)
+        assert (body["plan"], body["limit"], body["used"]) == ("pro", 30, 30)

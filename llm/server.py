@@ -1397,7 +1397,7 @@ def start_game(
     # T3: player_id is sourced from the JWT, not the request body.  Any
     # req.player_id sent by older clients is ignored (see StartGameRequest).
 
-    # Free-tier hard gate (dormant until SECA_ENTITLEMENTS_ENFORCED):
+    # FREE-tier hard gate (dormant until SECA_ENTITLEMENTS_ENFORCED):
     # 1 coached game/day.  ``check`` counts the distinct coached-game
     # admission markers written on the first /live/move of each game, so
     # remaining==0 means the player has already PLAYED their daily game —
@@ -1408,8 +1408,15 @@ def start_game(
     # False and the gate is inert.  Read-only: the marker is still
     # written by /live/move, keeping "coached game" == "game you moved
     # in", never "game row created".
+    #
+    # PRO is deliberately NEVER hard-blocked here: the paywall sells
+    # "Unlimited adaptive games", and blocking a paying subscriber with
+    # a Subscribe screen would contradict the purchase.  Past pro's
+    # daily coached-game cap the /live/move admission degrades hints to
+    # the deterministic coach (zero LLM tokens), so unlimited pro PLAY
+    # carries a hard TOKEN ceiling — see entitlements.LIMITS.
     tier = entitlements.check(db, player, entitlements.METRIC_COACHED_GAME)
-    if tier.remaining == 0:
+    if tier.remaining == 0 and tier.plan == entitlements.PLAN_FREE:
         return _game_limit_response(tier)
 
     game_id = create_game(str(player.id))
