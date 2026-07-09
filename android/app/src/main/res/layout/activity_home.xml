@@ -7,7 +7,8 @@
     and pick what they want to do next.
 
     Top → bottom:
-      1.  Header — wordmark + circular avatar (initials).
+      1.  Header — wordmark + circular avatar (initials); tapping the
+          avatar opens the Settings sheet over this activity.
       2.  Date kicker — "<weekday> · Day <N>" (N = days since registration
           or some other monotonic counter; we currently fake it with the
           local date so the surface ships before backend support lands).
@@ -70,18 +71,37 @@
                     android:letterSpacing="0.018"
                     android:text="Cereveon" />
 
-                <TextView
-                    android:id="@+id/homeAvatar"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
-                    android:gravity="center"
-                    android:fontFamily="@font/cormorant_garamond"
-                    android:textStyle="italic"
-                    android:textColor="@color/atrium_accent_cyan"
-                    android:textSize="14sp"
-                    android:background="@drawable/atrium_home_avatar"
-                    android:text="—"
-                    tools:text="AG" />
+                <!-- The avatar doubles as the Settings entry point (the
+                     only other route is the in-game drawer, which
+                     requires starting a game first).  The 48dp
+                     FrameLayout is the accessible touch target; the
+                     32dp circle stays the visual.  The negative end
+                     margin re-flushes the circle with the content
+                     column's 24dp edge, cancelling the target's
+                     8dp overhang. -->
+                <FrameLayout
+                    android:id="@+id/homeAvatarTapTarget"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_marginEnd="-8dp"
+                    android:contentDescription="Settings"
+                    android:background="?attr/selectableItemBackgroundBorderless">
+
+                    <TextView
+                        android:id="@+id/homeAvatar"
+                        android:layout_width="32dp"
+                        android:layout_height="32dp"
+                        android:layout_gravity="center"
+                        android:gravity="center"
+                        android:fontFamily="@font/cormorant_garamond"
+                        android:textStyle="italic"
+                        android:textColor="@color/atrium_accent_cyan"
+                        android:textSize="14sp"
+                        android:background="@drawable/atrium_home_avatar"
+                        android:text="—"
+                        tools:text="AG" />
+
+                </FrameLayout>
 
             </LinearLayout>
 

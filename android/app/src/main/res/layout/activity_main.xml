@@ -19,8 +19,8 @@
     parent: chessBoard, drawerLayout, txtCoach, txtCoachContainer,
     statusPulse, scoreRow, txtEngineScore, txtMistakeCategory,
     txtWeaknessTags, txtNextTrainingChip, btnReset,
-    btnUndo, btnChat, btnGameHistory, btnProgressDashboard,
-    btnChangePassword, btnLogout.  (``txtRatingHeader`` was retired when
+    btnUndo, btnChat, btnGameHistory, btnProgressDashboard.
+    (``txtRatingHeader`` was retired when
     the user-visible Elo rating was hidden from the UI — opponent
     matching still uses the cached rating internally; the drawer no
     longer displays it.)
@@ -500,29 +500,14 @@
             android:textSize="16sp"
             android:text="Settings" />
 
+        <!-- Change password / Sign out retired as standalone buttons —
+             both live as Account rows inside the Settings sheet
+             (btnSettings above), which is also reachable from
+             HomeActivity's avatar. -->
         <View
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1" />
-
-        <Button
-            android:id="@+id/btnChangePassword"
-            style="@style/Atrium.Button.Secondary"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/atrium_tap_target"
-            android:textSize="14sp"
-            android:text="Change password"
-            android:layout_marginBottom="@dimen/atrium_space_8" />
-
-        <Button
-            android:id="@+id/btnLogout"
-            style="@style/Atrium.Button.Secondary"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/atrium_tap_target"
-            android:textSize="14sp"
-            android:text="Sign out"
-            android:textColor="@color/atrium_accent_amber"
-            android:layout_marginBottom="@dimen/atrium_space_8" />
 
         <TextView
             android:layout_width="match_parent"
