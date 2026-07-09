@@ -12,8 +12,8 @@ import org.junit.Test
  *
  * Invariants pinned
  * -----------------
- *  1. isTransient retries timeouts, network errors, and 5xx HTTP.
- *  2. isTransient does NOT retry 4xx HTTP or successes.
+ *  1. isTransient retries timeouts, network errors, 5xx HTTP, and 429.
+ *  2. isTransient does NOT retry other 4xx HTTP or successes.
  *  3. toJson + fromJson roundtrip preserves every field including
  *     null playerId / gameId.
  *  4. fromJson returns null (rather than crashing) on malformed JSON
@@ -47,16 +47,30 @@ class PendingGameFinishTest {
     @Test
     fun `4xx http errors are NOT transient`() {
         // 401 is handled separately by handleSessionExpired — not the
-        // retry-loop's job.  All other 4xx mean "the server actively
-        // rejected this payload"; retrying with the same payload
-        // would just fail again, so we don't.
-        for (code in listOf(400, 401, 403, 404, 409, 422, 429)) {
+        // retry-loop's job.  429 is transient (see dedicated test).
+        // The remaining 4xx mean "the server actively rejected this
+        // payload"; retrying with the same payload would just fail
+        // again, so we don't.
+        for (code in listOf(400, 401, 403, 404, 409, 422)) {
             assertFalse(
                 "HTTP $code must NOT be retried — the server rejected the payload, " +
                     "retrying would just fail again",
                 PendingGameFinish.isTransient(ApiResult.HttpError(code)),
             )
         }
+    }
+
+    @Test
+    fun `429 is transient`() {
+        // Rate-limiting rejects the REQUEST TIMING, not the payload —
+        // the same payload succeeds once the window resets.  The server
+        // caps /game/finish at 10/min, so a burst of quick games (or a
+        // proxy-collapsed rate bucket) must persist-and-retry rather
+        // than silently discard the finished game.
+        assertTrue(
+            "HTTP 429 must be retryable — the payload was never rejected",
+            PendingGameFinish.isTransient(ApiResult.HttpError(429)),
+        )
     }
 
     @Test
@@ -173,14 +187,24 @@ class PendingGameFinishTest {
     fun `classifyRetryResult maps other 4xx to DROP`() {
         // Server actively rejected the payload; retrying same payload
         // would just fail again.  Drop the slot so we don't keep
-        // tripping over it.
-        for (code in listOf(400, 403, 404, 409, 422, 429)) {
+        // tripping over it.  (429 is RESTORE — see dedicated test.)
+        for (code in listOf(400, 403, 404, 409, 422)) {
             assertEquals(
                 "HTTP $code must be DROP (non-retryable)",
                 PendingGameFinish.RetryAction.DROP,
                 PendingGameFinish.classifyRetryResult(ApiResult.HttpError(code)),
             )
         }
+    }
+
+    @Test
+    fun `classifyRetryResult maps 429 to RESTORE`() {
+        // Rate-limited ≠ rejected: keep the slot and try again on the
+        // next cold-start, when the 10/min window has long reset.
+        assertEquals(
+            PendingGameFinish.RetryAction.RESTORE,
+            PendingGameFinish.classifyRetryResult(ApiResult.HttpError(429)),
+        )
     }
 
     @Test

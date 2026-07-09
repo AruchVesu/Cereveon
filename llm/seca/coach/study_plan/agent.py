@@ -176,6 +176,12 @@ def generate_plan(
         .first()
     )
     if active is not None:
+        logger.info(
+            "study_plan skipped for player_id=%s: active plan %s (created %s) still in progress",
+            player_id,
+            active.id,
+            active.created_at,
+        )
         return active
 
     # Idempotency for a double-fired background task on the SAME game

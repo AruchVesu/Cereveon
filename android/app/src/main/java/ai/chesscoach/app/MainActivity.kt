@@ -549,6 +549,14 @@ class MainActivity : AppCompatActivity() {
                     }
                     is ApiResult.HttpError -> {
                         if (r.code == 401) {
+                            // Persist BEFORE bouncing to login so the game
+                            // survives re-auth: the post-login cold-start
+                            // retry (retryPendingFinishOnColdStart) replays
+                            // it.  If a DIFFERENT account signs in, the
+                            // server's player_id ownership check 403s and
+                            // the retry classifies DROP — no cross-account
+                            // attribution.
+                            persistPendingFinish(finishReq)
                             handleSessionExpired()
                         } else if (PendingGameFinish.isTransient(r)) {
                             // 5xx — server-side incident.  Persist + retry

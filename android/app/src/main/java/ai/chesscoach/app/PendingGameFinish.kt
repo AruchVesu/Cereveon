@@ -18,9 +18,9 @@ import kotlinx.serialization.encodeToString
  * [PREF_PENDING_FINISH_PAYLOAD] in SharedPreferences.  On the next
  * MainActivity cold-start [fromJson] rehydrates it and the activity
  * tries the call again.  Success clears the slot; a still-transient
- * failure leaves it for the next attempt; a 4xx response (other than
- * 401, which is handled separately) clears the slot since the call
- * would just fail again.
+ * failure (including 429 — see [isTransient]) leaves it for the next
+ * attempt; any other 4xx response (except 401, which is handled
+ * separately) clears the slot since the call would just fail again.
  *
  * This closes a real silent-data-loss bug: an entire game's PGN +
  * weakness analysis used to be dropped on the floor when the network
@@ -44,15 +44,19 @@ object PendingGameFinish {
      *   - Timeout: server might be slow / unreachable, retry
      *   - NetworkError: connection refused / DNS / etc., retry
      *   - HttpError 5xx: server-side incident, retry
+     *   - HttpError 429: rate-limited, NOT a payload rejection — the
+     *     same payload succeeds once the window resets.  /game/finish
+     *     is limited to 10/min server-side, so a burst of quick games
+     *     (or a proxy-collapsed rate bucket) must not cost the game.
      *
-     * 4xx (other than 401, handled by handleSessionExpired upstream)
+     * Other 4xx (401 is handled by handleSessionExpired upstream)
      * indicates a payload the server actively rejected — retrying
      * with the same payload would just fail again, so we don't.
      */
     fun isTransient(result: ApiResult<*>): Boolean = when (result) {
         is ApiResult.Timeout       -> true
         is ApiResult.NetworkError  -> true
-        is ApiResult.HttpError     -> result.code >= 500
+        is ApiResult.HttpError     -> result.code >= 500 || result.code == 429
         is ApiResult.Success       -> false
     }
 
@@ -114,7 +118,8 @@ object PendingGameFinish {
      * retry semantics differ:
      *   - 401 means "auth lapsed", which is recoverable on next login;
      *     keep the payload.
-     *   - 4xx (non-401) means "server rejected this payload"; drop it.
+     *   - 429 is transient per [isTransient]; keep the payload.
+     *   - Other 4xx means "server rejected this payload"; drop it.
      */
     fun classifyRetryResult(result: ApiResult<*>): RetryAction = when (result) {
         is ApiResult.Success      -> RetryAction.DONE
