@@ -14,7 +14,6 @@ import android.view.View
 import android.view.animation.AlphaAnimation
 import android.view.animation.Animation
 import android.widget.Button
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -223,8 +222,6 @@ class MainActivity : AppCompatActivity() {
         val btnUndo = findViewById<Button>(R.id.btnUndo)
         val btnChat = findViewById<Button>(R.id.btnChat)
         val btnGameHistory = findViewById<Button>(R.id.btnGameHistory)
-        val btnChangePassword = findViewById<Button>(R.id.btnChangePassword)
-        val btnLogout = findViewById<Button>(R.id.btnLogout)
 
         // START PULSE ANIMATION
         startPulseAnimation()
@@ -347,27 +344,25 @@ class MainActivity : AppCompatActivity() {
 
         // Atrium Settings sheet — preferences (coach voice, board
         // style, sound, notifications, account chevrons).  Account
-        // section delegates to the existing change-password dialog
-        // and logout flow rather than duplicating them.
+        // section routes through AccountFlows, shared with
+        // HomeActivity's avatar entry so the two hosts can't drift.
+        // The old standalone Change-password / Sign-out drawer buttons
+        // were retired — the sheet's Account rows are the single
+        // surface for both.
         findViewById<Button>(R.id.btnSettings)?.setOnClickListener {
             drawerLayout.closeDrawer(GravityCompat.END)
             val sheet = SettingsBottomSheet()
-            sheet.onChangePasswordTapped = { showChangePasswordDialog() }
-            sheet.onSignOutTapped = { performLogout() }
+            sheet.onChangePasswordTapped = {
+                AccountFlows.showChangePasswordDialog(this, authRepo, authApiClient)
+            }
+            sheet.onSignOutTapped = {
+                AccountFlows.performLogout(this, authRepo, authApiClient)
+            }
             sheet.onConnectLichessTapped = {
                 LichessConnectBottomSheet()
                     .show(supportFragmentManager, LichessConnectBottomSheet.TAG)
             }
             sheet.show(supportFragmentManager, "SettingsBottomSheet")
-        }
-
-        btnChangePassword.setOnClickListener {
-            drawerLayout.closeDrawer(GravityCompat.END)
-            showChangePasswordDialog()
-        }
-
-        btnLogout.setOnClickListener {
-            performLogout()
         }
 
         // Cached curriculum chip if available — the rating header was
@@ -811,21 +806,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun performLogout() {
-        val token = authRepo.getToken()
-        lifecycleScope.launch {
-            if (token != null) {
-                authApiClient.logout(token)   // best-effort; ignore result
-            }
-            authRepo.clearToken()
-            startActivity(
-                Intent(this@MainActivity, LoginActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
-            )
-            finish()
-        }
-    }
-
     private fun startPulseAnimation() {
         val pulse = AlphaAnimation(1.0f, 0.3f).apply {
             duration = 1000
@@ -998,55 +978,6 @@ class MainActivity : AppCompatActivity() {
                 finish()
             }
             .setNegativeButton("Dismiss", null)
-            .show()
-    }
-
-    private fun showChangePasswordDialog() {
-        if (isFinishing || isDestroyed) return
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(64, 32, 64, 16)
-        }
-        val etCurrent = EditText(this).apply {
-            hint = "Current password"
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-        }
-        val etNew = EditText(this).apply {
-            hint = "New password (min 8 characters)"
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-        }
-        layout.addView(etCurrent)
-        layout.addView(etNew)
-
-        AlertDialog.Builder(this)
-            .setTitle("Change Password")
-            .setView(layout)
-            .setPositiveButton("Save") { _, _ ->
-                val current = etCurrent.text.toString()
-                val new = etNew.text.toString()
-                if (current.isBlank() || new.isBlank()) {
-                    Toast.makeText(this, "Fields must not be empty.", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                if (new.length < 8) {
-                    Toast.makeText(this, "New password must be at least 8 characters.", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                val token = authRepo.getToken() ?: return@setPositiveButton
-                lifecycleScope.launch {
-                    when (authApiClient.changePassword(current, new, token)) {
-                        is ApiResult.Success ->
-                            Toast.makeText(this@MainActivity, "Password updated.", Toast.LENGTH_SHORT).show()
-                        is ApiResult.HttpError ->
-                            Toast.makeText(this@MainActivity, "Incorrect current password.", Toast.LENGTH_SHORT).show()
-                        else ->
-                            Toast.makeText(this@MainActivity, "Network error. Please try again.", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-            .setNegativeButton("Cancel", null)
             .show()
     }
 

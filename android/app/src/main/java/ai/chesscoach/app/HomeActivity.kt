@@ -48,6 +48,14 @@ import kotlin.math.max
  * old tab wiring bounced through MainActivity and started a new game
  * session as a side effect just to show a sheet).
  *
+ * Header avatar
+ * -------------
+ * Tapping the initials circle opens [SettingsBottomSheet] over this
+ * activity — the same sheet MainActivity's drawer shows in-game, with
+ * the Account rows routed through [AccountFlows].  Without this entry
+ * the only route to Settings would be starting a game and opening the
+ * drawer.
+ *
  * Day counter
  * -----------
  * The date kicker reads "<Weekday> · Day <N>" where N is the number of
@@ -150,6 +158,12 @@ class HomeActivity : AppCompatActivity() {
         resumeTitle   = findViewById(R.id.homeResumeTitle)
         resumeSub     = findViewById(R.id.homeResumeSub)
         syncIndicator = findViewById(R.id.homeSyncIndicator)
+
+        // Avatar → Settings.  The 48dp FrameLayout around the 32dp
+        // circle is the actual touch target (see activity_home.xml).
+        findViewById<View>(R.id.homeAvatarTapTarget).setOnClickListener {
+            openSettings()
+        }
 
         // Theme runs edge-to-edge — without this listener the bottom
         // tab bar (Home / Lessons / Coach / You) sits underneath the
@@ -499,6 +513,28 @@ class HomeActivity : AppCompatActivity() {
         val sheet = ProgressDashboardBottomSheet()
         sheet.gameApiClient = gameApiClient
         sheet.show(supportFragmentManager, "ProgressDashboardBottomSheet")
+    }
+
+    /**
+     * Avatar tap — the Settings sheet, hosted over Home.  Same sheet
+     * MainActivity's drawer shows; the Account-section callbacks route
+     * through [AccountFlows] so the two hosts can't drift on
+     * validation or logout routing.
+     */
+    private fun openSettings() {
+        if (supportFragmentManager.isStateSaved) return
+        val sheet = SettingsBottomSheet()
+        sheet.onChangePasswordTapped = {
+            AccountFlows.showChangePasswordDialog(this, authRepo, authApiClient)
+        }
+        sheet.onSignOutTapped = {
+            AccountFlows.performLogout(this, authRepo, authApiClient)
+        }
+        sheet.onConnectLichessTapped = {
+            LichessConnectBottomSheet()
+                .show(supportFragmentManager, LichessConnectBottomSheet.TAG)
+        }
+        sheet.show(supportFragmentManager, "SettingsBottomSheet")
     }
 
     /**
