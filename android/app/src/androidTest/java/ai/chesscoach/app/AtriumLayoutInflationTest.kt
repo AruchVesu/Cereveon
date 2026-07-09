@@ -85,12 +85,9 @@ class AtriumLayoutInflationTest {
         assertNotNull(v.findViewById<View>(R.id.homeSyncIndicatorText))
         assertNotNull(v.findViewById<View>(R.id.homeResumeBlock))
         assertNotNull(v.findViewById<View>(R.id.homeRowNewGame))
-        assertNotNull(v.findViewById<View>(R.id.homeRowLessons))
-        assertNotNull(v.findViewById<View>(R.id.homeRowOpenings))
         assertNotNull(v.findViewById<View>(R.id.homeRowPastGames))
         assertNotNull(v.findViewById<View>(R.id.homeTabHome))
-        assertNotNull(v.findViewById<View>(R.id.homeTabLessons))
-        assertNotNull(v.findViewById<View>(R.id.homeTabCoach))
+        assertNotNull(v.findViewById<View>(R.id.homeTabPuzzles))
         assertNotNull(v.findViewById<View>(R.id.homeTabYou))
     }
 
@@ -100,35 +97,6 @@ class AtriumLayoutInflationTest {
         // chapter header + eval band + coach paragraph + footer.  A
         // theme attribute mismatch usually shows up here first.
         inflate(R.layout.activity_main)
-    }
-
-    @Test
-    fun activity_openings_inflates() {
-        val v = inflate(R.layout.activity_openings)
-        assertNotNull(v.findViewById<View>(R.id.openingsHeader))
-        assertNotNull(v.findViewById<View>(R.id.openingsStats))
-        assertNotNull(v.findViewById<View>(R.id.openingsCardContainer))
-        assertNotNull(v.findViewById<View>(R.id.btnOpeningsDrill))
-        assertNotNull(v.findViewById<View>(R.id.btnOpeningsAdd))
-    }
-
-    @Test
-    fun item_opening_card_inflates() {
-        val v = inflate(R.layout.item_opening_card)
-        assertNotNull(v.findViewById<View>(R.id.openingEco))
-        assertNotNull(v.findViewById<View>(R.id.openingName))
-        assertNotNull(v.findViewById<View>(R.id.openingLine))
-        assertNotNull(v.findViewById<View>(R.id.openingMasteryFill))
-        assertNotNull(v.findViewById<View>(R.id.openingMasteryPct))
-        assertNotNull(v.findViewById<View>(R.id.openingActiveBadge))
-    }
-
-    @Test
-    fun dialog_add_opening_inflates() {
-        val v = inflate(R.layout.dialog_add_opening)
-        assertNotNull(v.findViewById<View>(R.id.dialogAddOpeningEco))
-        assertNotNull(v.findViewById<View>(R.id.dialogAddOpeningName))
-        assertNotNull(v.findViewById<View>(R.id.dialogAddOpeningLine))
     }
 
     @Test
@@ -179,12 +147,15 @@ class AtriumLayoutInflationTest {
 
     @Test
     fun bottom_sheet_progress_dashboard_inflates() {
-        inflate(R.layout.bottom_sheet_progress_dashboard)
-    }
-
-    @Test
-    fun bottom_sheet_training_session_inflates() {
-        inflate(R.layout.bottom_sheet_training_session)
+        val v = inflate(R.layout.bottom_sheet_progress_dashboard)
+        // Human-progress header IDs resolved by
+        // ProgressDashboardBottomSheet.onViewCreated.
+        assertNotNull(v.findViewById<View>(R.id.heroLevelBlock))
+        assertNotNull(v.findViewById<View>(R.id.txtRating))
+        assertNotNull(v.findViewById<View>(R.id.txtHeroXp))
+        assertNotNull(v.findViewById<View>(R.id.statGamesRow))
+        assertNotNull(v.findViewById<View>(R.id.statGamesDivider))
+        assertNotNull(v.findViewById<View>(R.id.txtConfidence))
     }
 
     @Test

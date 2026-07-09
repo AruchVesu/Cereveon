@@ -30,8 +30,10 @@ import org.junit.Test
  * 13.  FORMAT_TOPIC_CAPITALISED:         formatTopic capitalises first letter, replaces underscores.
  * 14.  RETIRED in PR 26: FORMAT_FORMAT_CAPITALISED (formatFormat helper deleted).
  * 15.  RETIRED in PR 26: FORMAT_GAIN_POSITIVE (formatGain helper deleted).
- * 16.  DIFFICULTY_PROGRESS_MIDPOINT:     difficultyProgress 0.7 → 70.
- * 17.  DIFFICULTY_PROGRESS_BOUNDS:       difficultyProgress clamps outside 0–1.
+ * 16.  TRAIN_DIFF_FORMAT_BAND:           formatDifficulty capitalises the band string.
+ * 17.  TRAIN_DIFF_PROGRESS_BAND/UNKNOWN/CASE: difficultyProgress maps
+ *                                        easy/medium/hard → 30/60/85, midpoints
+ *                                        unknown bands at 50, case-insensitively.
  * 18.  BUNDLE_ARGS_NULL_COACH_ACTION:    GameFinishResponse with null weakness/reason doesn't crash.
  * 19.  BUNDLE_ARGS_BLANK_DESCRIPTION:    coachContent description can be empty.
  * 20.  BUNDLE_FULL_RESPONSE_PARSES:      Full GameFinishResponse produces expected formatted strings.
@@ -160,17 +162,45 @@ class GameSummaryBottomSheetTest {
     // call site.
 
     // ------------------------------------------------------------------
-    // 16–17  difficultyProgress — RETIRED 2026-05-25
+    // 16–17  formatDifficulty / difficultyProgress (String band)
     // ------------------------------------------------------------------
     //
-    // The Float-based ``GameSummaryBottomSheet.difficultyProgress`` companion
-    // helper was retired alongside the wire-shape fix that switched
+    // The Float-based ``difficultyProgress`` companion helper was retired
+    // 2026-05-25 alongside the wire-shape fix that switched
     // ``CurriculumRecommendation.difficulty`` to ``String`` (one of
-    // "easy" / "medium" / "hard").  The post-game training card now sources
-    // its ProgressBar fill from ``TrainingSessionBottomSheet.difficultyProgress``
-    // (String → 30 / 60 / 85); that helper is exercised by
-    // ``TrainingSessionBottomSheetTest.TRAIN_DIFF_PROGRESS_BAND`` and
-    // ``TRAIN_DIFF_PROGRESS_UNKNOWN``.
+    // "easy" / "medium" / "hard").  The String-band helpers (and these
+    // TRAIN_DIFF_* tests) moved here from TrainingSessionBottomSheet when
+    // the standalone Lessons surface was removed — the post-game training
+    // card is their only remaining caller.
+
+    @Test
+    fun `TRAIN_DIFF_FORMAT_BAND - capitalises the band string`() {
+        assertEquals("Difficulty: Easy",   GameSummaryBottomSheet.formatDifficulty("easy"))
+        assertEquals("Difficulty: Medium", GameSummaryBottomSheet.formatDifficulty("medium"))
+        assertEquals("Difficulty: Hard",   GameSummaryBottomSheet.formatDifficulty("hard"))
+    }
+
+    @Test
+    fun `TRAIN_DIFF_PROGRESS_BAND - maps each known band to its fixed percent`() {
+        assertEquals(30, GameSummaryBottomSheet.difficultyProgress("easy"))
+        assertEquals(60, GameSummaryBottomSheet.difficultyProgress("medium"))
+        assertEquals(85, GameSummaryBottomSheet.difficultyProgress("hard"))
+    }
+
+    @Test
+    fun `TRAIN_DIFF_PROGRESS_UNKNOWN - unknown band falls through to the 50 percent midpoint`() {
+        // Future bands shipped by the server without a coordinated Android
+        // release should render at the midpoint rather than 0 (which would
+        // imply "no difficulty") or throw.
+        assertEquals(50, GameSummaryBottomSheet.difficultyProgress("expert"))
+        assertEquals(50, GameSummaryBottomSheet.difficultyProgress(""))
+    }
+
+    @Test
+    fun `TRAIN_DIFF_PROGRESS_CASE - band match is case-insensitive`() {
+        assertEquals(30, GameSummaryBottomSheet.difficultyProgress("EASY"))
+        assertEquals(60, GameSummaryBottomSheet.difficultyProgress("Medium"))
+    }
 
     // ------------------------------------------------------------------
     // 18  Null weakness/reason in CoachActionDto doesn't affect badge

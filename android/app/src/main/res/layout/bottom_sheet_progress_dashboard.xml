@@ -5,31 +5,34 @@
     Top → bottom:
       1.  Drag handle.
       2.  Chapter header — "PROFILE" / "Your trends".
-      3.  WEAKNESS PROFILE section — kicker + WeaknessBarChartView.
+      3.  Hero cell — "Level N" display + "X XP" kicker, from the
+          cached training XP (hidden until the cache exists).
+      4.  Stat row — "Recent games · N played · M won", from the
+          /player/progress history window (hidden until fetch succeeds).
+      5.  WEAKNESS PROFILE section — kicker + WeaknessBarChartView.
           Atrium uses italic chips for "patterns" (handoff #9), but
           the existing bar chart is more informative — kept and
           re-skinned via the foundation theme cascade rather than
           reduced to chips.
-      4.  HOW THE COACH SEES YOU section — kicker +
+      6.  HOW THE COACH SEES YOU section — kicker +
           worldModelContainer (activity inflates content into it).
-      5.  TRAINING FOCUS section — kicker + recommendationsList,
+      7.  TRAINING FOCUS section — kicker + recommendationsList,
           with txtNoRecommendations empty state.
-      6.  txtDashboardError shown when the dashboard fetch fails.
+      8.  txtDashboardError shown when the dashboard fetch fails.
 
-    Retired sections.
-    The hero rating cell, confidence row, and "Rating trend" sparkline
-    were retired when the user-visible Elo display was hidden from the
-    UI.  Their views remain in the layout with ``visibility="gone"`` so
-    the existing findViewById callers keep resolving (avoids a Kotlin-
-    side refactor in the same change), but they no longer render to
-    the user.  The opponent-Elo row inside the world-model container
-    is suppressed in code (``populateWorldModel`` filters it out).
-
-    Preserved IDs (every findViewById in
-    ProgressDashboardBottomSheet.kt resolves unchanged):
-      progressSparkline, txtNoRatingHistory, txtRating, txtConfidence,
-      weaknessChart, worldModelContainer, recommendationsList,
-      txtNoRecommendations, txtDashboardError.
+    Repurposed / retired Elo sections.
+    The hero cell and stat row were originally the Elo rating +
+    confidence surfaces, retired when the user-visible rating was
+    hidden from the UI.  They are repurposed in place (same IDs —
+    txtRating now renders "Level N", txtConfidence renders
+    "N played · M won") as the profile's human-progress header.  The
+    "Rating trend" sparkline section stays fully retired with
+    ``visibility="gone"`` and is never flipped visible in code —
+    plotting rating history would re-leak the hidden Elo, and there is
+    no historical XP series to plot yet.  Its views stay in the tree
+    as the slot for a future XP-trend visualisation.  The opponent-Elo
+    row inside the world-model container is suppressed in code
+    (``populateWorldModel`` filters it out).
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -61,12 +64,14 @@
             app:atriumKicker="Profile"
             app:atriumTitle="Your trends" />
 
-        <!-- Hero rating + kicker.  Retired when the user-visible Elo
-             display was hidden; the view stays in the tree (with
-             ``visibility="gone"``) so ProgressDashboardBottomSheet's
-             findViewById<TextView>(R.id.txtRating) lookup keeps
-             resolving without a Kotlin-side refactor. -->
+        <!-- Hero level + XP kicker (human progress).  Originally the
+             Elo hero cell; repurposed in place — txtRating keeps its
+             id (XML↔Kotlin contract unchanged) but now renders
+             "Level N" from the cached training XP.  Starts gone;
+             ProgressDashboardBottomSheet flips it visible when the
+             PREF_TRAINING_XP cache exists. -->
         <LinearLayout
+            android:id="@+id/heroLevelBlock"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
@@ -74,7 +79,7 @@
             android:paddingEnd="@dimen/atrium_space_24"
             android:paddingTop="@dimen/atrium_space_8"
             android:visibility="gone"
-            tools:visibility="gone">
+            tools:visibility="visible">
 
             <TextView
                 android:id="@+id/txtRating"
@@ -82,20 +87,27 @@
                 android:layout_height="wrap_content"
                 android:textAppearance="@style/Atrium.Display.Large"
                 android:text="—"
-                tools:text="1720" />
+                tools:text="Level 4" />
 
             <TextView
+                android:id="@+id/txtHeroXp"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/atrium_space_4"
                 android:textAppearance="@style/Atrium.Kicker"
-                android:text="Current rating" />
+                android:text="—"
+                tools:text="340 XP" />
 
         </LinearLayout>
 
-        <!-- Inline confidence row.  Retired alongside the hero rating
-             cell; same ``visibility="gone"`` rationale as above. -->
+        <!-- Recent-games stat row (human progress).  Originally the
+             Elo confidence row; repurposed in place — txtConfidence
+             keeps its id but now renders "N played · M won" from the
+             /player/progress history window.  Starts gone;
+             ProgressDashboardBottomSheet flips it visible when the
+             fetch succeeds. -->
         <LinearLayout
+            android:id="@+id/statGamesRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
@@ -104,13 +116,13 @@
             android:paddingEnd="@dimen/atrium_space_24"
             android:paddingTop="@dimen/atrium_space_12"
             android:visibility="gone"
-            tools:visibility="gone">
+            tools:visibility="visible">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textAppearance="@style/Atrium.Kicker"
-                android:text="Confidence · " />
+                android:text="Recent games · " />
 
             <TextView
                 android:id="@+id/txtConfidence"
@@ -118,15 +130,17 @@
                 android:layout_height="wrap_content"
                 android:textAppearance="@style/Atrium.Numeric.Cyan"
                 android:text="—"
-                tools:text="72%" />
+                tools:text="12 played · 7 won" />
 
         </LinearLayout>
 
-        <!-- Divider between the (now-hidden) confidence row and the
-             (now-hidden) "Rating trend" sparkline section.  Gone so
-             two consecutive hidden sections don't leave an orphan
-             hairline visible above the WEAKNESS PROFILE block. -->
+        <!-- Divider between the stat row and the WEAKNESS PROFILE
+             block (the "Rating trend" section in between stays gone).
+             Starts gone and is flipped visible together with
+             statGamesRow so an orphan hairline never floats above
+             WEAKNESS PROFILE when the fetch fails. -->
         <View
+            android:id="@+id/statGamesDivider"
             android:layout_width="match_parent"
             android:layout_height="@dimen/atrium_hairline_thickness"
             android:layout_marginStart="@dimen/atrium_space_24"
@@ -136,9 +150,11 @@
             android:background="@color/atrium_hairline"
             android:visibility="gone" />
 
-        <!-- RATING TREND.  Entire section hidden when the
-             user-visible Elo display was retired; views stay in the
-             tree for findViewById compatibility. -->
+        <!-- RATING TREND.  Entire section retired when the
+             user-visible Elo display was hidden; nothing in code
+             touches these views any more (see header comment) — they
+             stay in the tree as the slot for a future XP-trend
+             visualisation. -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

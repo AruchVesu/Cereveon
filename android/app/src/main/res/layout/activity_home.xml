@@ -16,15 +16,14 @@
       5.  Resume card — last in-progress game (HIDDEN until we have a
           last-game persistence hook in MainActivity).
       6.  Library section header.
-      7.  4 library rows — Roman numeral · italic title · italic muted
+      7.  2 library rows — Roman numeral · italic title · italic muted
           sub · ›:
             I — New game     (→ MainActivity)
-            II — Lessons     (→ MainActivity + EXTRA_OPEN_SHEET=training)
-            III — Openings   (no-op for now: AtriumOpenings not built)
-            IV — Past games  (→ MainActivity + EXTRA_OPEN_SHEET=history)
-      8.  Bottom tab bar — Home (active) / Lessons / Coach / You.  All
-          tabs except Home open MainActivity with the appropriate sheet
-          extra; tab navigation as a true root is a separate effort.
+            II — Past games  (→ MainActivity + EXTRA_OPEN_SHEET=history)
+      8.  Bottom tab bar — Home (active) / Puzzles / You.  Puzzles opens
+          the study-plan overview sheet, You opens the progress dashboard
+          sheet — both hosted directly over HomeActivity (no MainActivity
+          relaunch); tab navigation as a true root is a separate effort.
 -->
 <androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
@@ -386,69 +385,7 @@
             <View
                 style="@style/Atrium.HomeLibraryRow.Divider" />
 
-            <!-- Library row — II — Lessons. -->
-            <LinearLayout
-                android:id="@+id/homeRowLessons"
-                style="@style/Atrium.HomeLibraryRow"
-                android:tag="lessons">
-
-                <TextView
-                    style="@style/Atrium.HomeLibraryRow.Numeral"
-                    android:text="II" />
-
-                <LinearLayout
-                    style="@style/Atrium.HomeLibraryRow.TitleBlock">
-
-                    <TextView
-                        style="@style/Atrium.HomeLibraryRow.Title"
-                        android:text="Lessons" />
-
-                    <TextView
-                        android:id="@+id/homeRowLessonsSub"
-                        style="@style/Atrium.HomeLibraryRow.Sub"
-                        android:text="Curriculum coach"
-                        tools:text="3 of 12 chapters · pin &amp; pressure" />
-
-                </LinearLayout>
-
-                <TextView style="@style/Atrium.HomeLibraryRow.Chevron" />
-
-            </LinearLayout>
-
-            <View
-                style="@style/Atrium.HomeLibraryRow.Divider" />
-
-            <!-- Library row — III — Openings. -->
-            <LinearLayout
-                android:id="@+id/homeRowOpenings"
-                style="@style/Atrium.HomeLibraryRow"
-                android:tag="openings">
-
-                <TextView
-                    style="@style/Atrium.HomeLibraryRow.Numeral"
-                    android:text="III" />
-
-                <LinearLayout
-                    style="@style/Atrium.HomeLibraryRow.TitleBlock">
-
-                    <TextView
-                        style="@style/Atrium.HomeLibraryRow.Title"
-                        android:text="Openings" />
-
-                    <TextView
-                        style="@style/Atrium.HomeLibraryRow.Sub"
-                        android:text="Coming soon" />
-
-                </LinearLayout>
-
-                <TextView style="@style/Atrium.HomeLibraryRow.Chevron" />
-
-            </LinearLayout>
-
-            <View
-                style="@style/Atrium.HomeLibraryRow.Divider" />
-
-            <!-- Library row — IV — Past games. -->
+            <!-- Library row — II — Past games. -->
             <LinearLayout
                 android:id="@+id/homeRowPastGames"
                 style="@style/Atrium.HomeLibraryRow"
@@ -456,7 +393,7 @@
 
                 <TextView
                     style="@style/Atrium.HomeLibraryRow.Numeral"
-                    android:text="IV" />
+                    android:text="II" />
 
                 <LinearLayout
                     style="@style/Atrium.HomeLibraryRow.TitleBlock">
@@ -516,24 +453,13 @@
         </LinearLayout>
 
         <LinearLayout
-            android:id="@+id/homeTabLessons"
+            android:id="@+id/homeTabPuzzles"
             style="@style/Atrium.HomeTab"
-            android:tag="lessons">
+            android:tag="puzzles">
 
             <TextView
                 style="@style/Atrium.HomeTab.Label"
-                android:text="Lessons" />
-
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/homeTabCoach"
-            style="@style/Atrium.HomeTab"
-            android:tag="coach">
-
-            <TextView
-                style="@style/Atrium.HomeTab.Label"
-                android:text="Coach" />
+                android:text="Puzzles" />
 
         </LinearLayout>
 

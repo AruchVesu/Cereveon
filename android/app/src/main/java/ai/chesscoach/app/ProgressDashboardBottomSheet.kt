@@ -14,34 +14,40 @@ import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import kotlin.math.max
 
 /**
- * Full-screen bottom sheet showing the player's progress dashboard.
+ * Full-screen bottom sheet showing the player's profile — the "You"
+ * surface: human progress up top, then the coaching dashboard.
  *
  * Sections (post-Elo-removal):
- *  1. Weakness profile — [WeaknessBarChartView] of category scores from the world model.
- *  2. "How the coach sees you" — world-model fields in plain language.
+ *  1. Human-progress header — "Level N" + "X XP" hero (cached training
+ *     XP, same source as the Home kicker) and a "Recent games ·
+ *     N played · M won" stat row from the /player/progress history.
+ *  2. Weakness profile — [WeaknessBarChartView] of category scores from the world model.
+ *  3. "How the coach sees you" — world-model fields in plain language.
  *     (OPPONENT ELO row suppressed — would otherwise leak the
  *     player's own hidden rating since opponent = rating - ~40.)
- *  3. Coach's plan — most recent decision from SharedPreferences.
- *  4. Training focus — prioritised recommendations from HistoricalAnalysisPipeline.
+ *  4. Coach's plan — most recent decision from SharedPreferences.
+ *  5. Training focus — prioritised recommendations from HistoricalAnalysisPipeline.
  *
  * Retired surfaces
  * ----------------
- * The hero rating cell, confidence row, and "Rating trend" sparkline
- * were retired when the user-visible Elo display was hidden.  Their
- * views remain in the layout with ``visibility="gone"`` so the
- * findViewById callers below keep resolving; their populate helpers
- * (``populateRatingRow`` / ``populateSparkline``) are no-ops on the
- * hidden views and stay in place as scaffolding for a future
- * XP-progress visualisation that will reuse the sparkline slot.
+ * The Elo hero cell and confidence row were retired when the
+ * user-visible Elo display was hidden, and are now repurposed in
+ * place (same view IDs) as the human-progress header above.  The
+ * "Rating trend" sparkline section stays fully retired — its views
+ * remain in the layout with ``visibility="gone"`` and nothing flips
+ * them visible any more (the old ``populateSparkline`` could resurrect
+ * the sparkline and re-leak the hidden rating trend); the slot is
+ * reserved for a future XP-progress visualisation.
  *
  * Data is fetched from GET /player/progress (Bearer auth).
  * Inject [gameApiClient] before calling [show].
  */
 class ProgressDashboardBottomSheet : BottomSheetDialogFragment() {
 
-    /** Injected by [MainActivity] before [show] is called. */
+    /** Injected by the hosting activity before [show] is called. */
     var gameApiClient: GameApiClient? = null
 
     override fun onCreateView(
@@ -53,15 +59,32 @@ class ProgressDashboardBottomSheet : BottomSheetDialogFragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        val sparkline           = view.findViewById<RatingSparklineView>(R.id.progressSparkline)
-        val txtNoRatingHistory  = view.findViewById<TextView>(R.id.txtNoRatingHistory)
+        val heroLevelBlock      = view.findViewById<LinearLayout>(R.id.heroLevelBlock)
         val txtRating           = view.findViewById<TextView>(R.id.txtRating)
+        val txtHeroXp           = view.findViewById<TextView>(R.id.txtHeroXp)
+        val statGamesRow        = view.findViewById<LinearLayout>(R.id.statGamesRow)
+        val statGamesDivider    = view.findViewById<View>(R.id.statGamesDivider)
         val txtConfidence       = view.findViewById<TextView>(R.id.txtConfidence)
         val weaknessChart       = view.findViewById<WeaknessBarChartView>(R.id.weaknessChart)
         val worldModelContainer = view.findViewById<LinearLayout>(R.id.worldModelContainer)
         val recommendationsList = view.findViewById<LinearLayout>(R.id.recommendationsList)
         val txtNoRecs           = view.findViewById<TextView>(R.id.txtNoRecommendations)
         val txtError            = view.findViewById<TextView>(R.id.txtDashboardError)
+
+        // Human-progress hero — Level / XP from the same SharedPreferences
+        // cache that backs the Home kicker (written on every /auth/me
+        // round-trip).  Rendered synchronously so the header shows before,
+        // and regardless of, the /player/progress fetch below.  Hidden on
+        // a fresh install until the first /auth/me lands, matching the
+        // Home kicker's behaviour.
+        val cachedXp = requireContext()
+            .getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
+            .getInt(MainActivity.PREF_TRAINING_XP, -1)
+        if (cachedXp >= 0) {
+            txtRating.text = formatHeroLevel(cachedXp)
+            txtHeroXp.text = formatHeroXp(cachedXp)
+            heroLevelBlock.visibility = View.VISIBLE
+        }
 
         // ── Coach's plan section (read-only from SharedPreferences) ─────────
         // Populated by GameSummaryBottomSheet on every /game/finish.  The
@@ -79,8 +102,7 @@ class ProgressDashboardBottomSheet : BottomSheetDialogFragment() {
             when (val result = client.getPlayerProgress()) {
                 is ApiResult.Success -> {
                     val data = result.data
-                    populateRatingRow(txtRating, txtConfidence, data.current)
-                    populateSparkline(sparkline, txtNoRatingHistory, data.history)
+                    populateGamesRow(statGamesRow, statGamesDivider, txtConfidence, data.history)
                     populateWeaknessChart(weaknessChart, data)
                     populateWorldModel(worldModelContainer, data.current)
                     populateRecommendations(recommendationsList, txtNoRecs, data.analysis)
@@ -194,28 +216,23 @@ class ProgressDashboardBottomSheet : BottomSheetDialogFragment() {
         else          -> "COACH"
     }
 
-    private fun populateRatingRow(
-        txtRating: TextView,
-        txtConfidence: TextView,
-        current: ProgressCurrentDto,
-    ) {
-        txtRating.text = "%.0f".format(current.rating)
-        val confPct = "${(current.confidence * 100).toInt()}%"
-        txtConfidence.text = confPct
-    }
-
-    private fun populateSparkline(
-        sparkline: RatingSparklineView,
-        txtNone: TextView,
+    /**
+     * "Recent games · N played · M won" stat row.  Sourced from the
+     * /player/progress history window (newest-first, server-capped at
+     * 20 rows) — no endpoint returns lifetime totals, so the label
+     * says "Recent" honestly rather than implying an all-time count.
+     * The divider under the row flips visible with it so a fetch
+     * failure never leaves an orphan hairline above WEAKNESS PROFILE.
+     */
+    private fun populateGamesRow(
+        row: View,
+        divider: View,
+        txtGames: TextView,
         history: List<ProgressHistoryItem>,
     ) {
-        val ratings = history.take(10).reversed().mapNotNull { it.ratingAfter }
-        if (ratings.size >= 2) {
-            sparkline.setRatings(ratings)
-            sparkline.visibility = View.VISIBLE
-        } else {
-            txtNone.visibility = View.VISIBLE
-        }
+        txtGames.text = formatGamesSummary(history)
+        row.visibility = View.VISIBLE
+        divider.visibility = View.VISIBLE
     }
 
     private fun populateWeaknessChart(
@@ -387,6 +404,35 @@ class ProgressDashboardBottomSheet : BottomSheetDialogFragment() {
                 typeface = Typeface.MONOSPACE
                 setPadding(0, 4, 0, 0)
             })
+        }
+    }
+
+    companion object {
+
+        // ── Pure display helpers — testable without Android framework ─────────
+
+        /**
+         * "Level N" hero line.  Reuses [HomeActivity.XP_PER_LEVEL] and
+         * clamps like [HomeActivity.formatXpKicker] (negatives / fresh
+         * accounts read "Level 1") so the profile hero and the Home
+         * kicker can never disagree on the level curve.
+         */
+        fun formatHeroLevel(xp: Int): String {
+            val safeXp = max(0, xp)
+            return "Level ${max(1, safeXp / HomeActivity.XP_PER_LEVEL + 1)}"
+        }
+
+        /** "340 XP" kicker under the hero level; clamps negatives to 0. */
+        fun formatHeroXp(xp: Int): String = "${max(0, xp)} XP"
+
+        /**
+         * "N played · M won" from the /player/progress history window.
+         * Only "win" rows count as won — draws and losses contribute to
+         * the played count alone.
+         */
+        fun formatGamesSummary(history: List<ProgressHistoryItem>): String {
+            val won = history.count { it.result.equals("win", ignoreCase = true) }
+            return "${history.size} played · $won won"
         }
     }
 }

@@ -34,16 +34,19 @@ import kotlin.math.max
  * Library routing
  * ---------------
  *   I   — New game     → MainActivity (no extras; existing flow takes over)
- *   II  — Lessons      → MainActivity + EXTRA_OPEN_SHEET=training
- *   III — Openings     → OpeningsActivity (static scaffold; no backend yet)
- *   IV  — Past games   → MainActivity + EXTRA_OPEN_SHEET=history
+ *   II  — Past games   → MainActivity + EXTRA_OPEN_SHEET=history
  *
  * Bottom tab bar
  * --------------
  *   Home    — active, no-op
- *   Lessons → MainActivity + EXTRA_OPEN_SHEET=training
- *   Coach   → MainActivity + EXTRA_OPEN_SHEET=chat
- *   You     → MainActivity + EXTRA_OPEN_SHEET=profile
+ *   Puzzles → [StudyPlanOverviewBottomSheet] hosted over this activity —
+ *             reuses the plan the drill card fetched, or does a one-shot
+ *             /coach/plan/today fetch; toasts when no plan exists yet
+ *   You     → [ProgressDashboardBottomSheet] hosted over this activity
+ *
+ * Both sheets open directly over Home (no MainActivity relaunch — the
+ * old tab wiring bounced through MainActivity and started a new game
+ * session as a side effect just to show a sheet).
  *
  * Day counter
  * -----------
@@ -76,15 +79,25 @@ class HomeActivity : AppCompatActivity() {
     private lateinit var resumeSub: TextView
     private lateinit var syncIndicator: View
 
+    /**
+     * Last /coach/plan/today response, cached by
+     * [fetchAndPopulateTodaysDrill] so the Puzzles tab can open the
+     * week overview without refetching.  Cached even when the plan has
+     * no due puzzle today — the overview still renders the Done/locked
+     * day rows in that state, only the drill card hides.
+     */
+    private var latestPlan: CoachPlanResponse? = null
+
     private val authRepo: AuthRepository by lazy {
         AuthRepository(EncryptedTokenStorage(this))
     }
 
     /**
-     * Lazy GameApiClient used only for the pending-finish retry path.
-     * MainActivity owns the equivalent client for live gameplay; this
-     * one is used solely for the offline-sync attempt at HomeActivity
-     * cold-start, so we don't keep state across the activity's life.
+     * Lazy GameApiClient for Home-hosted surfaces: the pending-finish
+     * retry at cold-start, the /coach/plan/today drill-card fetch, and
+     * injection into the sheets Home hosts directly (study-plan
+     * overview, progress dashboard).  MainActivity owns the equivalent
+     * client for live gameplay.
      */
     private val gameApiClient: GameApiClient by lazy {
         HttpGameApiClient(
@@ -243,26 +256,17 @@ class HomeActivity : AppCompatActivity() {
         findViewById<LinearLayout>(R.id.homeRowNewGame).setOnClickListener {
             launchMain(sheet = null)
         }
-        findViewById<LinearLayout>(R.id.homeRowLessons).setOnClickListener {
-            launchMain(sheet = MainActivity.OPEN_SHEET_TRAINING)
-        }
-        findViewById<LinearLayout>(R.id.homeRowOpenings).setOnClickListener {
-            startActivity(Intent(this, OpeningsActivity::class.java))
-        }
         findViewById<LinearLayout>(R.id.homeRowPastGames).setOnClickListener {
             launchMain(sheet = MainActivity.OPEN_SHEET_HISTORY)
         }
 
         // ── Bottom tab bar ───────────────────────────────────────────
         findViewById<LinearLayout>(R.id.homeTabHome).setOnClickListener { /* already here */ }
-        findViewById<LinearLayout>(R.id.homeTabLessons).setOnClickListener {
-            launchMain(sheet = MainActivity.OPEN_SHEET_TRAINING)
-        }
-        findViewById<LinearLayout>(R.id.homeTabCoach).setOnClickListener {
-            launchMain(sheet = MainActivity.OPEN_SHEET_CHAT)
+        findViewById<LinearLayout>(R.id.homeTabPuzzles).setOnClickListener {
+            openPuzzles()
         }
         findViewById<LinearLayout>(R.id.homeTabYou).setOnClickListener {
-            launchMain(sheet = MainActivity.OPEN_SHEET_PROFILE)
+            openProgressDashboard()
         }
 
         // Render the XP kicker from the cached counter so a Home
@@ -401,6 +405,12 @@ class HomeActivity : AppCompatActivity() {
                 return@launch
             }
             val response = (result as? ApiResult.Success)?.data
+            if (response != null) {
+                // Cache for the Puzzles tab even when there's no due
+                // puzzle — the week overview still renders its day rows
+                // in that state; only the drill card hides.
+                latestPlan = response
+            }
             val puzzle = response?.todayPuzzle
             if (response == null || puzzle == null) {
                 // No active plan, or active plan with no due puzzle.
@@ -424,21 +434,71 @@ class HomeActivity : AppCompatActivity() {
             }
             block.visibility = View.VISIBLE
 
-            // Tapping the card opens the week-overview sheet (the whole
-            // spaced-repetition plan + focus), which carries the
-            // "Start today's drill" CTA into the existing drill flow.
-            // We hand it the already-fetched plan as JSON so the overview
-            // does no network I/O of its own.
+            // Tapping the card opens the week-overview sheet — same
+            // path as the Puzzles tab, so the two entries can't drift.
             startButton.text = "This week's plan"
             startButton.setOnClickListener {
-                if (supportFragmentManager.isStateSaved) return@setOnClickListener
-                val sheet = StudyPlanOverviewBottomSheet.newInstance(
-                    ApiJson.encodeToString(response)
-                )
-                sheet.gameApiClient = gameApiClient
-                sheet.show(supportFragmentManager, "StudyPlanOverviewBottomSheet")
+                openStudyPlanOverview(response)
             }
         }
+    }
+
+    /**
+     * Puzzles tab.  Reuses the plan the drill card already fetched when
+     * available; otherwise does a one-shot /coach/plan/today fetch so a
+     * tap that races the card's own fetch (or follows its quiet hide on
+     * error) still lands somewhere.  A tab tap must never be a silent
+     * no-op, so the no-plan and error cases surface a toast instead of
+     * the drill card's hide-and-say-nothing behavior.
+     */
+    private fun openPuzzles() {
+        val cached = latestPlan
+        if (cached != null) {
+            openStudyPlanOverview(cached)
+            return
+        }
+        lifecycleScope.launch {
+            val result = try {
+                gameApiClient.getCoachPlanToday()
+            } catch (_: Exception) {
+                null
+            }
+            val response = (result as? ApiResult.Success)?.data
+            if (response == null) {
+                Toast.makeText(
+                    this@HomeActivity,
+                    "No drills yet — finish a game and the coach will build your plan.",
+                    Toast.LENGTH_SHORT,
+                ).show()
+                return@launch
+            }
+            latestPlan = response
+            openStudyPlanOverview(response)
+        }
+    }
+
+    /**
+     * Week-overview sheet (the whole spaced-repetition plan + focus),
+     * which carries the "Start today's drill" CTA into the existing
+     * drill flow.  Shared by the drill card and the Puzzles tab.  The
+     * sheet gets the already-fetched plan as JSON so it does no network
+     * I/O of its own.
+     */
+    private fun openStudyPlanOverview(plan: CoachPlanResponse) {
+        if (supportFragmentManager.isStateSaved) return
+        val sheet = StudyPlanOverviewBottomSheet.newInstance(
+            ApiJson.encodeToString(plan)
+        )
+        sheet.gameApiClient = gameApiClient
+        sheet.show(supportFragmentManager, "StudyPlanOverviewBottomSheet")
+    }
+
+    /** You tab — the profile / progress dashboard, hosted over Home. */
+    private fun openProgressDashboard() {
+        if (supportFragmentManager.isStateSaved) return
+        val sheet = ProgressDashboardBottomSheet()
+        sheet.gameApiClient = gameApiClient
+        sheet.show(supportFragmentManager, "ProgressDashboardBottomSheet")
     }
 
     /**

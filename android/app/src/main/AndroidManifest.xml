@@ -55,10 +55,6 @@
             android:exported="false" />
 
         <activity
-            android:name=".OpeningsActivity"
-            android:exported="false" />
-
-        <activity
             android:name=".PaywallActivity"
             android:exported="false" />
 
