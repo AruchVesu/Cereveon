@@ -1016,7 +1016,7 @@ Pre-PR-6 the response also carried `bandit_enabled` and `version` fields; both w
 **Auth:** `Authorization: Bearer <token>` required
 **Rate limit:** 10 / minute
 
-Streaming variant of §5 (`POST /chat`) — same LLM pipeline, same boundary validators, same fallback-to-deterministic on validation failure — emitted as Server-Sent Events. Note: server awaits the full LLM response before iterating chunks ("fake-streaming"); per-word chunks are post-hoc. Real client-visible streaming is a future improvement (see `[[project-chat-stream-fake-streaming]]`).
+Streaming variant of §5 (`POST /chat`) — same LLM pipeline, same boundary validators, same fallback-to-deterministic on exhaustion — emitted as Server-Sent Events. Real token streaming (validate-before-emit, PR #223): DeepSeek tokens are forwarded as they arrive, with the FORBID validator gates run on every partial buffer (plus a lookahead hold-back) so no forbidden content is ever emitted; REQUIRE gates run at stream end. A rejected attempt is retried server-side with the same targeted rephrase hints as `POST /chat` (retry parity, 2026-07-09) before the deterministic fallback is served. See `docs/ARCHITECTURE.md` → Streaming Output Validation.
 
 ### Request body
 
@@ -1024,15 +1024,19 @@ Same shape as `POST /chat`.
 
 ### Response
 
-`Content-Type: text/event-stream` with one event per word:
+`Content-Type: text/event-stream`, terminated by exactly one `done` **or** one `abort` event:
 
 ```
-data: {"type": "chunk", "text": "<word> "}\n\n
+data: {"type": "chunk", "text": "<validated text slice>"}\n\n
 ...
 data: {"type": "done", "engine_signal": {...}, "mode": "CHAT_V1"}\n\n
 ```
 
-The final `done` event carries the ESV + mode. Clients should buffer chunks and treat the `done` event as authoritative for engine state.
+```
+data: {"type": "abort", "reply": "<full replacement reply>", "engine_signal": {...}, "mode": "CHAT_V1"}\n\n
+```
+
+The `done` event carries the ESV + mode; the assembled chunks are the reply. The `abort` event carries a **full replacement reply** the client must render in place of any partially-streamed text — either a retry-recovered validated LLM reply or the deterministic fallback (the client cannot and need not distinguish them; the wire shape is identical). Clients should buffer chunks and treat the terminal event as authoritative for engine state.
 
 ### Errors
 
@@ -1043,7 +1047,7 @@ The final `done` event carries the ESV + mode. Clients should buffer chunks and 
 
 ### Persistence
 
-Chat history is saved via `seca/chat/repo.save_exchange` **before** the SSE iterator is constructed, so a network failure mid-stream doesn't leave the turn missing from `GET /chat/history`.
+Chat history is saved via `seca/chat/repo.save_exchange` best-effort **at the stream's terminal event** (`done`/`abort` — the reply text only exists once validation settles; real streaming, PR #223), in the same place the quota turn is recorded. A transport failure mid-stream therefore neither persists the turn nor consumes quota.
 
 ---
 

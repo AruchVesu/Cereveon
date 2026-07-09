@@ -85,6 +85,7 @@ from llm.seca.coach.chat_stream_pipeline import (
     stream_chat_reply,
     StreamChunk as _StreamChunk,
     StreamDone as _StreamDone,
+    StreamRecovered as _StreamRecovered,
     StreamAbort as _StreamAbort,
 )
 from llm.seca.coach.live_move_pipeline import generate_live_reply
@@ -2059,6 +2060,26 @@ async def chat_stream(
                 _record_turn()
                 yield _sse(
                     {"type": "done", "engine_signal": event.engine_signal, "mode": event.mode}
+                )
+            elif isinstance(event, _StreamRecovered):
+                # A silent retry produced a fully-validated LLM reply after
+                # the live attempt was rejected mid-stream.  Deliver it as a
+                # full replacement using the SAME wire shape as the fallback
+                # abort — deployed clients already replace partial text with
+                # this payload's reply, so recovery needs no client change.
+                saw_terminal = True
+                _persist(event.reply, event.mode)
+                _record_turn()
+                if not rotation_committed:
+                    rotation_committed = True
+                    _commit_rotation()
+                yield _sse(
+                    {
+                        "type": "abort",
+                        "reply": event.reply,
+                        "engine_signal": event.engine_signal,
+                        "mode": event.mode,
+                    }
                 )
             elif isinstance(event, _StreamAbort):
                 saw_terminal = True
