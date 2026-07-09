@@ -135,6 +135,20 @@ class QuickCoachDockTest {
         assertTrue(text!!.isNotBlank())
     }
 
+    @Test fun `derived explanations never mention the engine`() {
+        // Client-local fallback strings bypass the server's output
+        // validators, so the no-engine-mention rule must be pinned here:
+        // pre-2026-07-09 the BLUNDER string read "engine capitalised",
+        // leaking the framing the product hides everywhere else.
+        for (classification in MistakeClassification.values()) {
+            val text = QuickCoachLogic.deriveExplanation(classification) ?: continue
+            assertTrue(
+                "explanation for $classification must not mention the engine: $text",
+                !text.lowercase().contains("engine"),
+            )
+        }
+    }
+
     // ---------------------------------------------------------------------------
     // 16  MistakeClassification.label()
     // ---------------------------------------------------------------------------

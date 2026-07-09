@@ -62,11 +62,18 @@ object QuickCoachLogic {
     /**
      * Derive a one-line coaching explanation from the classification.
      * Returns null for GOOD moves — the dock shows a generic fallback instead.
+     *
+     * Shown only when the server hint is unavailable (transport failure),
+     * so it must still read as the coach speaking — warm, not telegraphic
+     * (de-robotified 2026-07-09) — and must never mention the engine: the
+     * server's output validators enforce that rule for backend text, but
+     * client-local strings are on their own ("engine capitalised" leaked
+     * the framing the product hides everywhere else).
      */
     fun deriveExplanation(classification: MistakeClassification): String? = when (classification) {
-        MistakeClassification.BLUNDER    -> "Piece left undefended — engine capitalised."
-        MistakeClassification.MISTAKE    -> "Material lost. Protect pieces before advancing."
-        MistakeClassification.INACCURACY -> "A pawn dropped. Keep all pieces covered."
+        MistakeClassification.BLUNDER    -> "That one hurt — a piece was left undefended and your opponent took it."
+        MistakeClassification.MISTAKE    -> "Some material slipped away there — make sure your pieces are protected before pushing forward."
+        MistakeClassification.INACCURACY -> "A pawn went loose on that move — keep an eye on your undefended pawns."
         MistakeClassification.GOOD       -> null
     }
 
