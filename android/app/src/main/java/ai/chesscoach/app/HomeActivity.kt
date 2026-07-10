@@ -41,7 +41,11 @@ import kotlin.math.max
  *   Home    — active, no-op
  *   Puzzles → [StudyPlanOverviewBottomSheet] hosted over this activity —
  *             reuses the plan the drill card fetched, or does a one-shot
- *             /coach/plan/today fetch; toasts when no plan exists yet
+ *             /coach/plan/today fetch.  With no active plan (or on a
+ *             fetch error) it opens [PuzzleTrainerBottomSheet] instead:
+ *             the endless Lichess-fed practice stream, so the tab is
+ *             never a dead end.  The overview sheet itself carries a
+ *             "Practice puzzles" entry into the same trainer.
  *   You     → [ProgressDashboardBottomSheet] hosted over this activity
  *
  * Both sheets open directly over Home (no MainActivity relaunch — the
@@ -462,8 +466,10 @@ class HomeActivity : AppCompatActivity() {
      * available; otherwise does a one-shot /coach/plan/today fetch so a
      * tap that races the card's own fetch (or follows its quiet hide on
      * error) still lands somewhere.  A tab tap must never be a silent
-     * no-op, so the no-plan and error cases surface a toast instead of
-     * the drill card's hide-and-say-nothing behavior.
+     * no-op: with no active plan (or on a fetch error) it opens the
+     * standalone [PuzzleTrainerBottomSheet] — the endless Lichess-fed
+     * practice stream — instead of the old "no drills yet" toast
+     * dead-end.
      */
     private fun openPuzzles() {
         val cached = latestPlan
@@ -479,16 +485,27 @@ class HomeActivity : AppCompatActivity() {
             }
             val response = (result as? ApiResult.Success)?.data
             if (response == null) {
-                Toast.makeText(
-                    this@HomeActivity,
-                    "No drills yet — finish a game and the coach will build your plan.",
-                    Toast.LENGTH_SHORT,
-                ).show()
+                // No active plan (or the fetch failed) — practice
+                // puzzles still work, and the trainer sheet handles its
+                // own network failures with a visible retry state.
+                openPuzzleTrainer()
                 return@launch
             }
             latestPlan = response
             openStudyPlanOverview(response)
         }
+    }
+
+    /**
+     * Standalone puzzle trainer (GET /puzzles/next), hosted over Home.
+     * Reached from the Puzzles tab when no study plan exists and from
+     * the overview sheet's "Practice puzzles" entry.
+     */
+    private fun openPuzzleTrainer() {
+        if (supportFragmentManager.isStateSaved) return
+        val sheet = PuzzleTrainerBottomSheet()
+        sheet.gameApiClient = gameApiClient
+        sheet.show(supportFragmentManager, "PuzzleTrainerBottomSheet")
     }
 
     /**

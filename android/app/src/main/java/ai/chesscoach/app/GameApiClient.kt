@@ -259,6 +259,23 @@ interface GameApiClient {
         planId: String,
         dayOffset: Int,
     ): ApiResult<CoachPlanResponse> = ApiResult.HttpError(501)
+
+    /**
+     * GET /puzzles/next — one practice puzzle for the standalone
+     * trainer behind the Puzzles tab (§37).  Live-fetched from Lichess
+     * at the player's rating-derived difficulty, with a server-side
+     * fallback to the curated corpus — the client sees one shape either
+     * way and can render [PuzzleNextDto.source] as attribution.
+     *
+     * Bearer auth required.  Returns:
+     *   - 200 + [PuzzleNextDto] — a playable position.
+     *   - 503 — Lichess unreachable AND the corpus is empty; show a
+     *     soft retry message.
+     *
+     * Default implementation returns [ApiResult.HttpError(501)] so test
+     * fakes don't have to implement it.
+     */
+    suspend fun getNextPuzzle(): ApiResult<PuzzleNextDto> = ApiResult.HttpError(501)
 }
 
 // ── HTTP implementation ───────────────────────────────────────────────────────
@@ -557,6 +574,16 @@ class HttpGameApiClient(
         ),
         onResponse = refreshOnSuccess(),
         parse = { body -> ApiJson.decodeFromString<CoachPlanResponse>(body) },
+    )
+
+    override suspend fun getNextPuzzle(): ApiResult<PuzzleNextDto> = http.request(
+        path = "/puzzles/next",
+        method = "GET",
+        // Bearer-only — /puzzles/next never carries X-Api-Key; the
+        // server derives everything from the JWT-identified player.
+        headers = authHeaders(includeApiKey = false),
+        onResponse = refreshOnSuccess(),
+        parse = { body -> ApiJson.decodeFromString<PuzzleNextDto>(body) },
     )
 
     /**

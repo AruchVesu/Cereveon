@@ -631,6 +631,85 @@ class GameApiClientIntegrationTest {
     }
 
     // ---------------------------------------------------------------------------
+    // GET /puzzles/next — standalone puzzle trainer (docs/API_CONTRACTS.md §37)
+    // ---------------------------------------------------------------------------
+
+    private val puzzleNextLichessJson = """
+{
+  "puzzle_id": "lichess_AbCd1",
+  "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+  "expected_move_uci": "g1f3",
+  "theme": "mix",
+  "difficulty": "intermediate",
+  "source": "lichess",
+  "rating": 1400
+}"""
+
+    @Test
+    fun `INT_PUZZLE_NEXT_METHOD_PATH - GET to puzzles next`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(puzzleNextLichessJson))
+        client(token = "tok").getNextPuzzle()
+        val req = server.takeRequest(10, TimeUnit.SECONDS)!!
+        assertEquals("GET", req.method)
+        assertEquals("/puzzles/next", req.path)
+    }
+
+    @Test
+    fun `INT_PUZZLE_NEXT_BEARER - Bearer sent, no X-Api-Key`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(puzzleNextLichessJson))
+        client(token = "bearer-puzzle-tok").getNextPuzzle()
+        val req = server.takeRequest(10, TimeUnit.SECONDS)!!
+        assertEquals("Bearer bearer-puzzle-tok", req.getHeader("Authorization"))
+        assertNull(req.getHeader("X-Api-Key"))
+    }
+
+    @Test
+    fun `INT_PUZZLE_NEXT_PARSED - lichess pick deserialised`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(puzzleNextLichessJson))
+        val result = client(token = "tok").getNextPuzzle()
+        assertTrue("expected Success, got $result", result is ApiResult.Success<*>)
+        val data = (result as ApiResult.Success<*>).data as PuzzleNextDto
+        assertEquals("lichess_AbCd1", data.puzzleId)
+        assertEquals("g1f3", data.expectedMoveUci)
+        assertEquals("mix", data.theme)
+        assertEquals("intermediate", data.difficulty)
+        assertEquals("lichess", data.source)
+        assertEquals(1400, data.rating)
+    }
+
+    @Test
+    fun `INT_PUZZLE_NEXT_LIBRARY_NULL_RATING - corpus pick with null rating parses`() =
+        runBlocking {
+            val libraryJson = """
+{
+  "puzzle_id": "fork_001",
+  "fen": "8/8/8/8/8/4k3/4p3/4K3 b - - 0 1",
+  "expected_move_uci": "e3d3",
+  "theme": "fork",
+  "difficulty": "beginner",
+  "source": "library",
+  "rating": null
+}"""
+            server.enqueue(MockResponse().setResponseCode(200).setBody(libraryJson))
+            val result = client(token = "tok").getNextPuzzle()
+            assertTrue(result is ApiResult.Success<*>)
+            val data = (result as ApiResult.Success<*>).data as PuzzleNextDto
+            assertEquals("fork_001", data.puzzleId)
+            assertEquals("library", data.source)
+            assertNull(data.rating)
+        }
+
+    @Test
+    fun `INT_PUZZLE_NEXT_HTTP_ERROR - 503 maps to HttpError`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(503).setBody("""{"detail":"no puzzle available"}""")
+        )
+        val result = client(token = "tok").getNextPuzzle()
+        assertTrue("expected HttpError, got $result", result is ApiResult.HttpError)
+        assertEquals(503, (result as ApiResult.HttpError).code)
+    }
+
+    // ---------------------------------------------------------------------------
     // GET /game/history — source filter + limit (docs/API_CONTRACTS.md §7)
     // ---------------------------------------------------------------------------
 

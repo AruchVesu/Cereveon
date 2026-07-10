@@ -2003,6 +2003,76 @@ follow-up (Play RTDN webhook).
 
 ---
 
+## 37. `GET /puzzles/next`
+
+**Host:** `llm/seca/puzzles/router.py`
+**Auth:** `Authorization: Bearer <token>` required
+**Rate limit:** 30 / minute
+
+Serve one practice puzzle for the standalone puzzle trainer (the
+Android Puzzles tab).  Primary source is Lichess's public puzzle
+database (`GET /api/puzzle/next`, `angle=mix`) at a difficulty band
+derived from the authenticated player's rating
+(`skill_hint_for_rating`: `<1200` → `easier`, `1200–1800` → `normal`,
+`>1800` → `harder`).  **Every** Lichess failure mode (rate limit,
+upstream error, malformed body, illegal derived position, kill-switch
+`PUZZLES_LICHESS_ENABLED=0`) falls back to a random skill-banded pick
+from the curated study-plan corpus, so the endpoint keeps serving with
+zero Lichess availability.
+
+Takes no parameters — the server derives everything from the
+authenticated player (no caller-controlled input reaches the upstream
+URL; the angle and difficulty values are pinned against the Lichess
+client's allowlists by `llm/tests/test_puzzles_next.py`).
+
+### Response (200)
+
+```json
+{
+  "puzzle_id":         <string>,
+  "fen":               <string>,
+  "expected_move_uci": <string>,
+  "theme":             <string>,
+  "difficulty":        <string>,
+  "source":            <string>,
+  "rating":            <int | null>
+}
+```
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `puzzle_id` | `string` | Stable identifier — pass back to `POST /training/solve` (§32) as `source_ref` so each puzzle is credit-once.  Lichess picks are namespaced `lichess_<id>`; corpus picks use the YAML id (never colliding by construction). |
+| `fen` | `string` | The solver's position (side to move = the side the user plays). |
+| `expected_move_uci` | `string` | The source's solution move.  Display / short-circuit hint ONLY — solving is judged by the LOCAL engine via `POST /training/verify-replay` (§33), never by this field. |
+| `theme` | `string` | Corpus theme tag (`THEME_VOCABULARY`) for library picks; `"mix"` for Lichess picks (the trainer serves un-themed practice). |
+| `difficulty` | `string` | `beginner` / `intermediate` / `advanced` — the corpus band for library picks, derived from the Lichess puzzle rating otherwise. |
+| `source` | `string` | `"lichess"` (live fetch) or `"library"` (curated corpus fallback). |
+| `rating` | `int \| null` | Lichess puzzle rating when known; `null` for corpus picks or unrated Lichess puzzles. |
+
+### Solve + XP loop (client-side)
+
+Identical trust anchor to every other training source:
+
+1. `POST /training/verify-replay` (§33) — the local engine judges the
+   attempt.
+2. `POST /training/solve` (§32) — credits XP with
+   `source_type = "standard_puzzle"` and `source_ref = <puzzle_id>`,
+   deduped by the `(player, source_type, source_ref)` unique triple.
+
+Lichess evaluations are never requested or propagated
+(`evals` is not part of `/api/puzzle/next`; see the trust-boundary
+notes in `llm/seca/lichess/client.py`).
+
+### Errors
+
+| Status | Cause |
+|--------|-------|
+| `401`  | Missing or invalid `Authorization` header. |
+| `429`  | Rate limit exceeded (Shape B). |
+| `503`  | Lichess unavailable/disabled AND the local corpus is empty (misbuilt image).  The client shows a soft retry message. |
+
+---
+
 ## Error responses
 
 The API emits **two distinct error-body shapes** that any client (the

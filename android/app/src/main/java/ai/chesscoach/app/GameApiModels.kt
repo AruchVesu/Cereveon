@@ -631,3 +631,39 @@ data class CompletePuzzleRequest(
     @SerialName("plan_id") val planId: String,
     @SerialName("day_offset") val dayOffset: Int,
 )
+
+
+// ── /puzzles/next ────────────────────────────────────────────────────────────
+
+
+/**
+ * One practice puzzle from ``GET /puzzles/next`` — the standalone
+ * puzzle-trainer feed behind the Puzzles tab.
+ *
+ * [puzzleId] is the stable identifier the trainer passes back to
+ * ``POST /training/solve`` as ``source_ref`` (with
+ * ``source_type = "standard_puzzle"``) so each puzzle is credit-once.
+ * Lichess picks arrive namespaced ``lichess_<id>``; corpus picks carry
+ * the curated YAML id.
+ *
+ * [expectedMoveUci] is a display / short-circuit hint only — whether an
+ * attempt counts as solved is judged by the local engine via
+ * ``POST /training/verify-replay``, same as every other training source.
+ *
+ * Wire shape pinned by ``docs/API_CONTRACTS.md`` §37.
+ */
+@Serializable
+data class PuzzleNextDto(
+    @SerialName("puzzle_id") val puzzleId: String = "",
+    /** The solver's position; side to move = the side the user plays. */
+    val fen: String = "",
+    @SerialName("expected_move_uci") val expectedMoveUci: String = "",
+    /** Corpus theme tag for library picks; ``"mix"`` for Lichess picks. */
+    val theme: String = "mix",
+    /** ``beginner`` / ``intermediate`` / ``advanced``. */
+    val difficulty: String = "",
+    /** ``"lichess"`` (live fetch) or ``"library"`` (curated corpus). */
+    val source: String = "",
+    /** Lichess puzzle rating when known; null for corpus picks. */
+    val rating: Int? = null,
+)

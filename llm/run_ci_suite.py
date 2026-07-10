@@ -213,6 +213,13 @@ TEST_TARGETS = [
     # count, feature flag, best-effort []-on-error).  httpx / the client are
     # mocked so no live Lichess call runs in CI.
     "llm/tests/test_lichess_puzzle_fetch.py",
+    # Standalone puzzle trainer (Puzzles tab): GET /puzzles/next serves one
+    # practice puzzle — Lichess "mix" angle at the player's rating-derived
+    # difficulty band, corpus fallback on any Lichess failure, and the
+    # PUZZLES_LICHESS_ENABLED kill-switch.  The fetch is monkeypatched (no
+    # live Lichess call); allowlist pins keep the router's angle/difficulty
+    # constants inside the client's SSRF allowlists.
+    "llm/tests/test_puzzles_next.py",
     # Weekly-digest agent (v1) was retired in study-plan phase 4
     # (2026-05-21) — its "top-3 holes + 3 microtasks" framing
     # competed with the per-mistake study-plan agent's Home-screen
@@ -339,6 +346,9 @@ COVERAGE_TARGETS = [
     "llm.seca.coach.study_plan.router",
     "llm.seca.coach.study_plan.verdict",
     "llm.seca.coach.study_plan.library",
+    # Standalone puzzle trainer: GET /puzzles/next (Lichess mix fetch +
+    # corpus fallback).  Covered by test_puzzles_next.py.
+    "llm.seca.puzzles.router",
     "llm.seca.mistakes.router",
     # llm.seca.coach.live_controller, llm.seca.coach.executor,
     # llm.seca.coach.confidence_language_controller, and
