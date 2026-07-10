@@ -213,7 +213,15 @@ class TestRenderMode1EngineFacts(unittest.TestCase):
         """A check the player just delivered is answered by the engine's forced
         reply, so by the time the post-move hint is read the king is no longer
         in check.  Mode-1 must NOT ground the LLM on it (it rendered as a
-        phantom "opponent's king is in check" on the post-reply board)."""
+        phantom "opponent's king is in check" on the post-reply board).
+
+        Precision note (2026-07-10): the assertion is scoped to the
+        GROUNDING sections (everything before the TASK header).  The TASK
+        block deliberately QUOTES the phrase while forbidding it ("Never
+        write ... 'the king is in check'"), which is the opposite of
+        grounding on it.  The original whole-prompt assertNotIn tripped on
+        that instruction quote — a latent failure invisible until this file
+        was added to run_ci_suite (it was never in TEST_TARGETS)."""
         signal = {
             "evaluation": {"type": "cp", "band": "small_advantage", "side": "white"},
             "eval_delta": "stable",
@@ -229,9 +237,16 @@ class TestRenderMode1EngineFacts(unittest.TestCase):
             explanation_style="intermediate",
             player_color="white",
         )
-        self.assertNotIn("king is in check", prompt)
+        # The TASK header exists and splits grounding from instructions.
+        self.assertIn("\nTASK\n", prompt)
+        grounding = prompt.split("\nTASK\n", 1)[0]
+        # Neither the prose fact nor the raw flag may reach the grounding.
+        self.assertNotIn("king is in check", grounding)
+        self.assertNotIn("check:black_to_move", grounding)
+        # The TASK block's only mention is the forbidding instruction.
+        self.assertIn('"the king is in check"', prompt)
         # Non-transient facts are still grounded.
-        self.assertIn("You are up a pawn.", prompt)
+        self.assertIn("You are up a pawn.", grounding)
 
     def test_threat_line_from_last_move_uci(self):
         """describe_threats grounds what the last move attacks (the #253 case:

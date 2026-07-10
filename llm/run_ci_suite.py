@@ -54,6 +54,12 @@ TEST_TARGETS = [
     # layout DeepSeek's automatic context cache bills at ~1/50th rate.
     "llm/tests/test_prompt_cache_prefix.py",
     "llm/tests/test_live_move_pipeline.py",
+    # Mode-1 player-perspective + prompt-grounding pins.  Was never in
+    # this list — a latent assertion failure (instruction-quote false
+    # positive in test_transient_check_fact_is_suppressed) sat invisible
+    # on main until the 2026-07-10 JSON-compaction work ran the file
+    # directly (4th instance of the silent-skip drift class).
+    "llm/tests/test_mode1_player_perspective.py",
     "llm/tests/test_historical_pipeline.py",
     "llm/tests/test_api_security.py",
     "llm/tests/test_skill_updater_resilience.py",
