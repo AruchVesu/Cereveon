@@ -63,7 +63,11 @@ class QuickCoachStressTest {
     @Before
     fun setup() {
         Dispatchers.setMain(testDispatcher)
-        viewModel = ChessViewModel(InstantFakeEngine())
+        // Zero AI-think pacing: this suite waits for AI replies in real
+        // wall-clock time (waitFor caps at 2s) and tests turn mechanics,
+        // not pacing.  The 2–3s production hold is pinned in
+        // ChessViewModelAiPacingTest on a virtual-time scheduler.
+        viewModel = ChessViewModel(InstantFakeEngine(), aiThinkPacingMillis = { 0L })
     }
 
     @After
@@ -140,7 +144,8 @@ class QuickCoachStressTest {
     @Test
     fun fiveSequentialCycles_aiCalledEachCycle() {
         val engine = InstantFakeEngine()
-        val vm = ChessViewModel(engine)
+        // Zero pacing — see setup().
+        val vm = ChessViewModel(engine, aiThinkPacingMillis = { 0L })
         var successCycles = 0
 
         repeat(5) {
