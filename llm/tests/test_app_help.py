@@ -36,6 +36,8 @@ _APP_QUERIES = [
     "How do I upgrade to Cereveon Pro?",
     "Where are the settings?",
     "How do I start a daily drill?",
+    "How do the puzzles work?",
+    "Where can I practise puzzles?",
     "What can you do?",
     "How do I resume my game?",
     "How do I change the board style?",
@@ -261,3 +263,22 @@ def test_guide_states_verified_pricing_and_limits() -> None:
     # from what the app actually enforces / charges.
     assert "€9.99" in CEREVEON_GUIDE and "€71.99" in CEREVEON_GUIDE
     assert "one fully coached game" in CEREVEON_GUIDE
+
+
+def test_guide_matches_current_navigation() -> None:
+    # Nav was simplified to Home · Puzzles · You (PRs #379/#381/#382,
+    # 2026-07): Lessons and Coach tabs retired, Puzzles tab added,
+    # header avatar opens Settings.  The guide went stale once (it
+    # described the four-tab layout until 2026-07-10) — a coach telling
+    # users to tap a tab that no longer exists is an invented feature,
+    # exactly what this layer forbids.  Pin the CURRENT layout so the
+    # next nav change breaks this test instead of the guide.
+    lower = CEREVEON_GUIDE.lower()
+    assert "three tabs" in lower
+    assert '"puzzles"' in lower, "guide must document the Puzzles tab"
+    assert '"you" tab' in lower, "guide must document the You tab"
+    assert "avatar" in lower, "guide must name the avatar → Settings entry"
+    # Retired surfaces must not be navigable-to any more.
+    assert "lessons" not in lower, "Lessons tab was retired in PR #379"
+    assert '"coach" tab' not in lower, "Coach tab was retired in PR #379"
+    assert "four tabs" not in lower

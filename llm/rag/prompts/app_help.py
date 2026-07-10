@@ -48,14 +48,16 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 # Kept plain and scannable so the model can locate the relevant entry.
 # Detailed how-tos (the user chose depth over brevity) — navigation is
-# named from the real Home tab bar (Home / Lessons / Coach / You) and the
-# library rows, verified in HomeActivity.
+# named from the real Home tab bar (Home / Puzzles / You — the 2026-07
+# simplified nav, PRs #379/#381/#382), the library rows, and the header
+# avatar, verified in HomeActivity.
 CEREVEON_GUIDE = """\
 CEREVEON — WHAT IT DOES AND HOW TO USE IT
 
 Getting around: after signing in you land on Home.  Along the bottom are
-four tabs — Home, Lessons, Coach, and You — and Home also lists shortcut
-rows for New game and Past games.
+three tabs — Home, Puzzles, and You.  Home lists shortcut rows for New
+game and Past games, and tapping your avatar (the initials circle at the
+top of Home) opens Settings.
 
 Play a game:
 - From Home, tap "New game" to start a game against Cereveon's built-in
@@ -70,21 +72,26 @@ Move-by-move coaching:
   appears after your move.
 
 Ask the coach (this chat):
-- Open the coach from the "Coach" tab, or the coach button on the game
-  screen.  Ask about the position in front of you or about chess in
-  general.
+- Open the coach from the coach button on the game screen — while
+  playing a live game or while reviewing a past one.  Ask about the
+  position in front of you or about chess in general.
 - The chat sits over the board without freezing it, so you can keep
   playing and moving pieces while you talk.
 - Coach voice: in Settings you can set the coach's tone to Formal,
   Conversational, or Terse.  It changes the coach's tone, not what it
   tells you.
 
-Lessons and daily drills:
-- The "Lessons" tab shows a weekly study plan built around the kind of
-  mistake you make most often.  Each plan spreads a few practice days
+Puzzles, study plan, and daily drills:
+- The "Puzzles" tab is your practice home.  When you have an active
+  weekly study plan it opens the plan's week view; otherwise it opens an
+  endless stream of practice puzzles matched to your level.  Solve each
+  puzzle by playing the move you think is right on the board.
+- The weekly study plan is built after your coached games, around the
+  kind of mistake you make most often, and spreads a few practice days
   across the week.
-- Tap "Start today's drill" to practise the day's position — solve it by
-  playing the move you think is right on the board.
+- When a plan day is due, Home shows a "Today's drill" card — tap Start
+  to practise it.  The week view also has a "Practice puzzles" entry
+  into the endless trainer.
 
 Review your past games:
 - The "Past games" row lists games you have played, each showing the
@@ -99,8 +106,9 @@ Import your Lichess games:
   review games you played in the app.
 
 Your progress:
-- The "You" tab shows your progress and skill rating over time.  You can
-  adjust your skill rating in Settings if it looks off.
+- The "You" tab shows your training level and the points you have earned
+  from games, drills, and puzzles.  You can adjust your skill rating in
+  Settings if it looks off.
 
 Look of the board:
 - In Settings, "Board style" switches the board's appearance between
@@ -134,7 +142,7 @@ What Cereveon does NOT have (so you can answer honestly if asked):
 APP_HELP_HINT_TOKENS: tuple[str, ...] = (
     "cereveon", "the app", "this app", "in the app", "in this app",
     "coach voice", "board style", "settings", "study plan", "daily drill",
-    "drills", "past game", "past games", "game history", "my games",
+    "drills", "puzzle", "past game", "past games", "game history", "my games",
     "replay", "lichess", "import game", "import my", "subscription",
     "premium", "upgrade", "paywall", "free plan", "cereveon pro", "pro plan",
     "resume", "my progress", "skill rating", "sign out", "log out",
@@ -168,7 +176,7 @@ def build_app_help_block() -> str:
     (the model ignores the guide and coaches the position) and decisive on
     an app turn (answer from the guide, never refuse with "I can only help
     with chess", never invent a feature).  Grounding the "no" for absent
-    features (openings trainer / puzzle rush / online / sound) lives in the
+    features (openings trainer / online / tournaments / sound) lives in the
     guide's own "does NOT have" section, which the live test showed is what
     actually stops the model inventing them.
     """
@@ -183,7 +191,7 @@ def build_app_help_block() -> str:
         "enough information about the position — the position is irrelevant "
         "to an app question and the guide gives you what you need.  Use "
         "ONLY the guide: if the player names a feature the guide does not "
-        "describe (for example an openings trainer, a puzzle-rush mode, "
+        "describe (for example an openings trainer, tournaments, "
         "online play against other people, or sound effects), tell them "
         "you don't think Cereveon offers that and point them to what it "
         "does; never invent a screen, button, or step.  This guide is "

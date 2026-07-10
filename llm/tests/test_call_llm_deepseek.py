@@ -14,6 +14,8 @@ PR 8 (2026-05-14) when ``call_llm`` switched from
   CALL_LLM_05  HTTP 4xx propagates httpx.HTTPStatusError via raise_for_status
   CALL_LLM_06  ``[DONE]`` sentinel terminates the stream cleanly
   CALL_LLM_07  Non-data SSE lines (keep-alive comments, blank lines) are skipped
+  CALL_LLM_09  ``max_completion_tokens`` maps to ``max_tokens`` in the body;
+               the default omits the key (unchanged wire shape)
 
 These complement ``test_explain_pipeline_retry.py`` which mocks
 ``call_llm`` at the chat-pipeline boundary; the tests here exercise
@@ -201,6 +203,29 @@ class TestCallLLM:
             return_value=_streaming_response_mock(sse_lines),
         ):
             assert call_llm("ignored") == "Hello."
+
+    def test_call_llm_09_max_tokens_sent_only_when_capped(self, monkeypatch):
+        """CALL_LLM_09: ``max_completion_tokens`` lands as ``max_tokens``
+        in the request body; the default (None) omits the key so the
+        BaseLLM adapter / smoke-test wire shape is unchanged."""
+        monkeypatch.setenv("COACH_DEEPSEEK_API_KEY", "sk-test")
+
+        sse_lines = [_sse_event("Hi."), "data: [DONE]"]
+        with patch(
+            "llm.seca.coach.explain_pipeline.httpx.stream",
+            return_value=_streaming_response_mock(sse_lines),
+        ) as mock_stream:
+            call_llm("ignored")
+        assert "max_tokens" not in mock_stream.call_args.kwargs["json"], (
+            "uncapped calls must not send max_tokens"
+        )
+
+        with patch(
+            "llm.seca.coach.explain_pipeline.httpx.stream",
+            return_value=_streaming_response_mock(list(sse_lines)),
+        ) as mock_stream:
+            call_llm("ignored", max_completion_tokens=500)
+        assert mock_stream.call_args.kwargs["json"]["max_tokens"] == 500
 
     def test_call_llm_08_oversized_response_truncates(self, monkeypatch):
         """CALL_LLM_08: a streaming response that exceeds the

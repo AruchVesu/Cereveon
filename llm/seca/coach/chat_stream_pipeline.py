@@ -46,6 +46,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from llm.rag.llm.config import CHAT_MAX_COMPLETION_TOKENS as _CHAT_MAX_COMPLETION_TOKENS
 from llm.seca.coach.context_compact import compact_history, should_compact
 from llm.seca.coach.chat_pipeline import (
     ChatTurn,
@@ -243,7 +244,11 @@ def stream_chat_reply(
         buffer = ""
         emitted = 0
         try:
-            for token in _call_llm_stream(prompt):
+            # Same output-spend cap as the non-streaming chat path (parity;
+            # see llm.rag.llm.config for the headroom rationale).
+            for token in _call_llm_stream(
+                prompt, max_completion_tokens=_CHAT_MAX_COMPLETION_TOKENS
+            ):
                 buffer += token
                 # FORBID gates on the whole buffer; raises -> handled below.
                 _validate_forbid(buffer, engine_signal)

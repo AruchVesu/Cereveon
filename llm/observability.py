@@ -182,6 +182,22 @@ llm_tokens_total = Counter(
     labelnames=("model", "kind"),
 )
 
+# Prompt-cache breakdown of the ``kind="prompt"`` series above.  DeepSeek's
+# automatic context cache bills cache-HIT input tokens at a fraction of the
+# miss rate (50x cheaper on v4-flash as of 2026-07-10), and reports the
+# split per call as ``prompt_cache_hit_tokens`` / ``prompt_cache_miss_tokens``
+# in the usage block.  A SEPARATE counter (rather than new ``kind`` values on
+# ``llm_tokens_total``) keeps existing ``sum by (kind)`` dashboard queries
+# from double-counting prompt tokens.  ``result`` is ``hit`` or ``miss``;
+# hit_rate = hit / (hit + miss).  This is the cache-efficiency signal the
+# prompt-prefix layout work (static system prompt + app guide first,
+# append-only history before per-position content) is measured by.
+llm_prompt_cache_tokens_total = Counter(
+    "chesscoach_llm_prompt_cache_tokens_total",
+    "DeepSeek prompt tokens split by context-cache result (hit|miss).",
+    labelnames=("model", "result"),
+)
+
 # Cost is derived from ``llm_tokens_total`` and the ``_PRICE_PER_1K``
 # table below.  Stored as its own counter (rather than a recording rule
 # in Grafana) so the dashboard works against any Prometheus that has
@@ -202,16 +218,20 @@ llm_errors_total = Counter(
 )
 
 
-# DeepSeek pricing, verified against the official page 2026-07-03.
-# Tuple is (prompt_per_1k, completion_per_1k) in USD, billed at the
-# cache-MISS input rate (the cache-hit discount is not modelled, so the
-# cost metric slightly OVERSTATES true spend — acceptable: conservative).
+# DeepSeek pricing, verified against the official page 2026-07-10.
+# Tuple is (prompt_miss_per_1k, prompt_cache_hit_per_1k, completion_per_1k)
+# in USD.  The context cache is automatic (no request opt-in): repeated
+# request PREFIXES bill at the cache-HIT rate, everything else at the
+# cache-MISS rate.  When a call's hit/miss split is unknown (older
+# gateways, estimated usage on aborted streams), the full prompt is
+# billed at the MISS rate — the cost metric then slightly OVERSTATES
+# true spend, which is the conservative direction.
 # Source: https://api-docs.deepseek.com/quick_start/pricing
 #
 # revisit: 2026-07-15 — TWO dated events, both before the old 2026-08
 # note would have fired:
 #   1. Mid-July 2026: DeepSeek has announced a price increase (~2x per
-#      token).  Update BOTH rows when it lands; the freemium margins
+#      token).  Update ALL columns when it lands; the freemium margins
 #      were checked at 2x and hold (see the unit-economics memory /
 #      PaywallActivityTest launch-pricing rationale).
 #   2. 2026-07-24: the model NAMES deepseek-chat / deepseek-reasoner are
@@ -219,18 +239,25 @@ llm_errors_total = Counter(
 #      thinking).  The v4-flash row below exists so bumping
 #      COACH_DEEPSEEK_MODEL does not silently zero the cost metric
 #      (_cost_for returns 0.0 for unknown model names).
-_PRICE_PER_1K: dict[str, tuple[float, float]] = {
-    "deepseek-chat": (0.00014, 0.00028),
+_PRICE_PER_1K: dict[str, tuple[float, float, float]] = {
+    "deepseek-chat": (0.00014, 0.0000028, 0.00028),
     # Same engine as deepseek-chat post-V4 (the legacy name is an alias
     # for v4-flash non-thinking); priced identically today.
-    "deepseek-v4-flash": (0.00014, 0.00028),
-    # deepseek-reasoner is ~4x; price-listed as cache-miss input + reasoning output.
-    "deepseek-reasoner": (0.00055, 0.00219),
+    "deepseek-v4-flash": (0.00014, 0.0000028, 0.00028),
+    # deepseek-reasoner (v4-flash thinking): miss + completion rates
+    # verified 2026-07-03.  Its cache-hit rate is carried at the last
+    # pre-V4 published value ($0.14/M) rather than the v4-flash hit rate
+    # — deliberately conservative for a model production never uses.
+    "deepseek-reasoner": (0.00055, 0.00014, 0.00219),
 }
 
 
 def _cost_for(model: str, kind: str, tokens: int) -> float:
-    """Return USD cost for ``tokens`` of ``kind`` (prompt|completion) on ``model``.
+    """Return USD cost for ``tokens`` of ``kind`` on ``model``.
+
+    ``kind`` is one of ``prompt`` / ``prompt_cache_miss`` (both billed at
+    the cache-miss input rate — bare ``prompt`` is the conservative
+    no-split-known path), ``prompt_cache_hit``, or ``completion``.
 
     Unknown models return 0.0 with a one-time warning.  Cost is an
     observability signal, never a control signal — a missing price entry
@@ -242,17 +269,57 @@ def _cost_for(model: str, kind: str, tokens: int) -> float:
             logger.warning("no DeepSeek price entry for model %r; cost metric will read 0", model)
             _COST_WARNED_MODELS.add(model)
         return 0.0
-    prompt_price, completion_price = prices
-    rate = prompt_price if kind == "prompt" else completion_price
+    miss_price, hit_price, completion_price = prices
+    if kind == "prompt_cache_hit":
+        rate = hit_price
+    elif kind == "completion":
+        rate = completion_price
+    else:  # "prompt" or "prompt_cache_miss"
+        rate = miss_price
     return (tokens / 1000.0) * rate
 
 
 _COST_WARNED_MODELS: set[str] = set()
 
 
-def cost_for_call(model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    """Return total USD cost for one call across prompt + completion tokens."""
-    return _cost_for(model, "prompt", prompt_tokens) + _cost_for(
+def _prompt_cost(
+    model: str, prompt_tokens: int, cache_hit_tokens: int, cache_miss_tokens: int
+) -> float:
+    """USD cost of the prompt side of one call, cache-split-aware.
+
+    Uses the hit/miss split only when it exactly accounts for
+    ``prompt_tokens`` (DeepSeek guarantees hit + miss == prompt_tokens);
+    any other shape falls back to billing the whole prompt at the miss
+    rate — conservative, and identical to the pre-split behaviour.
+    """
+    if (
+        prompt_tokens > 0
+        and cache_hit_tokens >= 0
+        and cache_miss_tokens >= 0
+        and cache_hit_tokens + cache_miss_tokens == prompt_tokens
+        and cache_hit_tokens + cache_miss_tokens > 0
+    ):
+        return _cost_for(model, "prompt_cache_hit", cache_hit_tokens) + _cost_for(
+            model, "prompt_cache_miss", cache_miss_tokens
+        )
+    return _cost_for(model, "prompt", prompt_tokens)
+
+
+def cost_for_call(
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cache_hit_tokens: int = 0,
+    cache_miss_tokens: int = 0,
+) -> float:
+    """Return total USD cost for one call across prompt + completion tokens.
+
+    When the caller supplies the provider-reported prompt-cache split,
+    the prompt side is priced hit/miss-aware; otherwise (both zero, or a
+    split that doesn't add up) the whole prompt bills at the miss rate,
+    matching the pre-2026-07 behaviour exactly.
+    """
+    return _prompt_cost(model, prompt_tokens, cache_hit_tokens, cache_miss_tokens) + _cost_for(
         model, "completion", completion_tokens
     )
 
@@ -264,39 +331,69 @@ def observe_llm_call(
     duration_seconds: float,
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
+    cache_hit_tokens: int = 0,
+    cache_miss_tokens: int = 0,
     error_category: str | None = None,
 ) -> None:
     """Record one LLM round-trip on every Prometheus surface at once.
 
-    Called from ``call_llm`` in ``llm.seca.coach.explain_pipeline``.  Keeps
-    the metric vocabulary (``outcome``, ``category``) defined in one
-    place so callers don't drift on label values.
+    Called from ``call_llm`` / ``call_llm_stream`` in
+    ``llm.seca.coach.explain_pipeline``.  Keeps the metric vocabulary
+    (``outcome``, ``category``) defined in one place so callers don't
+    drift on label values.
 
-    ``outcome`` is one of: ``ok`` / ``timeout`` / ``http_error`` /
-    ``parse_error`` / ``empty`` / ``config_error``.  When ``outcome``
-    is not ``ok``, supply ``error_category`` so ``llm_errors_total``
-    has a non-empty value — defaults to ``outcome`` if omitted.
+    ``outcome`` is one of: ``ok`` / ``aborted`` / ``timeout`` /
+    ``http_error`` / ``parse_error`` / ``empty`` / ``config_error``.
+    When ``outcome`` is not ``ok``, supply ``error_category`` so
+    ``llm_errors_total`` has a non-empty value — defaults to ``outcome``
+    if omitted.
 
-    Tokens are recorded only on ``ok`` (when ``usage`` is available).
-    Cost is derived inline from the same values so the two counters
-    stay in lock-step.
+    Tokens (and their derived cost) are recorded on ``ok`` AND on
+    ``aborted`` — an aborted stream is a healthy generation the consumer
+    abandoned mid-flight (validator rejection in the streaming pipeline),
+    so its tokens were genuinely billed; the caller passes an ESTIMATE
+    when the provider's usage frame never arrived.  Transport-failure
+    outcomes (timeout / http_error / …) keep ignoring token args: no
+    usage exists for them.  ``aborted`` additionally increments
+    ``llm_errors_total`` (category ``aborted``) because the attempt did
+    not produce a served reply.
+
+    ``cache_hit_tokens`` / ``cache_miss_tokens`` are the provider-reported
+    prompt-cache split; when they exactly account for ``prompt_tokens``
+    the prompt cost is priced hit/miss-aware and the split lands on
+    ``llm_prompt_cache_tokens_total``.  Zeros (split unknown) preserve
+    the flat cache-miss pricing.
     """
     llm_request_duration_seconds.labels(model=model, outcome=outcome).observe(
         max(0.0, duration_seconds)
     )
 
-    if outcome == "ok":
+    if outcome in ("ok", "aborted"):
         if prompt_tokens > 0:
             llm_tokens_total.labels(model=model, kind="prompt").inc(prompt_tokens)
             llm_cost_usd_total.labels(model=model, kind="prompt").inc(
-                _cost_for(model, "prompt", prompt_tokens)
+                _prompt_cost(model, prompt_tokens, cache_hit_tokens, cache_miss_tokens)
             )
+            if (
+                cache_hit_tokens >= 0
+                and cache_miss_tokens >= 0
+                and cache_hit_tokens + cache_miss_tokens == prompt_tokens
+            ):
+                if cache_hit_tokens > 0:
+                    llm_prompt_cache_tokens_total.labels(model=model, result="hit").inc(
+                        cache_hit_tokens
+                    )
+                if cache_miss_tokens > 0:
+                    llm_prompt_cache_tokens_total.labels(model=model, result="miss").inc(
+                        cache_miss_tokens
+                    )
         if completion_tokens > 0:
             llm_tokens_total.labels(model=model, kind="completion").inc(completion_tokens)
             llm_cost_usd_total.labels(model=model, kind="completion").inc(
                 _cost_for(model, "completion", completion_tokens)
             )
-        return
+        if outcome == "ok":
+            return
 
     category = error_category or outcome
     llm_errors_total.labels(model=model, category=category).inc()

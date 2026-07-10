@@ -87,7 +87,10 @@ except Exception as _llm_import_exc:  # noqa: BLE001
 #: so the four LLM-bearing pipelines stay in lock-step.  PR 11
 #: (2026-05-15) consolidated.  Local alias preserved so a reader
 #: grepping for "live retry budget" lands on this module.
-from llm.rag.llm.config import MAX_MODE_2_RETRIES as _CONFIG_MAX_RETRIES
+from llm.rag.llm.config import (
+    MAX_MODE_2_RETRIES as _CONFIG_MAX_RETRIES,
+    MODE_1_MAX_COMPLETION_TOKENS as _MODE_1_MAX_COMPLETION_TOKENS,
+)
 
 _LIVE_MAX_RETRIES = _CONFIG_MAX_RETRIES
 _LIVE_RETRY_DELAY_SECONDS = 0.5
@@ -394,7 +397,10 @@ def _build_hint_llm(
     )
     if retry_hint:
         prompt = prompt + retry_hint
-    response = _call_llm(prompt).strip()
+    # Output-spend cap (cost insurance, ~4x the observed 1-2 sentence
+    # hint length — see llm.rag.llm.config).  A capped-off outlier fails
+    # validation and takes the existing retry → deterministic path.
+    response = _call_llm(prompt, max_completion_tokens=_MODE_1_MAX_COMPLETION_TOKENS).strip()
     if not response:
         raise ValueError("Empty LLM response")
 

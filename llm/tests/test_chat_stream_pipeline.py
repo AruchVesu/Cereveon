@@ -40,9 +40,13 @@ def _no_retry_delay(monkeypatch):
 
 
 def _fake_stream(tokens):
-    """Return a no-arg callable that yields the given tokens (like _call_llm_stream)."""
+    """Return a callable that yields the given tokens (like _call_llm_stream).
 
-    def _gen(_prompt):
+    Accepts ``**kwargs`` because the production call site passes
+    ``max_completion_tokens=`` (the output-spend cap) alongside the prompt.
+    """
+
+    def _gen(_prompt, **_kwargs):
         for t in tokens:
             yield t
 
@@ -57,7 +61,7 @@ def _fake_stream_sequence(*token_lists, prompts=None):
 
     calls = {"n": 0}
 
-    def _gen(prompt):
+    def _gen(prompt, **_kwargs):
         if prompts is not None:
             prompts.append(prompt)
         idx = min(calls["n"], len(token_lists) - 1)
@@ -184,7 +188,7 @@ def test_mate_with_inevitability_completes(monkeypatch):
 # Transport / empty failures abort.
 # ---------------------------------------------------------------------------
 def test_transport_error_aborts(monkeypatch):
-    def _boom(_prompt):
+    def _boom(_prompt, **_kwargs):
         yield "The position "
         raise httpx.HTTPError("connection reset")
 
