@@ -174,6 +174,14 @@ def render_mode_1_prompt(
         f for f in engine_signal.get("tactical_flags", []) if f not in TRANSIENT_CHECK_FLAGS
     ]
 
+    # Single-line serialization (was ``indent=2``): the pretty-print spent
+    # ~25-40 cache-miss-priced tokens per hint on pure whitespace — this
+    # dump sits in the per-position section, so it re-bills at the full
+    # input rate on every move.  The data is byte-identical, only the
+    # separators changed; the ENGINE FACTS prose block below remains the
+    # model's primary grounding, the JSON is supplementary structure.
+    signal_json = json.dumps(signal_for_prompt)
+
     prompt = f"""{system_prompt}
 
 ────────────────────────────
@@ -187,7 +195,7 @@ Engine evaluation (neutral): {eval_desc}
 After the player's move: {player_perspective}
 Game phase: {phase}
 Engine signal (structured):
-{json.dumps(signal_for_prompt, indent=2)}{rag_block}{facts_block}
+{signal_json}{rag_block}{facts_block}
 
 ────────────────────────────
 TASK
