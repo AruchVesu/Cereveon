@@ -30,8 +30,10 @@ final class PlayViewModelTests: XCTestCase {
     @MainActor
     func testHumanMoveTriggersAIReply() async {
         // Engine (Black) replies e7-e5: e7 = (row 1, col 4), e5 = (row 3, col 4).
+        // Zero think-pacing: this test awaits the reply in real time and
+        // pins the turn loop, not the pacing (tested separately below).
         let fake = FakeEngine(move: AIMove(fromX: 1, fromY: 4, toX: 3, toY: 4, promotion: nil))
-        let vm = PlayViewModel(engine: fake)
+        let vm = PlayViewModel(engine: fake, aiThinkPacingNanos: { 0 })
 
         vm.onMove(from: sq("e2"), to: sq("e4"))
         await untilTrue { vm.uciHistory.count == 2 }
@@ -53,7 +55,7 @@ final class PlayViewModelTests: XCTestCase {
     @MainActor
     func testNewGameResets() async {
         let fake = FakeEngine(move: AIMove(fromX: 1, fromY: 4, toX: 3, toY: 4, promotion: nil))
-        let vm = PlayViewModel(engine: fake)
+        let vm = PlayViewModel(engine: fake, aiThinkPacingNanos: { 0 })   // zero pacing — real-time wait
         vm.onMove(from: sq("e2"), to: sq("e4"))
         await untilTrue { vm.uciHistory.count == 2 }
 
@@ -62,6 +64,33 @@ final class PlayViewModelTests: XCTestCase {
         XCTAssertNil(vm.gameResult)
         XCTAssertTrue(vm.whiteToMove)
         XCTAssertEqual(vm.board[6][4], "P")   // e2 pawn restored to its home square
+    }
+
+    @MainActor
+    func testEngineReplyIsHeldForThePacingWindow() async {
+        // 0.3s test window (the production 2–3s sample would slow the suite);
+        // the lower-bound assert can't flake on slow CI — Task.sleep waits at
+        // LEAST its duration, and a late poll only inflates `elapsed`.
+        let fake = FakeEngine(move: AIMove(fromX: 1, fromY: 4, toX: 3, toY: 4, promotion: nil))
+        let vm = PlayViewModel(engine: fake, aiThinkPacingNanos: { 300_000_000 })
+
+        let start = Date()
+        vm.onMove(from: sq("e2"), to: sq("e4"))
+        await untilTrue { vm.uciHistory.count == 2 }
+
+        XCTAssertEqual(vm.uciHistory.count, 2, "the held reply must still land")
+        XCTAssertGreaterThanOrEqual(
+            Date().timeIntervalSince(start), 0.3,
+            "the engine reply must be held for the pacing window before landing"
+        )
+    }
+
+    @MainActor
+    func testAIThinkPacingWindowIs2To3Seconds() {
+        // Product requirement, mirrored from Android's
+        // ChessViewModel.AI_THINK_PACING_MIN/MAX_MS — keep in lock-step.
+        XCTAssertEqual(PlayViewModel.aiThinkPacingMinNanos, 2_000_000_000)
+        XCTAssertEqual(PlayViewModel.aiThinkPacingMaxNanos, 3_000_000_000)
     }
 
     @MainActor

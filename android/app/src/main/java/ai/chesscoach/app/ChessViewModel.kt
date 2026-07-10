@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -51,6 +52,17 @@ class ChessViewModel(
      * through the gate.
      */
     var secaSafetyGate: SecaSafetyGate? = null,
+    /**
+     * Milliseconds to hold the engine's reply before it lands on the board,
+     * sampled once per move.  The native engine answers in milliseconds,
+     * which reads as a vending machine rather than an opponent — production
+     * (the default) paces every playable reply into the
+     * [AI_THINK_PACING_MIN_MS]..[AI_THINK_PACING_MAX_MS] window.  Injectable
+     * so unit tests that drive the turn loop in real wall-clock time can pass
+     * `{ 0L }`; suites on a virtual-time dispatcher advance through the
+     * default transparently.
+     */
+    private val aiThinkPacingMillis: () -> Long = { defaultAiThinkPacingMillis() },
 ) : ViewModel() {
 
     /**
@@ -279,6 +291,18 @@ $moves"""
                     null
                 }
 
+                // Pacing: hold a playable reply so the opponent reads as
+                // thinking — the engine itself answers in milliseconds.
+                // Gated on a valid move so an engine fault still flips the
+                // turn back to HUMAN immediately (pacing a failure would
+                // look like the frozen board the catch above exists to
+                // prevent).  delay() keeps the wait cancellable: reset()
+                // cancels [aiJob] mid-pacing, and the stateId guard below
+                // re-checks after the wait.
+                if (move != null && move.isValid()) {
+                    delay(aiThinkPacingMillis())
+                }
+
                 withContext(Dispatchers.Main) {
                     if (stateId == requestId) {
                         val captured = processAIMoveResult(move, applyAIMove, consumeGameOver)
@@ -490,5 +514,20 @@ $moves"""
          * recovered on the next move once the warm completes.
          */
         const val STRENGTH_FETCH_BUDGET_MS: Long = 500L
+
+        /**
+         * Opponent "think" pacing window: every playable engine reply is
+         * held for a uniform-random duration in this range (sampled per
+         * move) before it lands on the board, so the near-instant native
+         * engine feels like an opponent taking 2–3 seconds over a move.
+         * iOS mirrors these values in PlayViewModel.aiThinkPacing*Nanos —
+         * keep the platforms in lock-step.
+         */
+        const val AI_THINK_PACING_MIN_MS: Long = 2_000L
+        const val AI_THINK_PACING_MAX_MS: Long = 3_000L
+
+        /** Production pacing sample — uniform in the window above. */
+        internal fun defaultAiThinkPacingMillis(): Long =
+            (AI_THINK_PACING_MIN_MS..AI_THINK_PACING_MAX_MS).random()
     }
 }

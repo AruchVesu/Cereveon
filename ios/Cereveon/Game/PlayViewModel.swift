@@ -32,9 +32,19 @@ final class PlayViewModel: ObservableObject {
         turn == .human && !aiThinking && gameResult == nil && pendingPromotion == nil
     }
 
+    /// Opponent "think" pacing window (nanoseconds): every playable engine
+    /// reply is held for a uniform-random duration in this range (sampled
+    /// per move) before it lands on the board, so the near-instant native
+    /// engine feels like an opponent taking 2–3 seconds over a move.
+    /// Mirrors Android's ChessViewModel.AI_THINK_PACING_MIN/MAX_MS — keep
+    /// the platforms in lock-step.
+    static let aiThinkPacingMinNanos: UInt64 = 2_000_000_000
+    static let aiThinkPacingMaxNanos: UInt64 = 3_000_000_000
+
     private let game = ChessGame()
     private let engine: EngineProvider
     private let aiStrength: Int
+    private let aiThinkPacingNanos: () -> UInt64
 
     // Coaching dependencies; nil disables that feature (tests / logged-out).
     private let liveCoach: LiveMoveClient?
@@ -57,7 +67,10 @@ final class PlayViewModel: ObservableObject {
          gameClient: GameClient? = nil,
          token: @escaping () -> String? = { nil },
          resume: GameSnapshot? = nil,
-         snapshotDefaults: UserDefaults = .standard) {
+         snapshotDefaults: UserDefaults = .standard,
+         /// Nil (production) samples the 2–3s window above per move; tests
+         /// that await the engine reply in real time pass `{ 0 }`.
+         aiThinkPacingNanos: (() -> UInt64)? = nil) {
         self.engine = engine
         self.aiStrength = aiStrength
         self.liveCoach = liveCoach
@@ -65,6 +78,9 @@ final class PlayViewModel: ObservableObject {
         self.gameClient = gameClient
         self.token = token
         self.snapshotDefaults = snapshotDefaults
+        self.aiThinkPacingNanos = aiThinkPacingNanos ?? {
+            UInt64.random(in: Self.aiThinkPacingMinNanos...Self.aiThinkPacingMaxNanos)
+        }
         if let resume {
             // Replay the move list from the start so castling rights / en passant
             // rebuild correctly (loading only the FEN would lose them).
@@ -186,6 +202,15 @@ final class PlayViewModel: ObservableObject {
                 engine.bestMove(fen: fen, strength: strength)
             }.value
             let move = raw.flatMap { EngineMoveBridge.normalize($0, fen: fen) }
+            // Pacing: hold a playable reply so the opponent reads as
+            // thinking — the engine itself answers in milliseconds.  A nil
+            // reply skips the hold: an engine fault must hand the turn back
+            // immediately, not pretend to think over a failure.  The
+            // generation guard runs AFTER the hold so a newGame() during it
+            // discards the stale reply (same as Android's stateId guard).
+            if move != nil {
+                try? await Task.sleep(nanoseconds: self.aiThinkPacingNanos())
+            }
             guard gen == self.generation else { return }
             self.applyAIMove(move)
             self.aiThinking = false
