@@ -48,6 +48,11 @@ TEST_TARGETS = [
     # wiring, and guide-text safety (no forbidden output / no engine
     # reveal / no unimplemented-feature claims).
     "llm/tests/test_app_help.py",
+    # Prompt-cache prefix invariants (PCP_01..03): the static system
+    # prompt + app guide stay a byte-identical request prefix, and
+    # history extends the cached prefix within a conversation — the
+    # layout DeepSeek's automatic context cache bills at ~1/50th rate.
+    "llm/tests/test_prompt_cache_prefix.py",
     "llm/tests/test_live_move_pipeline.py",
     "llm/tests/test_historical_pipeline.py",
     "llm/tests/test_api_security.py",

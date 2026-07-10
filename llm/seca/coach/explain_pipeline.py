@@ -51,7 +51,10 @@ MODEL_NAME = os.getenv("COACH_DEEPSEEK_MODEL", "deepseek-chat")
 #: constants into this shared source.  Local name ``MAX_RETRIES``
 #: preserved for backward-compat with ``test_explain_pipeline_retry.py``
 #: which imports it directly.
-from llm.rag.llm.config import MAX_MODE_2_RETRIES as _CONFIG_MAX_RETRIES
+from llm.rag.llm.config import (
+    CHAT_MAX_COMPLETION_TOKENS as _CHAT_MAX_COMPLETION_TOKENS,
+    MAX_MODE_2_RETRIES as _CONFIG_MAX_RETRIES,
+)
 
 MAX_RETRIES = _CONFIG_MAX_RETRIES
 _RETRY_DELAY_SECONDS = 0.5
@@ -79,7 +82,48 @@ class LLMConfigError(RuntimeError):
     """Raised when the LLM provider is misconfigured (e.g. missing API key)."""
 
 
-def call_llm(prompt: str) -> str:
+def _estimate_tokens(text_len: int) -> int:
+    """Crude chars→tokens estimate (~4 chars/token for English prose).
+
+    Used ONLY when the provider's usage frame never arrived — an aborted
+    stream (consumer rejected mid-generation) or a byte-cap truncation —
+    so the attempt's real, billed spend still lands on the cost metric
+    instead of silently reading zero.  Estimates are flagged
+    ``usage_estimated`` in the ``llm_call`` log line.
+    """
+    return max(1, text_len // 4)
+
+
+def _cache_split(usage: dict) -> tuple[int, int]:
+    """Extract the prompt-cache (hit, miss) token split from a usage block.
+
+    DeepSeek reports ``prompt_cache_hit_tokens`` / ``prompt_cache_miss_tokens``
+    at the top level; OpenAI-compatible gateways report
+    ``prompt_tokens_details.cached_tokens`` (hit only — miss is derived).
+    Returns ``(0, 0)`` when no split is reported or it doesn't add up to
+    ``prompt_tokens``; callers then fall back to flat cache-miss pricing
+    (the conservative pre-split behaviour).
+    """
+    try:
+        prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        hit = usage.get("prompt_cache_hit_tokens")
+        miss = usage.get("prompt_cache_miss_tokens")
+        if hit is None:
+            details = usage.get("prompt_tokens_details")
+            if isinstance(details, dict):
+                hit = details.get("cached_tokens")
+        if hit is None:
+            return (0, 0)
+        hit = int(hit)
+        miss = int(miss) if miss is not None else prompt_tokens - hit
+        if hit < 0 or miss < 0 or hit + miss != prompt_tokens:
+            return (0, 0)
+        return (hit, miss)
+    except (TypeError, ValueError):
+        return (0, 0)
+
+
+def call_llm(prompt: str, *, max_completion_tokens: int | None = None) -> str:
     """Single-shot LLM completion against DeepSeek's chat-completions API.
 
     The Mode-2 prompt that arrives here is already a fully-rendered
@@ -141,6 +185,12 @@ def call_llm(prompt: str) -> str:
         # the LLM token / cost counters.
         "stream_options": {"include_usage": True},
     }
+    if max_completion_tokens is not None:
+        # Worst-case output-spend bound (see llm.rag.llm.config for the
+        # per-pipeline caps and their headroom rationale).  Only sent when
+        # the caller opts in, so the BaseLLM adapter / smoke-test wire
+        # stays byte-identical to the historical request shape.
+        request_body["max_tokens"] = max_completion_tokens
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -220,12 +270,24 @@ def call_llm(prompt: str) -> str:
             error_category = "empty"
         prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
         completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        cache_hit_tokens, cache_miss_tokens = _cache_split(usage)
+        usage_estimated = False
+        if outcome == "ok" and not usage and assembled_so_far:
+            # The stream ended without a usage frame (the byte-cap break
+            # fires before it arrives; some gateways omit it).  Estimate
+            # so the billed spend doesn't read zero; no cache split is
+            # attributable, so the estimate bills flat at the miss rate.
+            prompt_tokens = _estimate_tokens(len(prompt))
+            completion_tokens = _estimate_tokens(total_bytes)
+            usage_estimated = True
         observability.observe_llm_call(
             model=MODEL_NAME,
             outcome=outcome,
             duration_seconds=duration,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cache_hit_tokens=cache_hit_tokens,
+            cache_miss_tokens=cache_miss_tokens,
             error_category=error_category,
         )
         # Structured log line — Loki picks up the JSON-formatted record
@@ -234,7 +296,11 @@ def call_llm(prompt: str) -> str:
         # ``cost_usd`` by ``game_id``.  ``game_id`` is sourced from the
         # contextvar so handlers that don't carry one simply omit it.
         cost_usd = observability.cost_for_call(
-            MODEL_NAME, prompt_tokens, completion_tokens
+            MODEL_NAME,
+            prompt_tokens,
+            completion_tokens,
+            cache_hit_tokens,
+            cache_miss_tokens,
         )
         logger.info(
             "llm_call",
@@ -245,6 +311,9 @@ def call_llm(prompt: str) -> str:
                 "outcome": outcome,
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
+                "cache_hit_tokens": cache_hit_tokens,
+                "cache_miss_tokens": cache_miss_tokens,
+                "usage_estimated": usage_estimated,
                 "cost_usd": round(cost_usd, 6),
                 "latency_ms": round(duration * 1000, 3),
             },
@@ -259,7 +328,9 @@ def call_llm(prompt: str) -> str:
     return assembled
 
 
-def call_llm_stream(prompt: str) -> Iterator[str]:
+def call_llm_stream(
+    prompt: str, *, max_completion_tokens: int | None = None
+) -> Iterator[str]:
     """Streaming variant of :func:`call_llm` — yields DeepSeek ``delta.content``
     chunks as they arrive instead of assembling them into one string.
 
@@ -277,6 +348,14 @@ def call_llm_stream(prompt: str) -> Iterator[str]:
         iteration*; the caller must catch them and fall back deterministically
         (a partial stream has already validated-and-emitted only clean text,
         so aborting to the fallback is safe).
+      - When the CONSUMER abandons the generator mid-stream (the streaming
+        pipeline rejecting a FORBID violation and moving to a retry), the
+        interpreter delivers ``GeneratorExit`` at the suspended ``yield``:
+        the ``finally`` below records the attempt as outcome ``aborted``
+        with ESTIMATED token usage (the provider's usage frame never
+        arrived, but the prompt and the generated-so-far tokens were
+        billed), and closing the ``httpx.stream`` context tears down the
+        connection so DeepSeek stops generating (and billing) server-side.
     """
     api_key = os.getenv("COACH_DEEPSEEK_API_KEY", "").strip()
     if not api_key:
@@ -291,6 +370,9 @@ def call_llm_stream(prompt: str) -> Iterator[str]:
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+    if max_completion_tokens is not None:
+        # Same opt-in output cap as ``call_llm`` (see llm.rag.llm.config).
+        request_body["max_tokens"] = max_completion_tokens
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -334,6 +416,13 @@ def call_llm_stream(prompt: str) -> Iterator[str]:
                         break
                     completion_chars += len(content)
                     yield content
+    except GeneratorExit:
+        # Consumer closed the generator mid-stream (validator rejection /
+        # retry in the streaming pipeline).  The attempt still billed its
+        # prompt plus everything generated so far — account for it below.
+        outcome = "aborted"
+        error_category = "aborted"
+        raise
     except httpx.TimeoutException:
         outcome = "timeout"
         error_category = "timeout"
@@ -354,15 +443,32 @@ def call_llm_stream(prompt: str) -> Iterator[str]:
             error_category = "empty"
         prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
         completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        cache_hit_tokens, cache_miss_tokens = _cache_split(usage)
+        usage_estimated = False
+        if outcome in ("ok", "aborted") and not usage and completion_chars > 0:
+            # No usage frame (aborted before it arrived / byte-cap break /
+            # gateway omission) — estimate so the billed spend is visible.
+            # No cache split is attributable; bills flat at the miss rate.
+            prompt_tokens = _estimate_tokens(len(prompt))
+            completion_tokens = _estimate_tokens(completion_chars)
+            usage_estimated = True
         observability.observe_llm_call(
             model=MODEL_NAME,
             outcome=outcome,
             duration_seconds=duration,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cache_hit_tokens=cache_hit_tokens,
+            cache_miss_tokens=cache_miss_tokens,
             error_category=error_category,
         )
-        cost_usd = observability.cost_for_call(MODEL_NAME, prompt_tokens, completion_tokens)
+        cost_usd = observability.cost_for_call(
+            MODEL_NAME,
+            prompt_tokens,
+            completion_tokens,
+            cache_hit_tokens,
+            cache_miss_tokens,
+        )
         logger.info(
             "llm_call",
             extra={
@@ -372,6 +478,9 @@ def call_llm_stream(prompt: str) -> Iterator[str]:
                 "outcome": outcome,
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
+                "cache_hit_tokens": cache_hit_tokens,
+                "cache_miss_tokens": cache_miss_tokens,
+                "usage_estimated": usage_estimated,
                 "cost_usd": round(cost_usd, 6),
                 "latency_ms": round(duration * 1000, 3),
                 "streamed": True,
@@ -400,7 +509,9 @@ def generate_once(fen: str, stockfish_json: dict, user_query: str) -> tuple[str,
         user_query=user_query,
     )
 
-    explanation = call_llm(prompt)
+    # Same Mode-2 output-spend cap as the chat pipelines (cost insurance;
+    # see llm.rag.llm.config).
+    explanation = call_llm(prompt, max_completion_tokens=_CHAT_MAX_COMPLETION_TOKENS)
 
     # Post-LLM safety check — block before returning to caller
     check_output(explanation)

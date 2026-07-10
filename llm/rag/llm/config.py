@@ -40,3 +40,23 @@ MAX_MODE_2_RETRIES = 2
 #: subject to one retry on the quality-heuristic path (Category E,
 #: advisory only — not a safety gate).
 MIN_QUALITY_SCORE = 7
+
+#: Worst-case output-spend bounds, sent as ``max_tokens`` by the
+#: PRODUCTION call sites only (the BaseLLM adapter and the smoke /
+#: regression harnesses stay uncapped so their wire shape is unchanged).
+#: Without a cap the only output bound is the 100 kB defense-in-depth
+#: byte cap in ``explain_pipeline`` — ~25k tokens of billable runaway
+#: per pathological call.  The caps are cost insurance, not shaping:
+#: each sits several times above its pipeline's observed reply length,
+#: so a normal generation never touches it.  A capped-off outlier is
+#: handled by the existing contract machinery (validators → targeted
+#: retry → deterministic fallback), the same path an uncapped rambling
+#: reply would have taken anyway.
+#:
+#: Sizing (completion_tokens histogram, 2026-07): Mode-2 chat replies
+#: run ~150-250 tokens ("2-4 short paragraphs"); 500 is ~2x the
+#: observed ceiling.  Mode-1 hints are 1-2 sentences (~40 tokens);
+#: 160 is ~4x.  Raise, never lower, in response to REQUIRE-gate
+#: truncation failures showing up in the weekly regression run.
+CHAT_MAX_COMPLETION_TOKENS = 500
+MODE_1_MAX_COMPLETION_TOKENS = 160

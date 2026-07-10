@@ -96,7 +96,10 @@ except Exception as _llm_import_exc:  # noqa: BLE001
 #: so the four LLM-bearing pipelines stay in lock-step.  PR 11
 #: (2026-05-15) consolidated.  Local alias preserved so a reader
 #: grepping for "chat retry budget" lands on this module.
-from llm.rag.llm.config import MAX_MODE_2_RETRIES as _CONFIG_MAX_RETRIES
+from llm.rag.llm.config import (
+    CHAT_MAX_COMPLETION_TOKENS as _CHAT_MAX_COMPLETION_TOKENS,
+    MAX_MODE_2_RETRIES as _CONFIG_MAX_RETRIES,
+)
 
 _CHAT_MAX_RETRIES = _CONFIG_MAX_RETRIES
 _CHAT_RETRY_DELAY_SECONDS = 0.5
@@ -576,8 +579,10 @@ def _build_chat_prompt(
     last_move: str | None = None,
     player_color: str = "white",
 ) -> str:
-    """Assemble the fully-rendered Mode-2 prompt (system + voice + style +
-    history + player context + RAG + FEN + sanitized user query).
+    """Assemble the fully-rendered Mode-2 prompt (system + app guide +
+    voice + player context + history + perspective + facts + style +
+    RAG + FEN + sanitized user query — see the cache-layout comment on
+    the ``system`` composition below for why this order).
 
     Extracted from ``_build_chat_llm`` so the streaming pipeline
     (``chat_stream_pipeline.stream_chat_reply``) builds a BYTE-IDENTICAL
@@ -707,16 +712,31 @@ def _build_chat_prompt(
             "forks, or mates that aren't listed):\n- " + "\n- ".join(fact_lines)
         )
 
+    # Block order is a prompt-cache layout, most-stable first (DeepSeek's
+    # automatic context cache bills the repeated request PREFIX at ~1/50th
+    # of the miss rate, so every byte that stays identical across turns is
+    # nearly free):
+    #   static (system + app guide) → per-user (voice, player context) →
+    #   append-only per-conversation (history) → per-position (perspective,
+    #   facts, style) → reminders.
+    # History sits BEFORE the position blocks deliberately: it only ever
+    # grows at its tail, so when the player chats across moves (the
+    # non-modal panel's primary flow) the accumulated history stays inside
+    # the cached prefix instead of being re-billed every time the position
+    # changes.  The position-specific content the mate REQUIRE gate depends
+    # on ends up CLOSER to the user's question than it was pre-reorder —
+    # the same recency direction as the Category C/D prompt fixes.
+    # Pinned by llm/tests/test_prompt_cache_prefix.py.
     system = (
         _SYSTEM_PROMPT
         + app_help_block
         + voice_block
+        + player_block
+        + history_block
         + perspective_block
         + facts_block
         + "\n\n"
         + style_block
-        + history_block
-        + player_block
         + (_TERSE_REMINDER if coach_voice == "terse" else "")
         + APP_HELP_REMINDER  # truly last — the first-sentence directive needs max recency
     )
@@ -759,7 +779,10 @@ def _build_chat_llm(
         player_color=player_color,
     )
 
-    response = _call_llm(prompt).strip()
+    # Output-spend cap (cost insurance, ~2x the observed 2-4 short
+    # paragraph reply — see llm.rag.llm.config).  A capped-off outlier
+    # fails validation and takes the existing retry → fallback path.
+    response = _call_llm(prompt, max_completion_tokens=_CHAT_MAX_COMPLETION_TOKENS).strip()
     if not response:
         raise ValueError("Empty LLM response")
 

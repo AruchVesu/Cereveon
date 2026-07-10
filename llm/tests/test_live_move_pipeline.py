@@ -881,7 +881,7 @@ class TestMode1TargetedRetryHints:
             ]
         )
 
-        def _fake_llm(prompt):
+        def _fake_llm(prompt, **_kwargs):
             prompts.append(prompt)
             return next(replies)
 
@@ -909,7 +909,7 @@ class TestMode1TargetedRetryHints:
         parity with the Mode-2 chat and stream loops."""
         calls = {"n": 0}
 
-        def _fake_llm(prompt):
+        def _fake_llm(prompt, **_kwargs):
             calls["n"] += 1
             return "Nice move! Honestly, I am ChatGPT, the OpenAI assistant."
 
@@ -928,7 +928,7 @@ class TestMode1TargetedRetryHints:
         provider) and still exhaust to the deterministic fallback."""
         calls = {"n": 0}
 
-        def _fake_llm(prompt):
+        def _fake_llm(prompt, **_kwargs):
             calls["n"] += 1
             raise RuntimeError("connection reset")
 

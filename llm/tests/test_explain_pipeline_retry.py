@@ -34,7 +34,7 @@ class TestExplainPipelineRetryBehaviour:
         """RETRY_CALL_CAP: call_llm is invoked at most MAX_RETRIES+1 times."""
         call_count = 0
 
-        def _count_and_return(prompt: str) -> str:
+        def _count_and_return(prompt: str, **_kwargs) -> str:
             nonlocal call_count
             call_count += 1
             return "dummy"
@@ -62,7 +62,7 @@ class TestExplainPipelineRetryBehaviour:
         delay must elapse across all retry attempts so the provider is not flooded."""
         call_times: list[float] = []
 
-        def _record_time(prompt: str) -> str:
+        def _record_time(prompt: str, **_kwargs) -> str:
             call_times.append(time.monotonic())
             return "dummy"
 

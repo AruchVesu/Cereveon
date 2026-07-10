@@ -1509,7 +1509,7 @@ class TestChatPlayerColorContract:
             with (
                 patch.object(chat_mod, "_LLM_AVAILABLE", True),
                 patch.object(chat_mod, "_render", fake_render),
-                patch.object(chat_mod, "_call_llm", lambda *_: "The position is roughly equal."),
+                patch.object(chat_mod, "_call_llm", lambda *_, **__: "The position is roughly equal."),
                 patch.object(chat_mod, "extract_engine_signal", lambda *a, **k: esv_stub),
                 patch.object(chat_mod, "_EngineSignalSchema", _Pass()),
                 patch.object(chat_mod, "_retrieve", lambda *a, **k: []),
