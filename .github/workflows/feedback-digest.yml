@@ -1,0 +1,156 @@
+# Weekly feedback digest — emails the operator every feedback_messages
+# row from the last 7 days.
+#
+# POST /feedback (docs/API_CONTRACTS.md §38) writes user-submitted
+# product feedback to the production Postgres and deliberately surfaces
+# it NOWHERE in the product; until this workflow existed the only read
+# path was a manual psql over SSH.  This cron closes that loop: query
+# the table over the same SSH channel the deploy job uses, then send
+# the rows as a plain-text email.
+#
+# Public-repo discipline: the repository is PUBLIC, so workflow logs
+# are public.  Feedback text is user-supplied content and must never
+# be printed to the log — the query step emits ONLY the row count; the
+# message bodies go into a local file that is read by the mail action
+# and never echoed.  (No artifact upload for the same reason.)
+#
+# Failure posture: missing secrets FAIL the run loudly instead of
+# warn-and-skip.  A previous weekly cron in this repo ran green for
+# weeks as a silent no-op because its secret never existed (see the
+# llm-regression-cron history) — a digest that silently sends nothing
+# is indistinguishable from "no feedback", which is exactly the drift
+# this check exists to prevent.  GitHub's own workflow-failure email
+# then acts as the liveness signal.
+#
+# Delivery: any SMTP provider works.  The intended default is Gmail —
+# smtp.gmail.com:465 with an app password (Google account → Security →
+# 2-Step Verification → App passwords) — so only three secrets are
+# required: FEEDBACK_SMTP_USERNAME, FEEDBACK_SMTP_PASSWORD,
+# FEEDBACK_DIGEST_TO.  FEEDBACK_SMTP_HOST / FEEDBACK_SMTP_PORT
+# override the Gmail defaults for other providers.
+# See docs/DEPLOYMENT.md > "Weekly feedback digest".
+name: Feedback digest (weekly)
+
+on:
+  schedule:
+    # Monday 06:37 UTC — staggered off the top of the hour (GHA queue
+    # spikes) and distinct from the other crons (android-instrumented
+    # 03:00, llm-regression 04:17) so nothing competes.
+    - cron: "37 6 * * 1"
+  workflow_dispatch:
+
+# The job never checks out the repo and needs nothing from the token.
+permissions: {}
+
+concurrency:
+  group: feedback-digest-weekly
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    name: Query + email weekly feedback
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # GitHub Actions disallows ``secrets.X`` directly in step-level
+    # ``if:`` expressions, so secret presence is surfaced via job-level
+    # ``env:`` flags — same idiom as fly-deploy.yml and
+    # llm-regression-cron.yml.
+    env:
+      HAS_HETZNER_HOST: ${{ secrets.HETZNER_HOST != '' }}
+      HAS_HETZNER_KEY: ${{ secrets.HETZNER_SSH_KEY != '' }}
+      HAS_SMTP_USERNAME: ${{ secrets.FEEDBACK_SMTP_USERNAME != '' }}
+      HAS_SMTP_PASSWORD: ${{ secrets.FEEDBACK_SMTP_PASSWORD != '' }}
+      HAS_DIGEST_TO: ${{ secrets.FEEDBACK_DIGEST_TO != '' }}
+    steps:
+      - name: Verify required secrets exist (fail loudly, never skip)
+        shell: bash
+        run: |
+          missing=""
+          [ "$HAS_HETZNER_HOST" = "true" ]  || missing="$missing HETZNER_HOST"
+          [ "$HAS_HETZNER_KEY" = "true" ]   || missing="$missing HETZNER_SSH_KEY"
+          [ "$HAS_SMTP_USERNAME" = "true" ] || missing="$missing FEEDBACK_SMTP_USERNAME"
+          [ "$HAS_SMTP_PASSWORD" = "true" ] || missing="$missing FEEDBACK_SMTP_PASSWORD"
+          [ "$HAS_DIGEST_TO" = "true" ]     || missing="$missing FEEDBACK_DIGEST_TO"
+          if [ -n "$missing" ]; then
+            echo "::error::feedback digest cannot run — missing repo secret(s):$missing. A silent skip here would be indistinguishable from 'no feedback this week', so this is a hard failure by design (docs/DEPLOYMENT.md > Weekly feedback digest)."
+            exit 1
+          fi
+          echo "All required secrets present."
+
+      - name: Query last 7 days of feedback from production Postgres
+        id: query
+        shell: bash
+        env:
+          HETZNER_HOST: ${{ secrets.HETZNER_HOST }}
+          HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$HETZNER_SSH_KEY" > ssh_key
+          chmod 600 ssh_key
+
+          # accept-new mirrors the trust-on-first-use posture of the
+          # appleboy ssh/scp deploy steps (fresh runner every time).
+          # ``docker compose exec -T db`` resolves the db container by
+          # service name so a compose-project rename can't break this,
+          # and -T keeps stdin usable for the heredoc SQL below.
+          #
+          # Statement 1 prints exactly one COUNT:<n> line; statement 2
+          # prints one pre-formatted block per row (psql -At = unaligned,
+          # tuples only — embedded newlines in messages print verbatim,
+          # which is fine: everything after line 1 is opaque body text).
+          ssh -i ssh_key \
+              -o StrictHostKeyChecking=accept-new \
+              -o ConnectTimeout=15 \
+              "deploy@${HETZNER_HOST}" \
+              "cd /opt/chesscoach && docker compose exec -T db sh -c 'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -At'" <<'SQL' > out.txt
+          SELECT 'COUNT:' || count(*)
+            FROM feedback_messages
+           WHERE created_at >= now() - interval '7 days';
+          SELECT '-- ' || to_char(created_at, 'YYYY-MM-DD HH24:MI')
+                 || ' UTC | app ' || coalesce(app_version, '?')
+                 || ' | player ' || left(player_id, 8)
+                 || E'\n' || message || E'\n'
+            FROM feedback_messages
+           WHERE created_at >= now() - interval '7 days'
+           ORDER BY created_at;
+          SQL
+
+          count_line=$(head -n 1 out.txt)
+          case "$count_line" in
+            COUNT:*) count="${count_line#COUNT:}" ;;
+            *) echo "::error::unexpected query output (no COUNT header) — psql contract drifted"; exit 1 ;;
+          esac
+
+          # PUBLIC REPO: the count is the only thing that may reach the
+          # log.  Message bodies stay in digest_body.txt for the mail
+          # action and are never echoed.
+          {
+            echo "Cereveon — user feedback from the last 7 days."
+            echo "${count} message(s) in feedback_messages (window end: $(date -u +'%Y-%m-%d %H:%M UTC'))."
+            echo
+            tail -n +2 out.txt
+          } > digest_body.txt
+
+          {
+            echo "count=${count}"
+            echo "stamp=$(date -u +%Y-%m-%d)"
+          } >> "$GITHUB_OUTPUT"
+          echo "Fetched ${count} feedback row(s)."
+
+      # No email when the week had no feedback — an empty weekly email
+      # trains the reader to ignore the real ones.  Breakage still goes
+      # red above (guard + query are unconditional), so a quiet week is
+      # a green run with count=0, never a masked failure.
+      - name: Send digest email
+        if: steps.query.outputs.count != '0'
+        uses: dawidd6/action-send-mail@v18
+        with:
+          server_address: ${{ secrets.FEEDBACK_SMTP_HOST || 'smtp.gmail.com' }}
+          server_port: ${{ secrets.FEEDBACK_SMTP_PORT || '465' }}
+          username: ${{ secrets.FEEDBACK_SMTP_USERNAME }}
+          password: ${{ secrets.FEEDBACK_SMTP_PASSWORD }}
+          subject: "Cereveon feedback digest — ${{ steps.query.outputs.count }} message(s), week to ${{ steps.query.outputs.stamp }}"
+          to: ${{ secrets.FEEDBACK_DIGEST_TO }}
+          from: Cereveon Feedback <${{ secrets.FEEDBACK_SMTP_USERNAME }}>
+          body: file://digest_body.txt

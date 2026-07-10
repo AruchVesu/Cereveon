@@ -160,6 +160,11 @@ run. Go to **Settings → Secrets and variables → Actions**.
 | `KEY_ALIAS` | Android release APK signing | The alias chosen when running `keytool -genkey` |
 | `KEY_PASSWORD` | Android release APK signing | The key password chosen when running `keytool -genkey` |
 | `STORE_PASSWORD` | Android release APK signing | The store password chosen when running `keytool -genkey` |
+| `FEEDBACK_SMTP_USERNAME` | Weekly feedback digest — SMTP login + `From:` address | The mailbox that sends the digest (for Gmail: the full address) |
+| `FEEDBACK_SMTP_PASSWORD` | Weekly feedback digest — SMTP auth | For Gmail: an **app password** (Google account → Security → 2-Step Verification → App passwords); the normal account password will not work |
+| `FEEDBACK_DIGEST_TO` | Weekly feedback digest — recipient | The operator address the digest is mailed to |
+| `FEEDBACK_SMTP_HOST` | Weekly feedback digest — optional | SMTP server; defaults to `smtp.gmail.com` when unset |
+| `FEEDBACK_SMTP_PORT` | Weekly feedback digest — optional | SMTP port; defaults to `465` (implicit TLS) when unset |
 
 > **Fly.io edge — one-time GHCR auth.** The `fly-deploy` job tells Fly to pull `ghcr.io/<owner>/cereveon@sha256:...`.  Fly's machines need to be able to pull that image.  Either make the GHCR package public (Settings → Packages → cereveon → Change visibility), or run `flyctl auth docker` once on a workstation that has a GHCR PAT in `~/.docker/config.json` so Fly captures the credentials.  The Hetzner deploy is unaffected — it pulls via the workflow's own `GITHUB_TOKEN`.
 
@@ -184,6 +189,27 @@ These are not GitHub secrets — they live on the server itself:
 All other backend variables (`SECA_API_KEY`, `SECRET_KEY`, `DATABASE_URL`,
 `POSTGRES_*`, etc.) go into `/opt/chesscoach/.env.prod` — see section 1 and
 `.env.prod.example` for the production-specific template.
+
+### Weekly feedback digest
+
+[`feedback-digest.yml`](../.github/workflows/feedback-digest.yml) runs every
+Monday 06:37 UTC (plus `workflow_dispatch` for ad-hoc runs): it SSHes to the
+Hetzner box with the same `HETZNER_HOST` / `HETZNER_SSH_KEY` pair the deploy
+job uses, queries `feedback_messages` (the `POST /feedback` store, contract
+§38) for rows from the last 7 days, and emails them to
+`FEEDBACK_DIGEST_TO` via SMTP.
+
+Operational properties:
+
+- **Missing secrets fail the run loudly** — never warn-and-skip.  A digest
+  that silently sends nothing is indistinguishable from "no feedback this
+  week" (the failure mode a previous weekly cron actually shipped).
+  GitHub's workflow-failure email is the liveness signal.
+- **No feedback → no email.**  A quiet week is a green run with `count=0`;
+  breakage is always red.
+- **Feedback text never reaches the (public) workflow log** — the query
+  step prints only the row count; message bodies travel exclusively in the
+  email body.
 
 ---
 
