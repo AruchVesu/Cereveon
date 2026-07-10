@@ -15,7 +15,7 @@ Pinned invariants
 -----------------
  1. AGENT_CREATES_PLAN_AND_THREE_PUZZLES   one plan + three puzzles per call.
  2. AGENT_DAY_OFFSETS_ARE_0_3_7            puzzles cover ``PLAN_DAY_OFFSETS``.
- 3. AGENT_DUE_AT_IMMEDIATE                 all due_at == created (sequential pacing, not calendar).
+ 3. AGENT_DUE_AT_SPACED                    due_at = created + day_offset days (0 / +3d / +7d).
  4. AGENT_STUB_THEME_AND_VERDICT           phase 1 stub: theme="generic", verdict="".
  5. AGENT_ALL_PUZZLES_USE_MISTAKE_FEN      phase 1 stub: every puzzle's fen == mistake_fen.
  6. AGENT_ALL_PUZZLES_USE_PLAYED_UCI       phase 1 stub: every expected_move_uci == played_uci.
@@ -25,8 +25,8 @@ Pinned invariants
 10. AGENT_DEDUP_DOES_NOT_DOUBLE_WRITE      dedup path leaves table at 1 plan + 3 puzzles.
 11. TODAY_RETURNS_NONE_WHEN_NO_PLAN        no active plan → endpoint returns None.
 12. TODAY_RETURNS_DAY0_WHEN_DUE            fresh plan → today_puzzle is day-0.
-13. TODAY_ADVANCES_TO_NEXT_INCOMPLETE     solving day-0 unlocks day-3 (sequential, no wait).
-14. TODAY_DUE_ADVANCES_THROUGH_ALL        due day steps 0 → 3 → 7 as each is solved.
+13. TODAY_LOCKS_NEXT_DAY_UNTIL_DUE        solving day-0 leaves day-3 locked until its due_at elapses.
+14. TODAY_DUE_ADVANCES_THROUGH_ALL        elapsed schedule → due day steps 0 → 3 → 7 on solve.
 15. TODAY_SKIPS_COMPLETED_PLAN             status="completed" plan not surfaced.
 16. TODAY_RETURNS_MOST_RECENT_ACTIVE_PLAN  two active plans → most recent by created_at.
 17. TODAY_RESPONSE_SHAPE                   total_days=3, theme="generic", verdict="" in phase 1.
@@ -46,6 +46,9 @@ Pinned invariants
 31. THEME_SELECTS_OVER_CATEGORY           days 3/7 follow the day-0 mistake theme; category is only backfill.
 32. ONE_ACTIVE_PLAN                       a new game while active returns the existing plan.
 33. REGEN_AFTER_COMPLETION                completing the active plan lets the next game mint a new one.
+34. TODAY_UNLOCKS_NEXT_WHEN_DUE           day-3 surfaces once its due_at elapses AND day-0 is solved.
+35. TODAY_CATCHUP_STAYS_SEQUENTIAL        a fully-elapsed schedule still unlocks one day at a time, in order.
+36. COMPLETE_SURFACES_NEXT_WHEN_DUE       completing day-0 with day-3 already due returns day-3 immediately.
 """
 
 from __future__ import annotations
@@ -246,6 +249,17 @@ def _call_complete(player, db, plan_id, day_offset):
         limiter.enabled = prev_enabled
 
 
+def _rewind_schedule(db, plan, *, days: int) -> None:
+    """Shift every puzzle's ``due_at`` ``days`` into the past — the test
+    equivalent of the wall clock moving forward by that many days after
+    plan creation.  Lets the calendar-gate tests exercise "day-3 is now
+    due" without sleeping or monkeypatching ``datetime`` inside the
+    router."""
+    for puzzle in plan.puzzles:
+        puzzle.due_at = puzzle.due_at - timedelta(days=days)
+    db.commit()
+
+
 # ---------------------------------------------------------------------------
 # Agent — generate_plan
 # ---------------------------------------------------------------------------
@@ -281,11 +295,12 @@ class TestCoachAgentGeneratePlan:
         offsets = sorted(p.day_offset for p in plan.puzzles)
         assert tuple(offsets) == PLAN_DAY_OFFSETS
 
-    def test_due_at_immediate(self, db_session, player, game_event):
-        """AGENT_DUE_AT_IMMEDIATE — all puzzles are available from
-        creation (no +3d / +7d calendar spacing).  Pacing is sequential
-        and enforced by the router (first-incomplete day), not by
-        ``due_at``."""
+    def test_due_at_spaced_schedule(self, db_session, player, game_event):
+        """AGENT_DUE_AT_SPACED — the spaced-repetition calendar: day-0
+        unlocks at creation, day-3 three days later, day-7 seven days
+        later (``due_at = created + day_offset`` days).  The router
+        refuses to surface a day before its ``due_at``, so this spacing
+        is what stops a plan being cleared in one sitting."""
         before = datetime.utcnow()
         plan = generate_plan(
             db=db_session,
@@ -297,9 +312,11 @@ class TestCoachAgentGeneratePlan:
         after = datetime.utcnow()
 
         by_offset = {p.day_offset: p for p in plan.puzzles}
-        # Every day's due_at lands within the creation window — no spacing.
+        # Each day's due_at lands exactly day_offset days after the
+        # creation window — 0 / +3d / +7d.
         for offset in PLAN_DAY_OFFSETS:
-            assert before <= by_offset[offset].due_at <= after
+            spacing = timedelta(days=offset)
+            assert before + spacing <= by_offset[offset].due_at <= after + spacing
 
     def test_stub_theme_and_verdict(self, db_session, player, game_event):
         """AGENT_STUB_THEME_AND_VERDICT — phase 1 ships generic theme + empty verdict."""
@@ -1918,10 +1935,12 @@ class TestTodayPlanEndpoint:
         assert result.today_puzzle.expected_move_uci == _PLAYED_UCI
         assert result.today_puzzle.source_type == PUZZLE_SOURCE_ORIGINAL
 
-    def test_advances_to_next_incomplete_day(self, db_session, player, game_event):
-        """TODAY_ADVANCES_TO_NEXT_INCOMPLETE — sequential pacing: solving
-        day-0 immediately unlocks day-3 as the due puzzle (no calendar
-        wait), and only one day is due at a time."""
+    def test_next_day_locked_until_due(self, db_session, player, game_event):
+        """TODAY_LOCKS_NEXT_DAY_UNTIL_DUE — solving day-0 on the day the
+        plan was created does NOT unlock day-3: its ``due_at`` is three
+        days out, so the plan has no due puzzle and days 3 / 7 render
+        locked.  This is the pin against clearing the whole plan in one
+        sitting."""
         plan = generate_plan(
             db=db_session,
             player_id=player.id,
@@ -1935,16 +1954,18 @@ class TestTodayPlanEndpoint:
 
         result = _call_today(player, db_session)
         assert result is not None
-        assert result.today_puzzle is not None
-        assert result.today_puzzle.day_offset == 3, "day-3 unlocks right after day-0"
+        assert result.today_puzzle is None, "day-3 stays locked until its due_at elapses"
+        assert result.status == STATUS_ACTIVE
         day_by_offset = {d.day_offset: d for d in result.days}
         assert day_by_offset[0].completed is True
-        assert day_by_offset[3].is_due is True
-        assert day_by_offset[7].is_due is False, "only one day is due at a time"
+        assert day_by_offset[3].is_due is False
+        assert day_by_offset[7].is_due is False
 
-    def test_due_advances_through_all_days(self, db_session, player, game_event):
-        """TODAY_DUE_ADVANCES_THROUGH_ALL — the due day steps 0 → 3 → 7
-        as each is solved, in one sitting, with no calendar wait."""
+    def test_next_day_unlocks_once_due(self, db_session, player, game_event):
+        """TODAY_UNLOCKS_NEXT_WHEN_DUE — with day-0 solved AND day-3's
+        ``due_at`` elapsed (three days later, simulated by rewinding the
+        schedule), day-3 becomes the due puzzle — and only day-3 (day-7
+        still needs its own ``due_at``)."""
         plan = generate_plan(
             db=db_session,
             player_id=player.id,
@@ -1952,6 +1973,56 @@ class TestTodayPlanEndpoint:
             mistake_fen=_MISTAKE_FEN,
             played_uci=_PLAYED_UCI,
         )
+        day_0 = next(p for p in plan.puzzles if p.day_offset == 0)
+        day_0.completed_at = datetime.utcnow()
+        db_session.commit()
+        _rewind_schedule(db_session, plan, days=3)
+
+        result = _call_today(player, db_session)
+        assert result is not None
+        assert result.today_puzzle is not None
+        assert result.today_puzzle.day_offset == 3
+        day_by_offset = {d.day_offset: d for d in result.days}
+        assert day_by_offset[3].is_due is True
+        assert day_by_offset[7].is_due is False, "day-7 waits for its own due_at"
+
+    def test_overdue_days_still_unlock_in_order(self, db_session, player, game_event):
+        """TODAY_CATCHUP_STAYS_SEQUENTIAL — a player returning after the
+        whole schedule has elapsed (every ``due_at`` in the past, nothing
+        solved) still gets exactly one due day, and it is day-0: the
+        calendar gate never overrides the sequential order."""
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+        )
+        _rewind_schedule(db_session, plan, days=10)
+
+        result = _call_today(player, db_session)
+        assert result is not None
+        assert result.today_puzzle is not None
+        assert result.today_puzzle.day_offset == 0
+        day_by_offset = {d.day_offset: d for d in result.days}
+        assert day_by_offset[0].is_due is True
+        assert day_by_offset[3].is_due is False, "sequential order still gates day-3"
+        assert day_by_offset[7].is_due is False
+
+    def test_due_advances_through_all_days(self, db_session, player, game_event):
+        """TODAY_DUE_ADVANCES_THROUGH_ALL — once the whole schedule has
+        elapsed, the due day steps 0 → 3 → 7 as each is solved.  Also
+        pins the legacy-plan posture: rows written while pacing was
+        purely sequential carry ``due_at == created_at`` (always in the
+        past), so those plans advance exactly like this."""
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+        )
+        _rewind_schedule(db_session, plan, days=7)
         by_offset = {p.day_offset: p for p in plan.puzzles}
 
         assert _call_today(player, db_session).today_puzzle.day_offset == 0
@@ -2109,23 +2180,36 @@ class TestCompletePuzzleEndpoint:
         )
 
     def test_marks_puzzle_done(self, db_session, player, game_event):
-        """COMPLETE_MARKS_PUZZLE_DONE — completing day-0 sets completed_at,
-        keeps the plan active, and (sequential pacing) immediately
-        surfaces day-3 as the next due puzzle."""
+        """COMPLETE_MARKS_PUZZLE_DONE — completing day-0 sets completed_at
+        and keeps the plan active; day-3 stays calendar-locked (its
+        ``due_at`` is three days out), so the response carries no due
+        puzzle and the drill card hides until the schedule ticks over."""
         plan = self._make_plan(db_session, player, game_event)
 
         result = _call_complete(player, db_session, plan.id, 0)
 
-        # Day-0 done; sequential pacing unlocks day-3 right away (no wait).
-        assert result.today_puzzle is not None
-        assert result.today_puzzle.day_offset == 3
         assert result.status == STATUS_ACTIVE
+        assert result.today_puzzle is None, "day-3 unlocks 3 days after creation, not on solve"
         day0 = next(d for d in result.days if d.day_offset == 0)
         assert day0.completed is True
         # DB reflects the write.
         db_session.refresh(plan)
         p0 = next(p for p in plan.puzzles if p.day_offset == 0)
         assert p0.completed_at is not None
+
+    def test_complete_surfaces_next_day_when_due(self, db_session, player, game_event):
+        """COMPLETE_SURFACES_NEXT_WHEN_DUE — when day-3's ``due_at`` has
+        already elapsed at solve time (a catch-up player, or a legacy
+        plan whose rows all carry creation-time due_at), the completion
+        response surfaces day-3 immediately — no extra GET needed."""
+        plan = self._make_plan(db_session, player, game_event)
+        _rewind_schedule(db_session, plan, days=3)
+
+        result = _call_complete(player, db_session, plan.id, 0)
+
+        assert result.status == STATUS_ACTIVE
+        assert result.today_puzzle is not None
+        assert result.today_puzzle.day_offset == 3
 
     def test_advances_plan_when_all_done(self, db_session, player, game_event):
         """COMPLETE_ADVANCES_PLAN_WHEN_ALL_DONE — completing all three days
