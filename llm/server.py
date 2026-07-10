@@ -43,12 +43,14 @@ from llm.seca.coach.study_plan.router import router as study_plan_router
 from llm.seca.puzzles.router import router as puzzles_router
 from llm.seca.entitlements import service as entitlements
 from llm.seca.billing.router import router as billing_router
+from llm.seca.feedback.router import router as feedback_router
 
 # register SECA models
 import llm.seca.events.models
 import llm.seca.lichess.models  # noqa: F401  # ensure LinkedAccount is on Base before init_schema
 import llm.seca.training.models  # noqa: F401  # ensure TrainingCompletion is on Base before init_schema
 import llm.seca.coach.study_plan.models  # noqa: F401  # ensure MistakeStudyPlan/Puzzle on Base before init_schema
+import llm.seca.feedback.models  # noqa: F401  # ensure FeedbackMessage is on Base before init_schema
 
 from llm.seca.engines.stockfish.pool import (
     EnginePoolSettings,
@@ -788,6 +790,7 @@ app.include_router(mistakes_router)
 app.include_router(study_plan_router)
 app.include_router(puzzles_router)
 app.include_router(billing_router)
+app.include_router(feedback_router)
 app.include_router(
     inference_router,
     prefix="/seca",

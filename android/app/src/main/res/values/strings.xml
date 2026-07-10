@@ -18,6 +18,35 @@
     <string name="game_exit_to_home">Exit to Home</string>
 
     <!--
+      In-game drawer account / app actions.  btnSignOut routes through the
+      shared AccountFlows.performLogout (same flow as the Settings sheet's
+      Account row); btnSendFeedback opens FeedbackFlows' dialog form, which
+      POSTs to /feedback (docs/API_CONTRACTS.md §38).
+    -->
+    <string name="game_sign_out">Sign out</string>
+    <string name="game_send_feedback">Send feedback</string>
+
+    <!--
+      Reset-game confirmation dialog (MainActivity.btnReset).  Reset wipes
+      the in-progress game irreversibly, so the tap is gated behind an
+      explicit "Are you sure" confirm; GamePanelActionsSourcePinTest pins
+      that the destructive path only runs from the dialog's positive button.
+    -->
+    <string name="reset_confirm_title">Reset game?</string>
+    <string name="reset_confirm_message">Are you sure you want to reset the game? Your current progress will be lost.</string>
+    <string name="reset_confirm_positive">Reset</string>
+    <string name="reset_confirm_negative">Cancel</string>
+
+    <!-- Send-feedback dialog form (FeedbackFlows.kt). -->
+    <string name="feedback_dialog_title">Send feedback</string>
+    <string name="feedback_input_hint">What\'s working? What\'s broken? We read every message.</string>
+    <string name="feedback_send">Send</string>
+    <string name="feedback_cancel">Cancel</string>
+    <string name="feedback_empty_error">Please write a short message first.</string>
+    <string name="feedback_sent">Thanks — your feedback was sent.</string>
+    <string name="feedback_send_failed">Couldn\'t send feedback. Please check your connection and try again.</string>
+
+    <!--
       Lichess Connect bottom sheet (LichessConnectBottomSheet.kt).
       Mirrors docs/API_CONTRACTS.md §§27–30 wording where user-facing.
     -->

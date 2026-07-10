@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit
  *   AVH_CLIENT_ENGINE_EVAL  — POST /engine/eval
  *   AVH_CLIENT_COACH_CHAT   — POST /chat
  *   AVH_CLIENT_COACH_FEEDBACK — POST /chat/feedback
+ *   AVH_CLIENT_SEND_FEEDBACK — POST /feedback (product-feedback form)
  *   AVH_CLIENT_CONST        — COACH_API_VERSION matches server "1"
  */
 class ApiVersionHeaderTest {
@@ -242,6 +243,28 @@ class ApiVersionHeaderTest {
             isHelpful = true,
             token = null,
         )
+        assertVersionHeader(server.takeRequest(10, TimeUnit.SECONDS))
+    }
+
+    // ----------------------------------------------------------------------
+    // FeedbackApiClient — single endpoint POST /feedback (the drawer's
+    // product-feedback form; distinct from CoachApiClient's per-position
+    // thumbs up/down above).
+    // ----------------------------------------------------------------------
+
+    @Test
+    fun `AVH_CLIENT_SEND_FEEDBACK sends X-API-Version`() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("""{"status":"received","id":"row-1"}"""),
+        )
+        val client = HttpFeedbackApiClient(
+            baseUrl = baseUrl(),
+            apiKey = "k",
+            tokenProvider = { null },
+        )
+        client.submitFeedback(message = "great app", appVersion = "1.0")
         assertVersionHeader(server.takeRequest(10, TimeUnit.SECONDS))
     }
 }

@@ -498,12 +498,41 @@
             android:layout_width="match_parent"
             android:layout_height="@dimen/atrium_tap_target"
             android:textSize="16sp"
-            android:text="Settings" />
+            android:text="Settings"
+            android:layout_marginBottom="@dimen/atrium_space_8" />
 
-        <!-- Change password / Sign out retired as standalone buttons —
-             both live as Account rows inside the Settings sheet
-             (btnSettings above), which is also reachable from
-             HomeActivity's avatar. -->
+        <!--
+            Send feedback — opens FeedbackFlows' dialog form, which POSTs
+            the message to /feedback (docs/API_CONTRACTS.md §38).  Wired
+            in MainActivity.onCreate.
+        -->
+        <Button
+            android:id="@+id/btnSendFeedback"
+            style="@style/Atrium.Button.Secondary"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_tap_target"
+            android:textSize="16sp"
+            android:text="@string/game_send_feedback"
+            android:layout_marginBottom="@dimen/atrium_space_8" />
+
+        <!--
+            Sign out — reinstated as a standalone drawer button by product
+            request (2026-07-10) after being retired into the Settings
+            sheet's Account rows.  Routes through the SAME shared
+            AccountFlows.performLogout as the Settings row, so the two
+            surfaces cannot drift; Change password remains Settings-only.
+            Amber accent = the design system's caution colour ("you are
+            leaving your session"), mirroring btnExitToHome's cyan idiom.
+        -->
+        <Button
+            android:id="@+id/btnSignOut"
+            style="@style/Atrium.Button.Secondary"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_tap_target"
+            android:textSize="16sp"
+            android:textColor="@color/atrium_accent_amber"
+            android:text="@string/game_sign_out" />
+
         <View
             android:layout_width="match_parent"
             android:layout_height="0dp"

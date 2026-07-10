@@ -40,6 +40,7 @@ from llm.seca.lichess.models import *  # noqa: F401,F403
 from llm.seca.training.models import *  # noqa: F401,F403
 from llm.seca.coach.study_plan.models import *  # noqa: F401,F403
 from llm.seca.entitlements.models import *  # noqa: F401,F403
+from llm.seca.feedback.models import *  # noqa: F401,F403
 
 # pylint: enable=wildcard-import,unused-wildcard-import
 
