@@ -31,12 +31,23 @@ Invariants pinned
 21. UCI_5_CHARS:              5-char UCI move (promotion, e.g. "e7e8q") is accepted.
 22. ENGINE_SIGNAL_BAND_TYPE:  evaluation sub-dict has "band" and "type" keys.
 23. MODE1_HINT_MAX_2_SENTENCES: deterministic hint has at most 2 sentences.
-24. MODE1_SIMPLE_1_SENTENCE:  simple style produces exactly 1 sentence.
+24. MODE1_SIMPLE_1_SENTENCE:  simple style produces exactly 1 sentence
+                              (2 in mate positions — the inevitability
+                              sentence is a semantic-gate REQUIRE).
 25. MODE1_QUALITY_BEFORE_EVAL: quality comment precedes evaluation in deterministic hint.
 26. MODE1_PHASE_TIP_STYLE:    simple style omits phase tip; intermediate/advanced append brief phase tip to eval sentence (no Mode-2 verbatim phrases).
 27. LLM_PATH_USED_WHEN_AVAILABLE: LLM response is returned when call_llm succeeds.
 28. LLM_FALLBACK_ON_ERROR:    deterministic fallback used when LLM raises.
 29. LLM_FALLBACK_ON_EMPTY:    deterministic fallback used when LLM returns empty string.
+30. PRAISE_IN_LOST_POSITION:  praise grades in a clearly-worse position
+                              acknowledge the difficulty and never claim
+                              solidity; small deficits stay untempered.
+31. SIMPLE_MATE_KEEPS_INEVITABILITY: simple style + mate + known quality
+                              still contains "inevitable" (boundary REQUIRE).
+32. FALLBACK_GATE_SAFETY_SWEEP: every style x quality x signal deterministic
+                              hint passes all three Mode-2 boundary gates.
+33. QUALITY_TABLES_GATE_CLEAN: no canned quality comment matches a
+                              forbidden lexical pattern.
 """
 
 from __future__ import annotations
@@ -48,9 +59,17 @@ from unittest.mock import patch
 
 import pytest
 
+from llm.rag.validators.mode_2_negative import (
+    FORBIDDEN_PATTERNS,
+    validate_mode_2_negative,
+)
+from llm.rag.validators.mode_2_semantic import validate_mode_2_semantic
+from llm.rag.validators.mode_2_structure import validate_mode_2_structure
 from llm.seca.coach.live_move_pipeline import (
     LiveMoveReply,
     _build_hint,
+    _QUALITY_COMMENT,
+    _QUALITY_COMMENT_DIFFICULT,
     generate_live_reply,
 )
 
@@ -338,9 +357,13 @@ class TestMoveQualityComments:
         assert "blunder" in hint.lower(), f"Expected blunder comment: {hint!r}"
 
     def test_best_quality_produces_best_comment(self):
+        # Wording moved off "Best move —": the two-word phrase is on
+        # mode_2_negative's ENGINE_LEXICAL_PATTERNS (PR #284) and was
+        # rejected at the live boundary.  The comment now credits the
+        # move via "strongest".
         signal = _make_signal(move_quality="best")
         hint = _build_hint(_UCI_NORMAL, signal, "")
-        assert "best" in hint.lower() or "optimal" in hint.lower(), (
+        assert "strongest" in hint.lower(), (
             f"Expected best-move comment: {hint!r}"
         )
 
@@ -532,6 +555,192 @@ class TestMode1HintStructure:
         simple = _build_hint(_UCI_NORMAL, signal, "", explanation_style="simple")
         advanced = _build_hint(_UCI_NORMAL, signal, "", explanation_style="advanced")
         assert simple != advanced, "Simple and advanced styles should differ"
+
+
+# ---------------------------------------------------------------------------
+# 30–31  Praise in a clearly-worse position (zugzwang report, 2026-07-10)
+# ---------------------------------------------------------------------------
+
+
+class TestPraiseInLostPosition:
+    """A praise grade is RELATIVE — in zugzwang the least-bad move still
+    grades "best" because the pre-move eval already prices in the forced
+    deterioration.  In a clearly-worse position the comment must credit
+    the move AND carry the whole-position context, never bare celebration
+    or a "solid position" claim."""
+
+    @pytest.mark.parametrize("style", ("simple", "intermediate", "advanced"))
+    @pytest.mark.parametrize("quality", ("good", "excellent", "best"))
+    def test_praise_acknowledges_clearly_worse_position(self, style, quality):
+        signal = _make_signal(
+            band="decisive_advantage", side="black", move_quality=quality
+        )
+        hint = _build_hint(
+            _UCI_NORMAL, signal, "", explanation_style=style, player_color="white"
+        )
+        lower = hint.lower()
+        assert "difficult" in lower or "tough" in lower, (
+            f"Praise ({quality}/{style}) in a lost position must acknowledge "
+            f"the difficulty: {hint!r}"
+        )
+        assert "solid position" not in lower, (
+            f"Praise in a lost position must not claim solidity: {hint!r}"
+        )
+
+    @pytest.mark.parametrize("quality", ("good", "excellent", "best"))
+    def test_praise_still_credits_the_move(self, quality):
+        """Move-blame fix direction preserved: the difficult variants still
+        open by crediting the move, before the context clause."""
+        signal = _make_signal(
+            band="decisive_advantage", side="black", move_quality=quality
+        )
+        hint = _build_hint(
+            _UCI_NORMAL, signal, "", explanation_style="intermediate", player_color="white"
+        )
+        assert any(w in hint.lower() for w in ("good", "excellent", "strongest")), (
+            f"Praise ({quality}) must still credit the move: {hint!r}"
+        )
+
+    def test_praise_when_player_ahead_stays_celebratory(self):
+        signal = _make_signal(
+            band="decisive_advantage", side="white", move_quality="best"
+        )
+        hint = _build_hint(
+            _UCI_NORMAL, signal, "", explanation_style="intermediate", player_color="white"
+        )
+        lower = hint.lower()
+        assert "difficult" not in lower and "tough" not in lower, (
+            f"Winning-side praise must not be tempered: {hint!r}"
+        )
+
+    def test_small_disadvantage_praise_not_tempered(self):
+        """Reverse move-blame guard: a fraction-of-a-pawn deficit must not
+        switch praise into difficulty framing."""
+        signal = _make_signal(
+            band="small_advantage", side="black", move_quality="best"
+        )
+        hint = _build_hint(
+            _UCI_NORMAL, signal, "", explanation_style="intermediate", player_color="white"
+        )
+        lower = hint.lower()
+        assert "difficult" not in lower and "tough" not in lower, (
+            f"Small-deficit praise must not be tempered: {hint!r}"
+        )
+
+    def test_unknown_player_color_keeps_standard_praise(self):
+        signal = _make_signal(
+            band="decisive_advantage", side="black", move_quality="best"
+        )
+        hint = _build_hint(_UCI_NORMAL, signal, "", explanation_style="intermediate")
+        lower = hint.lower()
+        assert "difficult" not in lower and "tough" not in lower, (
+            f"Side-neutral callers must keep the standard praise: {hint!r}"
+        )
+
+    def test_simple_style_mate_with_known_quality_keeps_inevitability(self):
+        """Regression: the move-quality feature let a known grade displace
+        the mate sentence in simple style — the bare quality comment then
+        failed the semantic mate REQUIRE at the boundary re-validator and
+        500'd /live/move."""
+        signal = _make_signal(
+            eval_type="mate",
+            band="decisive_advantage",
+            side="white",
+            move_quality="best",
+            phase="endgame",
+        )
+        hint = _build_hint(
+            _UCI_NORMAL, signal, "", explanation_style="simple", player_color="white"
+        )
+        assert "inevitable" in hint.lower(), (
+            f"Simple-style mate hint must keep the inevitability sentence: {hint!r}"
+        )
+
+    def test_praise_while_being_mated_credits_and_stays_honest(self):
+        signal = _make_signal(
+            eval_type="mate",
+            band="decisive_advantage",
+            side="black",
+            move_quality="best",
+            phase="endgame",
+        )
+        hint = _build_hint(
+            _UCI_NORMAL, signal, "", explanation_style="simple", player_color="white"
+        )
+        lower = hint.lower()
+        assert "inevitable" in lower, f"Mate hint must state inevitability: {hint!r}"
+        assert "tough" in lower or "difficult" in lower, (
+            f"Being-mated praise must acknowledge the trouble: {hint!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 32–33  Deterministic fallback gate-safety sweep
+# ---------------------------------------------------------------------------
+
+
+class TestFallbackGateSafetySweep:
+    """EVERY deterministic hint must pass the three Mode-2 gates the
+    /live/move boundary re-runs (negative, structure, semantic) — by
+    construction.  This sweep is the net that was missing when PR #284
+    added ``\\bbest move\\b`` to the lexical gate (the canned ``best``
+    comments then failed the boundary and 500'd the route) and when the
+    move-quality feature let a known grade displace the mate sentence in
+    simple style (mate REQUIRE unmet — same 500)."""
+
+    _QUALITIES = (
+        "unknown",
+        "ok",
+        "best",
+        "excellent",
+        "good",
+        "inaccuracy",
+        "mistake",
+        "blunder",
+    )
+    _SIGNAL_KWARGS = (
+        {"band": "equal", "side": "white"},
+        {"band": "small_advantage", "side": "black"},
+        {"band": "clear_advantage", "side": "black"},
+        {"band": "decisive_advantage", "side": "black"},
+        {"band": "clear_advantage", "side": "white"},
+        {"eval_type": "mate", "band": "decisive_advantage", "side": "white", "phase": "endgame"},
+        {"eval_type": "mate", "band": "decisive_advantage", "side": "black", "phase": "endgame"},
+    )
+
+    @pytest.mark.parametrize("player_color", ("white", "unknown"))
+    @pytest.mark.parametrize(
+        "kwargs",
+        _SIGNAL_KWARGS,
+        ids=lambda k: f"{k.get('eval_type', 'cp')}-{k['band']}-{k['side']}",
+    )
+    @pytest.mark.parametrize("quality", _QUALITIES)
+    @pytest.mark.parametrize("style", ("simple", "intermediate", "advanced"))
+    def test_deterministic_hint_passes_all_boundary_gates(
+        self, style, quality, kwargs, player_color
+    ):
+        signal = _make_signal(move_quality=quality, **kwargs)
+        hint = _build_hint(
+            _UCI_NORMAL, signal, "", explanation_style=style, player_color=player_color
+        )
+        assert hint.strip(), f"Empty hint for {style}/{quality}/{kwargs}"
+        validate_mode_2_negative(hint)
+        validate_mode_2_structure(hint)
+        validate_mode_2_semantic(hint, signal)
+
+    def test_quality_tables_never_match_forbidden_patterns(self):
+        """Direct drift guard on the raw table strings, independent of the
+        _build_hint composition: a future lexical-gate addition that
+        collides with a canned comment fails HERE naming the exact string."""
+        for table in (_QUALITY_COMMENT, _QUALITY_COMMENT_DIFFICULT):
+            for grade, by_style in table.items():
+                for style, sentence in by_style.items():
+                    for pattern in FORBIDDEN_PATTERNS:
+                        assert not re.search(pattern, sentence, re.IGNORECASE), (
+                            f"Quality comment [{grade!r}][{style!r}] matches the "
+                            f"forbidden pattern `{pattern}`: {sentence!r} — this "
+                            f"would 500 /live/move at the boundary re-validator."
+                        )
 
 
 # ---------------------------------------------------------------------------

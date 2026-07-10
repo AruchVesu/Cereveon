@@ -160,6 +160,23 @@ def render_mode_1_prompt(
             "position. Only call it a mistake or blunder when the move quality "
             "says so, not because the opponent is ahead."
         )
+        if move_quality in ("good", "excellent", "best") and _player_clearly_worse(
+            eval_type=eval_type, band=band, side=side, player_color=player_color
+        ):
+            # Zugzwang-class positions: the grade is relative to the
+            # available alternatives, so the least-bad move in a lost
+            # position still grades "best".  Without this clause the model
+            # emitted bare praise ("Excellent move!") while the player was
+            # being crushed — right about the move, wrong about the whole
+            # context (user report, 2026-07-10).  The move-blame guidance
+            # above stays: the move IS still credited.
+            quality_guidance += (
+                " HOWEVER: the player is still clearly worse here despite this "
+                "move. Credit it as the strongest option available AND "
+                "acknowledge in the same reply that the position remains "
+                "difficult — do not congratulate as if the player stood well, "
+                "and do not claim the position is fine, solid, or safe."
+            )
 
     # Prompt-side copy of the signal with the transient ``check:*_to_move``
     # flags stripped from tactical_flags.  PR #313 dropped the check fact
@@ -213,6 +230,28 @@ attacked a knight"), never as ongoing ("is attacking", "is putting
 pressure on") — the board may already have changed.{quality_guidance}"""
 
     return prompt.strip()
+
+
+def _player_clearly_worse(
+    *,
+    eval_type: str,
+    band: str,
+    side: str,
+    player_color: str,
+) -> bool:
+    """True when the OPPONENT holds a clear/decisive advantage or mate.
+
+    Mirrors ``live_move_pipeline._player_clearly_worse`` (the rag layer
+    cannot import from seca).  Exact-match comparison like the rest of
+    this module — production feeds lowercase colours.  Small advantages
+    deliberately return False: tempering praise over a fraction-of-a-pawn
+    edge would reintroduce the move-blame problem in reverse.
+    """
+    if player_color not in ("white", "black") or side not in ("white", "black"):
+        return False
+    if side == player_color:
+        return False
+    return eval_type == "mate" or band in ("clear_advantage", "decisive_advantage")
 
 
 def _frame_player_perspective(

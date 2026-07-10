@@ -332,6 +332,84 @@ class TestRenderMode1MoveQualityGuidance(unittest.TestCase):
         )
         self.assertNotIn("Judge the move by THAT", prompt)
 
+    # --- Praise in a clearly-worse position (zugzwang report, 2026-07-10) ---
+    # A praise grade is relative to the available alternatives, so the
+    # least-bad move in a lost position still grades "best".  The prompt must
+    # then require the whole-position context alongside the praise — bare
+    # "Excellent move!" while being crushed is right about the move but wrong
+    # about the game.
+
+    def test_praise_in_lost_position_adds_context_guidance(self):
+        signal = self._signal("best")
+        signal["evaluation"]["band"] = "decisive_advantage"  # opponent decisively ahead
+        prompt = render_mode_1_prompt(
+            system_prompt="<SYS>",
+            engine_signal=signal,
+            fen=self._FEN,
+            explanation_style="intermediate",
+            player_color="white",
+        )
+        self.assertIn("still clearly worse", prompt)
+        # The move-blame guidance is kept — the move itself stays credited.
+        self.assertIn("Judge the move by THAT", prompt)
+
+    def test_praise_with_small_deficit_omits_context_guidance(self):
+        # _signal's default band is small_advantage (side=black): a
+        # fraction-of-a-pawn deficit must NOT temper the praise — that
+        # would be the move-blame problem in reverse.
+        prompt = render_mode_1_prompt(
+            system_prompt="<SYS>",
+            engine_signal=self._signal("best"),
+            fen=self._FEN,
+            explanation_style="intermediate",
+            player_color="white",
+        )
+        self.assertNotIn("still clearly worse", prompt)
+
+    def test_praise_when_ahead_omits_context_guidance(self):
+        signal = self._signal("best")
+        signal["evaluation"] = {
+            "type": "cp",
+            "band": "decisive_advantage",
+            "side": "white",
+        }
+        prompt = render_mode_1_prompt(
+            system_prompt="<SYS>",
+            engine_signal=signal,
+            fen=self._FEN,
+            explanation_style="intermediate",
+            player_color="white",
+        )
+        self.assertNotIn("still clearly worse", prompt)
+
+    def test_blunder_in_lost_position_omits_praise_guidance(self):
+        signal = self._signal("blunder")
+        signal["evaluation"]["band"] = "decisive_advantage"
+        prompt = render_mode_1_prompt(
+            system_prompt="<SYS>",
+            engine_signal=signal,
+            fen=self._FEN,
+            explanation_style="intermediate",
+            player_color="white",
+        )
+        self.assertNotIn("still clearly worse", prompt)
+
+    def test_praise_while_being_mated_adds_context_guidance(self):
+        signal = self._signal("best")
+        signal["evaluation"] = {
+            "type": "mate",
+            "band": "decisive_advantage",
+            "side": "black",
+        }
+        prompt = render_mode_1_prompt(
+            system_prompt="<SYS>",
+            engine_signal=signal,
+            fen=self._FEN,
+            explanation_style="intermediate",
+            player_color="white",
+        )
+        self.assertIn("still clearly worse", prompt)
+
 
 if __name__ == "__main__":  # pragma: no cover - manual runner
     unittest.main()
