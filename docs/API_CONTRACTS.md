@@ -2073,6 +2073,54 @@ notes in `llm/seca/lichess/client.py`).
 
 ---
 
+## 38. `POST /feedback`
+
+**Host:** `llm/seca/feedback/router.py`
+**Auth:** `Authorization: Bearer <token>` required
+**Rate limit:** 5 / minute
+
+Persist one free-form product-feedback message from the authenticated
+player (the game drawer's "Send feedback" form on Android).  Rows land
+in the `feedback_messages` table for the operator to read; they are
+**never** read back into any coaching, prompt, retrieval, or adaptation
+path, and the message body is never logged (the receipt log line
+carries only the server-issued player id + message length).
+
+### Request body
+
+| Field         | Type             | Required | Description |
+|---------------|------------------|----------|-------------|
+| `message`     | `string`         | yes      | Free-form feedback text.  Trimmed; must be non-blank after trim; at most 2000 chars. |
+| `app_version` | `string \| null` | no       | Client-reported app version (`BuildConfig.VERSION_NAME` on Android).  Trimmed; blank normalised to `null`; at most 64 chars. |
+
+### Response (200)
+
+```json
+{
+  "status": "received",
+  "id":     "<uuid>"
+}
+```
+
+* `status` — fixed literal `"received"` (mirrors `/game/coach-feedback`'s
+  `{"status": "recorded"}` shape).
+* `id` — server-issued row id, usable as a reference in support
+  conversations.
+
+Fire-and-forget from the client's perspective: no dedup (the same text
+twice is two rows — feedback is not idempotent by nature) and clients
+should not block gameplay on the result.
+
+### Errors
+
+| Status | Cause |
+|--------|-------|
+| `401`  | Missing or invalid `Authorization` header. |
+| `422`  | Blank message; message > 2000 chars; app_version > 64 chars. |
+| `429`  | Rate limit exceeded (Shape B). |
+
+---
+
 ## Error responses
 
 The API emits **two distinct error-body shapes** that any client (the

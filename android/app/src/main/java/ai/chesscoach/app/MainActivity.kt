@@ -49,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var gameApiClient: GameApiClient
     private lateinit var coachApiClient: CoachApiClient
     private lateinit var authApiClient: AuthApiClient
+    private lateinit var feedbackApiClient: FeedbackApiClient
     private lateinit var authRepo: AuthRepository
     private lateinit var txtWeaknessTags: TextView
     private lateinit var txtNextTrainingChip: TextView
@@ -172,6 +173,15 @@ class MainActivity : AppCompatActivity() {
             tokenSink = { newToken -> authRepo.saveToken(newToken) },
         )
 
+        // Send-feedback client for the drawer's form (FeedbackFlows).
+        // Same auth wiring as the other authenticated clients.
+        feedbackApiClient = HttpFeedbackApiClient(
+            baseUrl = BuildConfig.COACH_API_BASE,
+            apiKey = BuildConfig.COACH_API_KEY,
+            tokenProvider = { authRepo.getToken() },
+            tokenSink = { newToken -> authRepo.saveToken(newToken) },
+        )
+
         // If a previous /game/finish failed offline (timeout / 5xx /
         // network), the payload was persisted; try again now that we
         // (probably) have connectivity.  Fire-and-forget — see the
@@ -291,22 +301,22 @@ class MainActivity : AppCompatActivity() {
             finish()
         }
 
+        // Reset wipes the in-progress game irreversibly, so the tap is
+        // gated behind an explicit "Are you sure" confirmation.  The
+        // drawer closes first so the dialog reads against the board, not
+        // the menu; the destructive body lives in performResetGame() and
+        // runs ONLY from the dialog's positive button (pinned by
+        // GamePanelActionsSourcePinTest).
         btnReset.setOnClickListener {
-            if (ChessNative.isLibraryLoaded) {
-                viewModel.reset()
-                chessBoard.resetBoard()
-            }
-            moveClassifications.clear()
-            coachText.text = "♟ New game. Control the center!"
-            scoreRow.visibility = View.GONE
-            txtEngineScore.text = ""
-            txtMistakeCategory.text = ""
-            // A fresh game gets a fresh admission verdict; hide the limit
-            // chip until /live/move says otherwise for the new game_id.
-            txtUpgradeChip.visibility = View.GONE
-            updateChapterHeader()
             drawerLayout.closeDrawer(GravityCompat.END)
-            startNewGameSession()
+            AlertDialog.Builder(this)
+                .setTitle(R.string.reset_confirm_title)
+                .setMessage(R.string.reset_confirm_message)
+                .setPositiveButton(R.string.reset_confirm_positive) { _, _ ->
+                    performResetGame()
+                }
+                .setNegativeButton(R.string.reset_confirm_negative, null)
+                .show()
         }
 
         btnUndo.setOnClickListener {
@@ -346,9 +356,11 @@ class MainActivity : AppCompatActivity() {
         // style, sound, notifications, account chevrons).  Account
         // section routes through AccountFlows, shared with
         // HomeActivity's avatar entry so the two hosts can't drift.
-        // The old standalone Change-password / Sign-out drawer buttons
-        // were retired — the sheet's Account rows are the single
-        // surface for both.
+        // Change password lives ONLY in the sheet's Account rows; Sign
+        // out additionally has a standalone drawer button again
+        // (btnSignOut below — reinstated by product request 2026-07-10),
+        // but both surfaces route through the same
+        // AccountFlows.performLogout so they cannot drift.
         findViewById<Button>(R.id.btnSettings)?.setOnClickListener {
             drawerLayout.closeDrawer(GravityCompat.END)
             val sheet = SettingsBottomSheet()
@@ -363,6 +375,24 @@ class MainActivity : AppCompatActivity() {
                     .show(supportFragmentManager, LichessConnectBottomSheet.TAG)
             }
             sheet.show(supportFragmentManager, "SettingsBottomSheet")
+        }
+
+        // Send feedback — drawer form that POSTs to /feedback
+        // (docs/API_CONTRACTS.md §38).  Fire-and-forget: FeedbackFlows
+        // owns the dialog, validation, and outcome toasts.
+        findViewById<Button>(R.id.btnSendFeedback)?.setOnClickListener {
+            drawerLayout.closeDrawer(GravityCompat.END)
+            FeedbackFlows.showSendFeedbackDialog(this, feedbackApiClient)
+        }
+
+        // Sign out — standalone drawer button (reinstated by product
+        // request 2026-07-10).  Routes through the SAME shared
+        // AccountFlows.performLogout as the Settings sheet's Account row
+        // above, so the two surfaces cannot drift: best-effort server
+        // logout, local token clear, hard route to LoginActivity.
+        findViewById<Button>(R.id.btnSignOut)?.setOnClickListener {
+            drawerLayout.closeDrawer(GravityCompat.END)
+            AccountFlows.performLogout(this, authRepo, authApiClient)
         }
 
         // Cached curriculum chip if available — the rating header was
@@ -1057,6 +1087,33 @@ class MainActivity : AppCompatActivity() {
         chessBoard.flipped = false
         if (wasReviewing) chessBoard.isInteractive = true
         if (::reviewNavBar.isInitialized) reviewNavBar.visibility = View.GONE
+    }
+
+    /**
+     * The destructive body of the drawer's "Reset game" action: wipe the
+     * board + per-game UI state and start a fresh server game session.
+     *
+     * Reachable ONLY from the confirmation dialog's positive button in
+     * btnReset's click listener (pinned by GamePanelActionsSourcePinTest)
+     * — never bind this directly to a tap.  Extracted verbatim from the
+     * pre-confirmation listener body (2026-07-10); the drawer close moved
+     * up into the listener so the dialog shows over the board.
+     */
+    private fun performResetGame() {
+        if (ChessNative.isLibraryLoaded) {
+            viewModel.reset()
+            chessBoard.resetBoard()
+        }
+        moveClassifications.clear()
+        coachText.text = "♟ New game. Control the center!"
+        scoreRow.visibility = View.GONE
+        txtEngineScore.text = ""
+        txtMistakeCategory.text = ""
+        // A fresh game gets a fresh admission verdict; hide the limit
+        // chip until /live/move says otherwise for the new game_id.
+        txtUpgradeChip.visibility = View.GONE
+        updateChapterHeader()
+        startNewGameSession()
     }
 
     /**

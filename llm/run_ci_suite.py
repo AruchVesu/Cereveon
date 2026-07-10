@@ -203,6 +203,12 @@ TEST_TARGETS = [
     # + endpoint integration tests run in-memory SQLite against the
     # full SECA Base so every Phase-3 caller has the contract pinned.
     "llm/tests/test_training_solve.py",
+    # Send-feedback surface: POST /feedback persistence (message trim +
+    # length bounds at the Pydantic boundary, verbatim storage, no
+    # message content in logs, route registration on the server app).
+    # Schema + endpoint tests run in-memory SQLite against the full
+    # SECA Base, same harness as test_training_solve.py.
+    "llm/tests/test_feedback_endpoint.py",
     # Mistake-replay (Phase 3): first-mistake extraction at
     # /game/finish time + POST /training/verify-replay engine
     # verification.  Detector tests are pool-free; verifier tests
@@ -339,6 +345,11 @@ COVERAGE_TARGETS = [
     # listed above in TEST_TARGETS.
     "llm.seca.training.models",
     "llm.seca.training.router",
+    # Send-feedback surface: FeedbackMessage model + POST /feedback
+    # handler.  Covered by test_feedback_endpoint.py listed above in
+    # TEST_TARGETS.
+    "llm.seca.feedback.models",
+    "llm.seca.feedback.router",
     # Mistake-replay (Phase 3): detector picks the FIRST above-threshold
     # player move from losses_cp + PGN; verify runs the engine and
     # answers is_correct.  Covered by test_mistake_detector.py and
