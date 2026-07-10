@@ -3,9 +3,10 @@
 Two endpoints, both authenticated:
 
 * ``GET /coach/plan/today`` — return the player's most recent active
-  study plan, the puzzle currently due (the lowest-day-offset puzzle
-  whose ``due_at <= now()`` and ``completed_at IS NULL``), and the
-  full week schedule (``days[]``) for the overview screen.
+  study plan, the puzzle currently due (the first incomplete day, once
+  its ``due_at`` has elapsed — see ``_serialize_plan`` for the pacing
+  rule), and the full week schedule (``days[]``) for the overview
+  screen.
 
 * ``POST /coach/plan/puzzle/complete`` — mark one day's puzzle solved
   and advance the plan; flips it to ``completed`` once every day is
@@ -92,7 +93,8 @@ class PlanDayResponse(BaseModel):
 
     The week-overview screen renders the whole plan at a glance:
     each day is ``completed`` (done), ``is_due`` (available to start
-    now), or neither (still locked behind its ``due_at``).  Unlike
+    now), or neither (locked — behind its ``due_at``, an earlier
+    unsolved day, or both).  Unlike
     ``today_puzzle`` this carries no FEN / expected move — the overview
     only needs the schedule + status; the playable position comes from
     ``today_puzzle`` (or a follow-up ``GET`` once the next day unlocks).
@@ -106,9 +108,10 @@ class PlanDayResponse(BaseModel):
     """True once the day's puzzle has been solved (``completed_at`` set)."""
 
     is_due: bool
-    """True when the puzzle is available now — ``due_at <= now()`` AND
-    not yet completed.  The natural ``today_puzzle`` is the lowest
-    ``day_offset`` day with ``is_due == True``."""
+    """True when the puzzle is available now — it is the FIRST
+    incomplete day (all earlier days solved) AND ``due_at <= now()``.
+    At most one day is ``is_due`` at a time, and it is exactly the
+    ``today_puzzle``."""
 
     source_type: str
     """``"original"`` (the player's actual mistake) or ``"library"``
@@ -179,27 +182,36 @@ def _serialize_plan(plan: MistakeStudyPlan) -> TodayPlanResponse:
     ``today_puzzle`` / ``days`` view identically.  Reads only the
     in-session ``plan.puzzles`` collection (no extra query).
 
-    Pacing is SEQUENTIAL and self-paced — NOT calendar-gated.  A day is
-    ``is_due`` when it is the FIRST incomplete day (every earlier
-    ``day_offset`` is already solved); the next day unlocks the instant
-    the previous one is solved, with no 3- / 7-day wait, and exactly one
-    day is ever ``is_due`` at a time.  ``today_puzzle`` is that
-    first-incomplete day, or ``None`` once the whole plan is solved.
-    ``due_at`` is still surfaced for record/ordering but no longer gates
-    anything (it was the old calendar wait users found frustrating).
+    Pacing is SEQUENTIAL **and** CALENDAR-GATED (spaced repetition).  A
+    day is ``is_due`` when it is the FIRST incomplete day (every earlier
+    ``day_offset`` is already solved) AND its ``due_at`` has elapsed —
+    so day 3 opens no earlier than 3 days after the plan was created,
+    day 7 no earlier than 7, and the whole plan can no longer be cleared
+    in one sitting.  At most one day is ``is_due`` at a time.
+    ``today_puzzle`` is that day, or ``None`` when every day is solved
+    OR the next day hasn't unlocked yet (the drill card hides and the
+    overview renders the day as locked).
+
+    Plans written while pacing was purely sequential (PR #322 era) carry
+    ``due_at == created_at`` on every row, so the calendar term is
+    always satisfied for them and they keep advancing exactly as before
+    — no migration needed.
     """
+    now = datetime.utcnow()
     puzzles = sorted(plan.puzzles, key=lambda p: p.day_offset)
 
     today_puzzle_field: TodayPuzzleResponse | None = None
     days: list[PlanDayResponse] = []
-    due_assigned = False
+    blocked_by_earlier = False
     for puzzle in puzzles:
         completed = puzzle.completed_at is not None
-        # First incomplete day is the one to do now; later incomplete
-        # days stay locked until their turn (sequential unlock).
-        is_due = (not completed) and (not due_assigned)
+        # The first incomplete day is the only candidate (sequential
+        # order); it surfaces once its due_at has elapsed (calendar
+        # gate).  Later incomplete days stay locked behind BOTH.
+        is_due = (not completed) and (not blocked_by_earlier) and puzzle.due_at <= now
+        if not completed:
+            blocked_by_earlier = True
         if is_due:
-            due_assigned = True
             today_puzzle_field = TodayPuzzleResponse(
                 day_offset=puzzle.day_offset,
                 fen=puzzle.fen,
@@ -247,9 +259,10 @@ def get_today_plan(
     ---------
     * Most recent ``MistakeStudyPlan`` for the authenticated player
       with ``status == STATUS_ACTIVE``, ordered by ``created_at DESC``.
-    * ``today_puzzle`` is the FIRST incomplete day (sequential pacing —
-      day-0 before day-3 before day-7; the next unlocks on solving the
-      previous, no calendar wait).
+    * ``today_puzzle`` is the FIRST incomplete day once its ``due_at``
+      has elapsed (sequential order — day-0 before day-3 before day-7 —
+      AND the spaced calendar schedule: day-3 no earlier than +3 days,
+      day-7 no earlier than +7).
 
     Response
     --------
@@ -257,8 +270,11 @@ def get_today_plan(
       plan exists.
     * ``200`` with body ``null`` when no active plan exists (no
       qualifying game has landed yet, or every plan is completed).
-    * ``200`` with ``today_puzzle: null`` only when every day is solved
-      (the plan is about to flip to ``completed``).
+    * ``200`` with ``today_puzzle: null`` when the next day hasn't
+      unlocked yet (e.g. day-0 solved on creation day; day-3 opens in
+      3 days) — the client hides the drill card and the overview shows
+      the day as locked — or when every day is solved (the plan is
+      about to flip to ``completed``).
 
     No 4xx beyond the auth path (``get_current_player`` returns 401
     on missing/invalid token).
@@ -317,8 +333,16 @@ def complete_puzzle(
     original ``completed_at`` and returns ``200`` with the current
     plan state.  Returns the refreshed plan (including the possibly-new
     ``status == "completed"``) so the client can render the next due
-    puzzle — or the week-complete celebration — without a second
-    round-trip.
+    puzzle — or the "next day unlocks later" state (``today_puzzle:
+    null`` while the following day is still calendar-locked), or the
+    week-complete celebration — without a second round-trip.
+
+    The endpoint does NOT re-check ``due_at``: it records the caller's
+    assertion about a solve that already happened (same trust posture
+    as ``/training/solve`` — no cross-user value, XP gated elsewhere).
+    Availability is enforced where play starts: clients can only launch
+    the puzzle served in ``today_puzzle``, which the calendar +
+    sequential gate controls.
 
     Errors
     ------

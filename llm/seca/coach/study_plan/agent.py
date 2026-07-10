@@ -44,7 +44,7 @@ concurrent generator, the unique index promotes the race to an
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 import chess
@@ -233,14 +233,15 @@ def generate_plan(
             fen=mistake_fen,
             expected_move_uci=played_uci,
             source_type=PUZZLE_SOURCE_ORIGINAL,
-            # All puzzles are available from creation; the week is
-            # self-paced and SEQUENTIAL — the router unlocks the next day
-            # the moment the previous one is solved (no calendar wait).
-            # ``due_at`` is kept on the row for record/ordering, not as a
-            # time gate.  (Was ``now + timedelta(days=day_offset)``, which
-            # forced a 3- / 7-day wait users found frustrating for a small
-            # plan.)
-            due_at=now,
+            # Spaced-repetition schedule: day 0 unlocks at creation;
+            # days 3 / 7 unlock 3 / 7 calendar days later.  The router
+            # ALSO enforces sequential order (day 0 before day 3 before
+            # day 7), so ``due_at`` is the earliest moment a day can
+            # open, not a promise that it is open.  (Pacing was briefly
+            # all-at-creation / solve-to-unlock — PR #322 — which let a
+            # whole week be cleared in one sitting; the calendar gate is
+            # deliberately back.)
+            due_at=now + timedelta(days=day_offset),
         )
         db.add(puzzle)
 

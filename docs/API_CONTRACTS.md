@@ -1742,12 +1742,17 @@ puzzle currently due, or `null` when no active plan exists.
 
 A study plan is generated as a side-effect of `POST /game/finish` when
 that endpoint identified a `biggest_mistake` (§3) — a background task
-on the server writes a 3-puzzle, self-paced **sequence** keyed to the
-one originating mistake.  Day 0 is the exact mistake position; days 3
-and 7 are theme-matched library variants.  Pacing is sequential, not
-calendar-gated: all three are available immediately and the next
-unlocks the instant the previous one is solved (the `day_offset`
-values 0 / 3 / 7 are sequence labels, not day counts).
+on the server writes a 3-puzzle **spaced-repetition schedule** keyed to
+the one originating mistake.  Day 0 is the exact mistake position; days
+3 and 7 are theme-matched library variants.  Pacing is sequential AND
+calendar-gated: a day unlocks only once every earlier day is solved
+**and** its `due_at` (plan creation + 0 / 3 / 7 days) has elapsed, so
+day 3 opens no earlier than 3 days after the plan was created, day 7 no
+earlier than 7, and the plan cannot be cleared in one sitting.  At most
+one day is due at a time.  (Pacing was briefly purely sequential —
+solve-to-unlock, all `due_at` at creation; plans from that window keep
+advancing solve-to-unlock because their `due_at` values are already in
+the past.)
 
 Phase 3 (live): the endpoint serves the persisted plan with
 LLM-generated `theme` + `verdict` (phase 2) AND with day-3 / day-7
@@ -1822,17 +1827,17 @@ No body.  Reads the authenticated player from the bearer token.
 | `anchor_category` | `string \| null` | The player's aggregate dominant weakness — one of `opening_preparation` / `tactical_vision` / `positional_play` / `endgame_technique` (from `HistoricalAnalysisPipeline` over recent games at `/game/finish`).  The overview renders it as the week's focus ("This week: Tactics").  For puzzle SELECTION it is only the backfill: day-3 / day-7 lead with the day-0 mistake's own `theme` and fall back to this category's theme set when that theme is too thin.  `null` for legacy plans and players with too little history to surface a dominant category (the backfill then degrades to the generic bucket).  Distinct from `theme`, which describes — and now drives the practice for — the day-0 mistake's own motif. |
 | `status` | `string` | Plan lifecycle: `"active"` while the week is in progress, `"completed"` once every day is solved.  `GET` only ever returns `"active"` plans (a completed plan returns `null`); `POST /coach/plan/puzzle/complete` (§35) returns the freshly-`"completed"` plan so the client can show the week-complete state. |
 | `total_days` | `int` | Number of puzzles in the plan.  Always `3` in phase 1; surfaced as a field so the UI can render "Day N of M" without hard-coding. |
-| `today_puzzle` | `object \| null` | The FIRST incomplete day — the next one to solve (sequential pacing).  `null` only when every day is solved (the plan is about to flip to `completed`). |
+| `today_puzzle` | `object \| null` | The day available to solve right now: the FIRST incomplete day, once its `due_at` has elapsed.  `null` when the next day is still calendar-locked (e.g. day-0 solved on creation day; day-3 opens at +3 days — the client hides the drill card) or when every day is solved (the plan is about to flip to `completed`). |
 | `today_puzzle.day_offset` | `int` | One of `0`, `3`, `7`.  Maps to "Day 1 / 3", "Day 2 / 3", "Day 3 / 3" via a static client-side label. |
 | `today_puzzle.fen` | `string` | Position the puzzle drops the user into. |
 | `today_puzzle.expected_move_uci` | `string` | The expected move at that FEN (UCI), a display / short-circuit HINT only — it is never the correctness oracle.  Whether a replay counts as solved is decided by the LOCAL engine on `POST /training/verify-replay` (§ mistakes).  For day-0 puzzles this is the player's ORIGINAL bad move — the puzzle asks the user to find a stronger alternative.  For library variants it is the puzzle's expected solution (Lichess's first solution move for a Lichess-sourced puzzle). |
 | `today_puzzle.source_type` | `string` | `"original"` for day-0 (the player's actual mistake) and any day whose library lookup didn't find a match; `"library"` for day-3 / day-7 practice puzzles.  Library puzzles are matched to the day-0 mistake's theme AND side-to-move, sourced live from Lichess (`GET /api/puzzle/next`) when available and falling back to the curated YAML corpus (`llm/seca/coach/study_plan/library/`) otherwise — wire-identical either way (both are `"library"`).  Lets the UI title the puzzle accordingly ("Replay your mistake" vs "Practice: <theme>"). |
-| `today_puzzle.due_at` | `string` | ISO-8601 UTC creation timestamp.  Record only — pacing is sequential, not calendar-gated (see `days[].is_due`). |
+| `today_puzzle.due_at` | `string` | ISO-8601 UTC timestamp of when this day unlocked (plan creation + `day_offset` days).  Always `<= now` when `today_puzzle` is non-null — the endpoint only serves puzzles that are actually due. |
 | `days` | `array` | The full week schedule, ordered by `day_offset` (always `total_days` entries).  Powers the week-overview screen — each entry is `completed` (done), `is_due` (the one to do now), or neither (a later day, locked until the earlier days are solved). |
 | `days[].day_offset` | `int` | One of `0`, `3`, `7`. |
-| `days[].due_at` | `string` | ISO-8601 UTC creation timestamp (record only; unlock is sequential — see `is_due`). |
+| `days[].due_at` | `string` | ISO-8601 UTC timestamp of the earliest moment this day can unlock (plan creation + `day_offset` days).  Clients may render it as "unlocks <date>" for locked days. |
 | `days[].completed` | `bool` | `true` once the day's puzzle has been solved. |
-| `days[].is_due` | `bool` | `true` for the FIRST incomplete day — the one to do now.  Sequential pacing: each day unlocks the instant the previous one is solved (no calendar wait), so exactly one day is `is_due` at a time and it equals `today_puzzle`. |
+| `days[].is_due` | `bool` | `true` for the day to do now: the FIRST incomplete day, once its `due_at` has elapsed.  At most one day is `is_due` at a time and it equals `today_puzzle`; a day that is neither `completed` nor `is_due` is locked (waiting on its `due_at`, an earlier unsolved day, or both). |
 | `days[].source_type` | `string` | `"original"` or `"library"`, same meaning as `today_puzzle.source_type`. |
 
 ### Response (200, no active plan)
@@ -1926,6 +1931,17 @@ The full plan, in the **same shape as `GET /coach/plan/today` (§34)**
 plan even when the completion
 flipped `status` to `"completed"`, so the client can render the next due
 puzzle — or the week-complete state — without a second round-trip.
+After completing a day whose successor is still calendar-locked (the
+common case: day-0 solved on creation day, day-3 unlocks at +3 days)
+the returned plan carries `today_puzzle: null`; the drill card hides
+until the next day's `due_at` elapses.
+
+The endpoint does not re-check `due_at` on the day being completed: it
+records the caller's assertion about a solve that already happened
+(same trust posture as `POST /training/solve` — plan progress has no
+cross-user value, and XP is credited elsewhere).  Availability is
+enforced where play starts: clients can only launch the puzzle served
+in `today_puzzle` (§34), which the sequential + calendar gate controls.
 
 ### Rate limit
 
