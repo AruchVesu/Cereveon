@@ -23,12 +23,15 @@
       5.  Progress kicker — "Day N of 3".
       6.  Three day rows — label (Replay / Practice) + status (Today / Done / Locked).
       7.  Primary CTA — "Start today's drill" (hidden when nothing is due).
-      8.  Footer — "Close" secondary action.
+      8.  Secondary CTA — "Practice puzzles" into the standalone
+          PuzzleTrainerBottomSheet (the endless Lichess-fed stream).
+      9.  Footer — "Close" secondary action.
 
     IDs consumed by StudyPlanOverviewBottomSheet.kt:
       overviewKicker, overviewFocus, overviewVerdict, overviewProgress,
       overviewDay1Label/Status, overviewDay2Label/Status,
-      overviewDay3Label/Status, overviewStartButton, overviewCloseButton.
+      overviewDay3Label/Status, overviewStartButton,
+      overviewPracticeButton, overviewCloseButton.
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -181,6 +184,14 @@
             android:layout_height="@dimen/atrium_tap_target"
             android:layout_marginTop="@dimen/atrium_space_24"
             android:text="Start today's drill" />
+
+        <Button
+            android:id="@+id/overviewPracticeButton"
+            style="@style/Atrium.Button.Secondary"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_tap_target"
+            android:layout_marginTop="@dimen/atrium_space_12"
+            android:text="Practice puzzles" />
 
         <Button
             android:id="@+id/overviewCloseButton"

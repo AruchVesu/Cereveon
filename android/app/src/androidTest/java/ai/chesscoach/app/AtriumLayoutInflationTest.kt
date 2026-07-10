@@ -173,7 +173,22 @@ class AtriumLayoutInflationTest {
         assertNotNull(v.findViewById<View>(R.id.overviewDay2Label))
         assertNotNull(v.findViewById<View>(R.id.overviewDay3Label))
         assertNotNull(v.findViewById<View>(R.id.overviewStartButton))
+        assertNotNull(v.findViewById<View>(R.id.overviewPracticeButton))
         assertNotNull(v.findViewById<View>(R.id.overviewCloseButton))
+    }
+
+    @Test
+    fun bottom_sheet_puzzle_trainer_inflates() {
+        val v = inflate(R.layout.bottom_sheet_puzzle_trainer)
+        // Spot-check the IDs PuzzleTrainerBottomSheet.onViewCreated
+        // resolves; an XML rename would surface here rather than at the
+        // first user who opens the Puzzles tab.
+        assertNotNull(v.findViewById<View>(R.id.puzzleTrainerKicker))
+        assertNotNull(v.findViewById<View>(R.id.puzzleTrainerTitle))
+        assertNotNull(v.findViewById<View>(R.id.puzzleTrainerBoard))
+        assertNotNull(v.findViewById<View>(R.id.puzzleTrainerStatus))
+        assertNotNull(v.findViewById<View>(R.id.puzzleTrainerNextButton))
+        assertNotNull(v.findViewById<View>(R.id.puzzleTrainerCloseButton))
     }
 
     @Test

@@ -31,6 +31,11 @@ import com.google.android.material.bottomsheet.BottomSheetDialogFragment
  * `onResume` re-polls `/coach/plan/today`; reopening this overview
  * therefore always renders fresh state.
  *
+ * A secondary "Practice puzzles" CTA opens the standalone
+ * [PuzzleTrainerBottomSheet] (endless Lichess-fed stream) with the same
+ * dismiss-then-show pattern — plan drills and free practice share the
+ * Puzzles tab without stacking sheets.
+ *
  * Args
  * ----
  * Single bundle extra [ARG_PLAN_JSON] — the serialized
@@ -82,6 +87,18 @@ class StudyPlanOverviewBottomSheet : BottomSheetDialogFragment() {
 
         bindDayRows(view, decoded.days)
         bindCta(view, decoded)
+
+        // Secondary entry into the standalone puzzle trainer — the
+        // endless Lichess-fed practice stream.  Same dismiss-then-show
+        // pattern as the drill CTA so only one sheet is up at a time.
+        view.findViewById<Button>(R.id.overviewPracticeButton).setOnClickListener {
+            if (parentFragmentManager.isStateSaved) return@setOnClickListener
+            val sheet = PuzzleTrainerBottomSheet()
+            sheet.gameApiClient = gameApiClient
+            val fm = parentFragmentManager
+            dismiss()
+            sheet.show(fm, "PuzzleTrainerBottomSheet")
+        }
 
         view.findViewById<Button>(R.id.overviewCloseButton).setOnClickListener { dismiss() }
     }

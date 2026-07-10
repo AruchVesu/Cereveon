@@ -559,9 +559,11 @@ def fetch_user_games(
 # study-plan layer maps our internal THEME_VOCABULARY onto this set; pinning
 # an allowlist here (defense in depth, mirroring _validated_username) means a
 # bug or a hostile internal caller cannot smuggle an arbitrary query-string /
-# path payload toward the upstream request.
+# path payload toward the upstream request.  ``"mix"`` is Lichess's default
+# "healthy mix" angle — used by the standalone puzzle trainer
+# (``GET /puzzles/next``), which serves un-themed practice.
 _PUZZLE_ANGLE_ALLOWED: frozenset[str] = frozenset(
-    {"fork", "pin", "backRankMate", "hangingPiece", "exposedKing", "opening", "endgame"}
+    {"fork", "pin", "backRankMate", "hangingPiece", "exposedKing", "opening", "endgame", "mix"}
 )
 
 # Difficulty bands accepted by ?difficulty= on /api/puzzle/next.

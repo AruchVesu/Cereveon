@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Puzzle trainer sheet (Puzzles tab).
+
+    Endless practice-puzzle stream behind the Puzzles tab: each puzzle
+    arrives from GET /puzzles/next (Lichess "mix" fetch at the player's
+    difficulty, curated-corpus fallback — one wire shape either way).
+    Modelled on the today's-drill sheet (same board + verify + solve
+    flow), with three differences:
+
+      * Kicker reads "Puzzle · <difficulty> · via Lichess" (or the
+        corpus theme) instead of the plan's "Day N of 3" context.
+      * The status row doubles as the side-to-move line ("White to
+        move") because a random puzzle can put the user on either side;
+        the board flips so the solver's colour sits at the bottom.
+      * A primary "Next puzzle" action fetches the next position —
+        advance after a solve, skip before one.
+
+    Verify + solve flow is identical to the other training sheets:
+    each attempt round-trips POST /training/verify-replay; the first
+    verified-correct attempt posts to POST /training/solve
+    (source_type="standard_puzzle", source_ref=<puzzle_id>) and credits
+    +10 XP, deduped per puzzle.
+
+    IDs consumed by PuzzleTrainerBottomSheet.kt:
+      puzzleTrainerKicker, puzzleTrainerTitle, puzzleTrainerBoard,
+      puzzleTrainerStatus, puzzleTrainerNextButton,
+      puzzleTrainerCloseButton.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_atrium_gradient"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/atrium_space_24"
+        android:paddingEnd="@dimen/atrium_space_24"
+        android:paddingTop="@dimen/atrium_space_16"
+        android:paddingBottom="@dimen/atrium_space_24">
+
+        <View
+            android:layout_width="36dp"
+            android:layout_height="4dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginBottom="@dimen/atrium_space_12"
+            android:background="@color/atrium_hairline" />
+
+        <TextView
+            android:id="@+id/puzzleTrainerKicker"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker.Cyan"
+            tools:text="Puzzle · Intermediate · via Lichess" />
+
+        <TextView
+            android:id="@+id/puzzleTrainerTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_4"
+            android:fontFamily="@font/cormorant_garamond"
+            android:textStyle="italic"
+            android:textColor="@color/atrium_ink"
+            android:textSize="28sp"
+            android:lineSpacingMultiplier="1.05"
+            android:text="Find the best move." />
+
+        <FrameLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/atrium_space_16"
+            android:padding="@dimen/atrium_space_8"
+            android:background="@drawable/board_mat_atrium"
+            android:elevation="6dp">
+
+            <ai.chesscoach.app.ChessBoardView
+                android:id="@+id/puzzleTrainerBoard"
+                android:layout_width="312dp"
+                android:layout_height="312dp" />
+
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/puzzleTrainerStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/atrium_space_16"
+            android:textAppearance="@style/Atrium.Kicker"
+            android:gravity="center"
+            android:text="Finding a puzzle..."
+            tools:text="White to move" />
+
+        <Button
+            android:id="@+id/puzzleTrainerNextButton"
+            style="@style/Atrium.Button.Primary"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_tap_target"
+            android:layout_marginTop="@dimen/atrium_space_20"
+            android:text="Next puzzle" />
+
+        <Button
+            android:id="@+id/puzzleTrainerCloseButton"
+            style="@style/Atrium.Button.Secondary"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/atrium_tap_target"
+            android:layout_marginTop="@dimen/atrium_space_12"
+            android:text="Close" />
+
+    </LinearLayout>
+
+</ScrollView>
