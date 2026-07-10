@@ -293,10 +293,7 @@ def _classify(record: MoveRecord) -> tuple[str, float] | None:
         return (MOMENT_MISSED_WIN, 100.0 + magnitude)
     if record.loss_cp >= _BLUNDER_THRESHOLD_CP:
         return (MOMENT_BLUNDER, 90.0 + magnitude)
-    if (
-        record.opp_prior_swing_cp >= OPPONENT_ERROR_SWING_CP
-        and record.loss_cp <= HOLD_LOSS_MAX_CP
-    ):
+    if record.opp_prior_swing_cp >= OPPONENT_ERROR_SWING_CP and record.loss_cp <= HOLD_LOSS_MAX_CP:
         swing_bonus = min(record.opp_prior_swing_cp, 1000) / 1000.0
         return (MOMENT_PUNISHED_MISTAKE, 70.0 + swing_bonus)
     if record.loss_cp >= _MISTAKE_THRESHOLD_CP:
@@ -334,9 +331,7 @@ def select_critical_moments(
 
     ranked = sorted(candidates, key=lambda c: (-c.score, c.record.ply))
 
-    positive_available = any(
-        c.moment_type not in NEGATIVE_MOMENT_TYPES for c in ranked
-    )
+    positive_available = any(c.moment_type not in NEGATIVE_MOMENT_TYPES for c in ranked)
 
     selected: list[CriticalMoment] = []
     # Pass 1 — respect the diversity cap (≤ 2 negative) whenever a
@@ -347,18 +342,14 @@ def select_critical_moments(
         if _too_close(cand, selected):
             continue
         negatives = sum(1 for s in selected if s.moment_type in NEGATIVE_MOMENT_TYPES)
-        if (
-            cand.moment_type in NEGATIVE_MOMENT_TYPES
-            and negatives >= 2
-            and positive_available
-        ):
+        if cand.moment_type in NEGATIVE_MOMENT_TYPES and negatives >= 2 and positive_available:
             continue
         selected.append(cand)
 
     # Pass 2 — the diversity cap may have left slots empty (e.g. the
     # only positive candidates sat within MIN_PLY_GAP of a pick).  Fill
-    # remaining slots with the best unpicked candidates regardless of
-    # type: three negative moments beat two cards.
+    # remaining slots with the best unpicked candidates of any type —
+    # three negative moments beat two cards.
     if len(selected) < 3:
         for cand in ranked:
             if len(selected) == 3:

@@ -144,7 +144,7 @@ def check_eligibility(event: GameEvent) -> None:
         )
 
 
-def start_review(
+def start_review(  # pylint: disable=too-many-return-statements
     db: DBSession,
     player: Player,
     event: GameEvent,
@@ -152,6 +152,13 @@ def start_review(
     dispatch: Callable[[str], object] | None = None,
 ) -> tuple[GameReview, bool]:
     """Create-or-coalesce the review row for ``event``.
+
+    The ``too-many-return-statements`` suppression is deliberate: this
+    is a flat state dispatch over the existing row's status — each
+    branch returns its ``(row, dispatched)`` verdict where it is
+    decided, the same fail-fast-chain structure the study-plan
+    verdict's ``_parse_and_validate`` documents.  Folding the returns
+    into an accumulator would obscure which state produced the answer.
 
     Returns ``(row, dispatched)`` — ``dispatched`` is True when this
     call queued worker work (fresh row, failed-row requeue, or an LLM
@@ -612,11 +619,7 @@ def cleanup_stale_reviews_on_startup() -> int:
         )
         db.commit()
 
-        stranded = (
-            db.query(GameReview)
-            .filter(GameReview.status == REVIEW_STATUS_ENGINE_DONE)
-            .all()
-        )
+        stranded = db.query(GameReview).filter(GameReview.status == REVIEW_STATUS_ENGINE_DONE).all()
         for review in stranded:
             try:
                 moments_payload = json.loads(review.moments_json or "[]")

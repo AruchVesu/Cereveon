@@ -263,9 +263,7 @@ def _verdict_prompt(
         else ""
     )
     weak_line = (
-        f"The phase that cost the most was: {', '.join(weak_phases)}.\n"
-        if weak_phases
-        else ""
+        f"The phase that cost the most was: {', '.join(weak_phases)}.\n" if weak_phases else ""
     )
     return (
         "You are an after-game chess coach writing the closing verdict of "

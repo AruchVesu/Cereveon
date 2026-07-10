@@ -136,9 +136,7 @@ def start_review(
             detail={"code": exc.code, "message": str(exc)},
         ) from exc
 
-    response.status_code = (
-        202 if dispatched or review.status in REVIEW_STATUS_ACTIVE else 200
-    )
+    response.status_code = 202 if dispatched or review.status in REVIEW_STATUS_ACTIVE else 200
     return review_service.serialize_review(
         review,
         entitlement=review_service.entitlement_summary(db, player),

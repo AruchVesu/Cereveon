@@ -93,9 +93,7 @@ class GameReview(Base):
 
     status: Mapped[str] = mapped_column(String, nullable=False, default=REVIEW_STATUS_QUEUED)
 
-    analysis_version: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=ANALYSIS_VERSION
-    )
+    analysis_version: Mapped[int] = mapped_column(Integer, nullable=False, default=ANALYSIS_VERSION)
 
     #: "standard" | "strategic" — strategic is the spec's softer-language
     #: mode for games with no natural critical moments.  NULL until the

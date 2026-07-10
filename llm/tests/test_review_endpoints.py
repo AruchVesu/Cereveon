@@ -546,6 +546,153 @@ class TestRunReviewJob:
         assert llm_payload["verdict"]["text"]
 
 
+class TestServiceBranches:
+    """SV_12+ — defensive branches: worker robustness, corrupt rows,
+    janitor edge cases, helper fallbacks."""
+
+    def test_worker_unknown_review_id_returns(self, worker_session):
+        """SV_12: bogus id aborts quietly (no raise, nothing written)."""
+        review_service.run_review_job("no-such-review", engine_pool=None, llm=_ScriptedLLM())
+
+    def test_worker_skips_already_failed_row(self, db_session, player, lichess_event, worker_session):
+        """SV_13: janitor/unlink raced ahead — worker must not clobber."""
+        review, _ = review_service.start_review(db_session, player, lichess_event)
+        review.status = REVIEW_STATUS_FAILED
+        review.error_message = "swept"
+        db_session.commit()
+        review_service.run_review_job(review.id, engine_pool=_blunder_pool(), llm=_ScriptedLLM())
+        db_session.expire_all()
+        row = db_session.get(GameReview, review.id)
+        assert row.status == REVIEW_STATUS_FAILED
+        assert row.error_message == "swept"
+
+    def test_worker_missing_event_fails_row(self, db_session, player, worker_session):
+        """SV_14: dangling event reference fails the row loudly."""
+        review = GameReview(game_event_id="ghost-event", player_id=str(player.id))
+        db_session.add(review)
+        db_session.commit()
+        review_service.run_review_job(review.id, engine_pool=_blunder_pool(), llm=_ScriptedLLM())
+        db_session.expire_all()
+        row = db_session.get(GameReview, review.id)
+        assert row.status == REVIEW_STATUS_FAILED
+        assert "missing" in (row.error_message or "")
+
+    def test_unparseable_pgn_fails_engine_stage(self, db_session, player, worker_session):
+        """SV_15: a row whose PGN cannot be analysed fails with the
+        engine-stage message (eligibility is a POST-time check only)."""
+        ev = GameEvent(
+            player_id=str(player.id),
+            pgn='[Event "T"]\n[Result "*"]\n\n*\n',  # moveless
+            result="draw",
+            source="lichess",
+            external_game_id="movelessgame",
+        )
+        db_session.add(ev)
+        db_session.commit()
+        review = GameReview(game_event_id=ev.id, player_id=str(player.id))
+        db_session.add(review)
+        db_session.commit()
+        review_service.run_review_job(review.id, engine_pool=_blunder_pool(), llm=_ScriptedLLM())
+        db_session.expire_all()
+        row = db_session.get(GameReview, review.id)
+        assert row.status == REVIEW_STATUS_FAILED
+        assert "analyzed" in (row.error_message or "")
+
+    def test_llm_stage_crash_marks_row_failed(
+        self, db_session, player, lichess_event, worker_session, monkeypatch
+    ):
+        """SV_16: an unexpected exception inside the job (here: the
+        entitlement layer) lands on the outer guard — row failed with a
+        truncated message, nothing propagates to the executor."""
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("entitlements exploded " + "x" * 600)
+
+        monkeypatch.setattr(entitlements, "admit", _boom)
+        review, _ = review_service.start_review(db_session, player, lichess_event)
+        review_service.run_review_job(review.id, engine_pool=_blunder_pool(), llm=_ScriptedLLM())
+        db_session.expire_all()
+        row = db_session.get(GameReview, review.id)
+        assert row.status == REVIEW_STATUS_FAILED
+        assert len(row.error_message) <= 500
+
+    def test_esv_probe_failure_is_tolerated(self, db_session, player, lichess_event, worker_session):
+        """SV_17: a pool that dies AFTER the engine stage (LLM-retry
+        path probes) degrades the ESV, not the review."""
+
+        class ExplodingPool:
+            def evaluate_position(self, *, fen, movetime_ms, queue_timeout_ms=None):
+                raise RuntimeError("pool gone")
+
+        review, _ = review_service.start_review(db_session, player, lichess_event)
+        review_service.run_review_job(review.id, engine_pool=_blunder_pool(), llm=_ScriptedLLM())
+        db_session.expire_all()
+        # Retry Wave 3 with the exploding pool: probes fail, review still
+        # completes with LLM texts (validated against the FEN-derived ESV).
+        row, _ = review_service.start_review(db_session, player, lichess_event)
+        row.status = REVIEW_STATUS_ENGINE_DONE
+        db_session.commit()
+        review_service.run_review_job(row.id, engine_pool=ExplodingPool(), llm=_ScriptedLLM())
+        db_session.expire_all()
+        final = db_session.get(GameReview, row.id)
+        assert final.status == REVIEW_STATUS_COMPLETE
+
+    def test_serialize_tolerates_corrupt_json_columns(self, db_session, player, lichess_event):
+        """SV_18: a corrupt payload column serializes as null instead of
+        500ing the poll."""
+        review = GameReview(
+            game_event_id=lichess_event.id,
+            player_id=str(player.id),
+            status=REVIEW_STATUS_COMPLETE,
+        )
+        review.engine_json = "{not json"
+        review.llm_json = "also not json"
+        db_session.add(review)
+        db_session.commit()
+        body = review_service.serialize_review(review)
+        assert body["engine"] is None
+        assert body["llm"] is None
+        assert body["status"] == REVIEW_STATUS_COMPLETE
+
+    def test_helper_fallbacks(self):
+        """SV_19: qualitative helpers degrade cleanly on junk input."""
+        assert review_service._pgn_meta("not a pgn at all \x00") == {}
+        assert review_service._accuracy_phrase(0.9).startswith("very steady")
+        assert review_service._accuracy_phrase(0.7).startswith("steady")
+        assert review_service._accuracy_phrase(0.5).startswith("uneven")
+        assert review_service._accuracy_phrase(0.1).startswith("stormy")
+
+        class _Ev:
+            weaknesses_json = "{broken"
+
+        assert review_service._weak_phases(_Ev()) == []
+
+        class _Ev2:
+            weaknesses_json = json.dumps({"endgame": 0.4, "opening": 0.1, "middlegame": 0})
+
+        assert review_service._weak_phases(_Ev2()) == ["endgame", "opening"]
+
+    def test_janitor_tolerates_corrupt_stranded_row(self, db_session, player, lichess_event, worker_session):
+        """SV_20: an engine_done row with corrupt moments_json still
+        completes with a fallback verdict (no cards, no crash)."""
+        review = GameReview(
+            game_event_id=lichess_event.id,
+            player_id=str(player.id),
+            status=REVIEW_STATUS_ENGINE_DONE,
+        )
+        review.moments_json = "{corrupt"
+        db_session.add(review)
+        db_session.commit()
+        swept = review_service.cleanup_stale_reviews_on_startup()
+        assert swept == 1
+        db_session.expire_all()
+        row = db_session.get(GameReview, review.id)
+        assert row.status == REVIEW_STATUS_COMPLETE
+        payload = json.loads(row.llm_json)
+        assert payload["moments"] == []
+        assert payload["verdict"]["text"]
+
+
 # ---------------------------------------------------------------------------
 # RT — router layer
 # ---------------------------------------------------------------------------
