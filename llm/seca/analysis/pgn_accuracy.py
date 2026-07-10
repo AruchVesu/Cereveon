@@ -165,6 +165,20 @@ class AccuracyAnalysis:
     rejected).  Distinguishes "we analysed and the answer is X" from
     "we couldn't analyse, here's a neutral default."""
 
+    white_pov_eval_per_position_cp: tuple[int, ...] = ()
+    """Engine eval of each mainline board position, from WHITE's POV
+    (mate collapsed to ±``_MATE_VALUE_CP``).  Index 0 is the starting
+    position; index ``i`` is the position AFTER ply ``i`` — the same
+    indexing as the ``positions`` array served by
+    ``GET /game/{event_id}/positions``, so a consumer can zip the two.
+    Length is ``plies_analysed + 1`` (subject to ``max_plies``), or
+    empty on the degenerate-game fallback.  Captured from evaluations
+    the walk already performs, so recording it costs zero extra engine
+    calls.  Consumer: the imported-game review pipeline
+    (``llm.seca.review``) plots the banded eval graph and classifies
+    per-ply swings from this series.  Defaulted so pre-existing
+    constructors (fallback branch, test fixtures) stay valid."""
+
 
 def compute_accuracy_from_pgn(
     pgn_text: str,
@@ -233,6 +247,11 @@ def compute_accuracy_from_pgn(
         "middlegame": [],
         "endgame": [],
     }
+    # Eval per position along the mainline, White POV: [0] is the start
+    # position, [i] the position after ply i.  Recorded from the same
+    # ``_evaluate_cp`` calls the loss math below already makes — see the
+    # ``AccuracyAnalysis.white_pov_eval_per_position_cp`` docstring.
+    position_evals_cp: list[int] = []
     plies_seen = 0
     prev_eval_cp: int | None = None
 
@@ -252,6 +271,7 @@ def compute_accuracy_from_pgn(
             # starting position.  Subsequent iterations reuse the
             # eval-after as the next eval-before.
             prev_eval_cp = _evaluate_cp(engine_pool, board.fen(), movetime_ms)
+            position_evals_cp.append(prev_eval_cp)
 
         try:
             board.push(node.move)
@@ -261,6 +281,7 @@ def compute_accuracy_from_pgn(
             ) from exc
 
         after_eval_cp = _evaluate_cp(engine_pool, board.fen(), movetime_ms)
+        position_evals_cp.append(after_eval_cp)
 
         if is_player_move:
             # Loss from the player's POV — positive when the player's
@@ -291,6 +312,7 @@ def compute_accuracy_from_pgn(
         player_color,
         player_pov_eval_before_cp,
         player_pov_eval_after_cp,
+        position_evals_cp,
     )
 
 
@@ -367,6 +389,7 @@ def _summarise(
     player_color: chess.Color,
     player_pov_eval_before_cp: list[int],
     player_pov_eval_after_cp: list[int],
+    position_evals_cp: list[int],
 ) -> AccuracyAnalysis:
     """Reduce per-move CP losses to accuracy + phase-keyed weakness rates.
 
@@ -380,6 +403,10 @@ def _summarise(
     scores out of the box.
     """
     if not losses_cp:
+        # Degenerate game — the eval series is dropped along with the
+        # rest of the per-move data: ``source == "fallback"`` marks the
+        # whole record as "couldn't analyse", and a partial series would
+        # invite consumers to trust it selectively.
         return AccuracyAnalysis(
             accuracy=0.5,
             weaknesses={},
@@ -445,4 +472,5 @@ def _summarise(
         player_pov_eval_before_cp=tuple(player_pov_eval_before_cp),
         player_pov_eval_after_cp=tuple(player_pov_eval_after_cp),
         source="engine",
+        white_pov_eval_per_position_cp=tuple(position_evals_cp),
     )

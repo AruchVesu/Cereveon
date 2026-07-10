@@ -2137,6 +2137,108 @@ should not block gameplay on the result.
 
 ---
 
+## 39. `POST /game/{event_id}/review`
+
+**Host:** `llm/seca/review/router.py`
+**Auth:** `Authorization: Bearer <token>` required; owner-scoped
+**Rate limit:** 6 / minute
+
+Start (or coalesce / retry) the post-game AI review job for one
+**imported Lichess** game.  The review is the job-row + thread-pool +
+polling pattern of §31: the row's `status` advances through
+`queued → running → engine_done → complete | failed`, and the client
+polls §39a while non-terminal, rendering whatever stages have landed
+(three-wave progressive UX).
+
+Semantics by existing-row state (at the current `analysis_version`):
+
+| Existing row | Behaviour | HTTP |
+|--------------|-----------|------|
+| none | create + dispatch worker | `202` |
+| `queued` / `running` / `engine_done` | coalesce (no new work) | `202` |
+| `failed` | requeue the same row | `202` |
+| `complete`, `llm.outcome == "full"` | serve as-is | `200` |
+| `complete`, `llm.outcome ∈ {"fallback", "skipped_entitlement"}` | re-run the LLM stage only ("Try coach review again"); if the entitlement cap still blocks, serve unchanged | `202` / `200` |
+
+**Never 402s.**  The engine review (Wave 2: banded eval series, move
+classification counts, critical moments) is free on every imported
+game; the `import_analysis` entitlement (free 3 / month, pro 50 /
+month) gates only the LLM stage.  A blocked stage completes the review
+with `llm.outcome == "skipped_entitlement"` and the quota snapshot in
+`entitlement` drives the client's upgrade CTA.  Admission is
+per-game-subject (`entitlements.admit`), so re-reviewing the same game
+never double-charges the quota.
+
+### Response body (200 / 202) — shared with §39a
+
+```json
+{
+  "review_id":        "<uuid>",
+  "event_id":         "<uuid>",
+  "status":           "queued | running | engine_done | complete | failed",
+  "analysis_version": 1,
+  "review_mode":      "standard | strategic | null",
+  "engine":           { … } ,
+  "moments":          [ … ] ,
+  "llm":              { … } ,
+  "error_message":    "string | null",
+  "entitlement":      { "metric": "import_analysis", "allowed": true,
+                        "plan": "free", "limit": 3, "used": 1,
+                        "remaining": 2 },
+  "created_at":       "ISO-8601",
+  "completed_at":     "ISO-8601 | null"
+}
+```
+
+`engine`, `moments`, `llm` are `null` until their stage lands:
+
+* `engine` *(Wave 2)* — `bands` (list of `losing | worse | equal |
+  better | winning`, player-relative, one per board position: index 0
+  = start position, index i = after ply i — same indexing as
+  §7a `positions`), `accuracy` (0..1 float, same value
+  `/game/history` shows), `counts` (`blunders` / `mistakes` /
+  `inaccuracies` ints), `moves_analyzed`, `player_color`, `plies`,
+  and `meta` (PGN-header echo: `white`, `black`, `white_elo`,
+  `black_elo`, `time_control`, `opening`, `eco`, `date`,
+  `termination` — keys absent when the header is absent).
+  **No raw centipawns are ever emitted** — the eval series is banded
+  server-side, enforcing the Atrium no-numeric-eval invariant at the
+  wire.
+* `moments` — up to 3 critical moments, chronological:
+  `{ply, move_number, san, moment_type (blunder | missed_win |
+  mistake | punished_mistake | strategic), phase, band_before,
+  band_after, fen_before, fen_after, clock_remaining_s}`.
+* `llm` *(Wave 3)* — `{moments: [{ply, text, source: "llm" |
+  "fallback"}], verdict: {text, source}, outcome: "full" | "fallback"
+  | "skipped_entitlement"}`.  `skipped_entitlement` carries no texts.
+  Texts passed the Mode-2 gates (no notation, no engine mentions) or
+  are the deterministic coach-voice fallbacks.
+
+### Errors
+
+| Status | Cause |
+|--------|-------|
+| `400`  | `event_id` longer than 64 chars (plain-string detail), or ineligible game — detail is then an object `{"code": "not_lichess" \| "too_short", "message": "…"}`. |
+| `401`  | Missing or invalid `Authorization` header. |
+| `403`  | Event belongs to another player. |
+| `404`  | Event does not exist. |
+| `429`  | Rate limit exceeded (Shape B). |
+
+---
+
+## 39a. `GET /game/{event_id}/review`
+
+**Host:** `llm/seca/review/router.py`
+**Auth:** `Authorization: Bearer <token>` required; owner-scoped
+**Rate limit:** 120 / minute (2s poll cadence + retries, same budget
+as §31a)
+
+Poll the review row.  `200` with the §39 body; `404` when no review
+exists at the current `analysis_version` (client shows the "Get coach
+review" button).  Same `400`/`401`/`403`/`404` guards as §39.
+
+---
+
 ## Error responses
 
 The API emits **two distinct error-body shapes** that any client (the

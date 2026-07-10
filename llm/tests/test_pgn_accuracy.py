@@ -260,6 +260,87 @@ class TestPgnAccuracyEdgeCases:
         assert analysis.player_color == chess.WHITE  # draw → default White
 
 
+class TestPgnAccuracyPositionEvalSeries:
+    """PGNACC_UNIT_SERIES: the per-position White-POV eval series added
+    for the imported-game review pipeline (llm.seca.review).  Indexing
+    contract: [0] = start position, [i] = position after ply i — the
+    same shape as GET /game/{event_id}/positions."""
+
+    def test_series_length_and_values(self):
+        """PGNACC_UNIT_SERIES_SHAPE: length is plies+1 and each entry is
+        the fake pool's eval for that position, in mainline order."""
+        pgn = _pgn(["e4", "e5", "Nf3"], result="*")
+        pool = _FakeEvalPool(
+            cp_by_fen={
+                chess.Board().fen().split(" ")[0]: 10,
+                _board_after(["e4"]).split(" ")[0]: 30,
+                _board_after(["e4", "e5"]).split(" ")[0]: 20,
+                _board_after(["e4", "e5", "Nf3"]).split(" ")[0]: 40,
+            }
+        )
+        analysis = compute_accuracy_from_pgn(
+            pgn_text=pgn,
+            engine_pool=pool,
+            result="draw",
+        )
+        assert analysis.source == "engine"
+        assert analysis.white_pov_eval_per_position_cp == (10, 30, 20, 40)
+
+    def test_mate_eval_collapses_in_series(self):
+        """PGNACC_UNIT_SERIES_MATE: a mate-type eval lands in the series
+        as ±10000, matching the loss-math collapse everywhere else."""
+
+        class MatePool:
+            def evaluate_position(
+                self,
+                *,
+                fen: str,
+                movetime_ms: int,
+                queue_timeout_ms: int | None = None,
+            ) -> dict:
+                board_fen = fen.split(" ")[0]
+                if board_fen == _board_after(["e4", "e5"]).split(" ")[0]:
+                    return {"evaluation": {"type": "mate", "value": -3}}
+                return {"evaluation": {"type": "cp", "value": 0}}
+
+        pgn = _pgn(["e4", "e5"], result="*")
+        analysis = compute_accuracy_from_pgn(
+            pgn_text=pgn,
+            engine_pool=MatePool(),
+            result="draw",
+        )
+        assert analysis.white_pov_eval_per_position_cp == (0, 0, -10000)
+
+    def test_fallback_series_is_empty(self):
+        """PGNACC_UNIT_SERIES_FALLBACK: the degenerate-game fallback
+        carries an empty series — source='fallback' marks the whole
+        record unusable, and a partial series would invite consumers to
+        trust it selectively."""
+        pgn = '[Event "Test"]\n[Result "*"]\n\n*\n'
+        pool = _FakeEvalPool(cp_by_fen={})
+        analysis = compute_accuracy_from_pgn(
+            pgn_text=pgn,
+            engine_pool=pool,
+            result="draw",
+        )
+        assert analysis.source == "fallback"
+        assert analysis.white_pov_eval_per_position_cp == ()
+
+    def test_max_plies_caps_series(self):
+        """PGNACC_UNIT_SERIES_MAX_PLIES: the cap bounds the series to
+        max_plies + 1 entries (initial position + one per analysed ply)."""
+        moves = ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6"]
+        pgn = _pgn(moves, result="*")
+        pool = _FakeEvalPool(cp_by_fen={})
+        analysis = compute_accuracy_from_pgn(
+            pgn_text=pgn,
+            engine_pool=pool,
+            result="draw",
+            max_plies=4,
+        )
+        assert len(analysis.white_pov_eval_per_position_cp) == 5
+
+
 class TestPgnAccuracyQueueTimeout:
     """PGNACC_UNIT_TIMEOUT: per-ply engine acquire passes a generous
     queue_timeout_ms — not the pool's snappy /live/move default."""
