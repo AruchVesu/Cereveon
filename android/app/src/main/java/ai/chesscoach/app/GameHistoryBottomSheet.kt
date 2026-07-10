@@ -239,8 +239,9 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
 
     private fun openReview(game: GameHistoryItem) {
         // Load the finished game onto the main board for replay + live coaching,
-        // then close this sheet so the user lands on the board.
-        (activity as? MainActivity)?.openFinishedGameReview(game.id, game.gameId)
+        // then close this sheet so the user lands on the board.  The source
+        // gates the replay bar's "Coach review" button (Lichess imports only).
+        (activity as? MainActivity)?.openFinishedGameReview(game.id, game.gameId, game.source)
         dismiss()
     }
 

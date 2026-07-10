@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Post-game coach review (imported Lichess games).
+
+    Renders progressively in three waves as GameReviewBottomSheet polls
+    GET /game/{event_id}/review:
+
+      Wave 1 — header + meta line (instant, from the row + PGN meta).
+      Wave 2 — banded eval graph + stats line + moment cards (engine).
+      Wave 3 — coach texts on the cards + the verdict block (LLM).
+
+    The graph is a ReviewEvalGraphView: five band steps, no numeric
+    eval, no arrows — the review-screen sibling of EvalBandView.
+
+    Preserved IDs (GameReviewBottomSheet.kt findViewById):
+      txtReviewMeta, txtReviewStatus, reviewEvalGraph, txtReviewStats,
+      reviewMomentsList, txtVerdictHeader, txtVerdict, btnReviewAction,
+      txtReviewQuota.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_atrium_gradient"
+    android:paddingBottom="@dimen/atrium_space_24">
+
+    <!-- Drag handle. -->
+    <View
+        android:layout_width="40dp"
+        android:layout_height="3dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="@dimen/atrium_space_8"
+        android:layout_marginBottom="@dimen/atrium_space_8"
+        android:background="@color/atrium_hairline_strong" />
+
+    <!-- Chapter header. -->
+    <ai.chesscoach.app.AtriumChapterHeaderView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:atriumKicker="Coach"
+        app:atriumTitle="Game review" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="480dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingTop="@dimen/atrium_space_8">
+
+            <!-- Wave 1 — opponent · time control · opening. -->
+            <TextView
+                android:id="@+id/txtReviewMeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textSize="11sp"
+                android:letterSpacing="0.05"
+                android:textColor="@color/atrium_muted"
+                tools:text="vs opponent1234 (1234) · 600+5 · Ruy Lopez: Breyer" />
+
+            <!-- Pipeline status ("Coach is looking at the game…"). -->
+            <TextView
+                android:id="@+id/txtReviewStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_8"
+                android:textAppearance="@style/Atrium.Body.Italic"
+                android:textColor="@color/atrium_dim"
+                tools:text="Analyzing the game…" />
+
+            <!-- Wave 2 — banded eval graph (tappable moment markers). -->
+            <ai.chesscoach.app.ReviewEvalGraphView
+                android:id="@+id/reviewEvalGraph"
+                android:layout_width="match_parent"
+                android:layout_height="96dp"
+                android:layout_marginTop="@dimen/atrium_space_16"
+                android:visibility="gone"
+                tools:visibility="visible" />
+
+            <!-- Accuracy + classification counts. -->
+            <TextView
+                android:id="@+id/txtReviewStats"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_8"
+                android:fontFamily="monospace"
+                android:textSize="11sp"
+                android:letterSpacing="0.05"
+                android:textColor="@color/atrium_muted"
+                android:visibility="gone"
+                tools:visibility="visible"
+                tools:text="61% acc · 1 blunder · 0 mistakes · 2 inaccuracies" />
+
+            <!-- Moment cards, built programmatically. -->
+            <LinearLayout
+                android:id="@+id/reviewMomentsList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="@dimen/atrium_space_8" />
+
+            <!-- Wave 3 — coach's verdict. -->
+            <TextView
+                android:id="@+id/txtVerdictHeader"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_16"
+                android:fontFamily="monospace"
+                android:textSize="11sp"
+                android:letterSpacing="0.1"
+                android:textColor="@color/atrium_accent_cyan"
+                android:text="COACH'S VERDICT"
+                android:visibility="gone"
+                tools:visibility="visible" />
+
+            <TextView
+                android:id="@+id/txtVerdict"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_8"
+                android:textAppearance="@style/Atrium.Body"
+                android:visibility="gone"
+                tools:visibility="visible"
+                tools:text="This game showed a pattern of fast decisions in sharp positions…" />
+
+            <!-- Quota line ("2 coach reviews left this month"). -->
+            <TextView
+                android:id="@+id/txtReviewQuota"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_16"
+                android:textAppearance="@style/Atrium.Body.Italic"
+                android:textColor="@color/atrium_dim"
+                android:visibility="gone"
+                tools:visibility="visible"
+                tools:text="2 coach reviews left this month." />
+
+            <!-- Context-dependent action: retry coach review / upgrade. -->
+            <Button
+                android:id="@+id/btnReviewAction"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/atrium_space_8"
+                android:visibility="gone"
+                tools:visibility="visible"
+                tools:text="TRY COACH REVIEW AGAIN" />
+
+        </LinearLayout>
+    </ScrollView>
+
+</LinearLayout>
