@@ -299,6 +299,15 @@ TEST_TARGETS = [
     # eval_delta boundaries (49/50), sign convention, mate path, errors type guard,
     # eval_type normalization, value coercion, FEN enrichment, schema round-trip.
     "llm/tests/test_stockfish_notation.py",
+    # Post-game AI review of imported Lichess games (API_CONTRACTS §39/§39a):
+    # deterministic moment selection + ESV-cutoff banding pins (REVIEW_MOM_*),
+    # the LLM writer's Mode-2 gates + compliant-by-construction fallbacks
+    # (REVIEW_WRT_*), and the job service + HTTP surface — eligibility,
+    # stage idempotency, entitlement cap + per-game readmission, janitor,
+    # ownership/error translation (SV_* / RT_*).
+    "llm/tests/test_review_moments.py",
+    "llm/tests/test_review_writer.py",
+    "llm/tests/test_review_endpoints.py",
 ]
 
 COVERAGE_TARGETS = [
@@ -372,6 +381,15 @@ COVERAGE_TARGETS = [
     # corpus fallback).  Covered by test_puzzles_next.py.
     "llm.seca.puzzles.router",
     "llm.seca.mistakes.router",
+    # Post-game review of imported Lichess games (API_CONTRACTS §39):
+    # banded moment selection, Mode-2-gated LLM writer, job service +
+    # HTTP surface.  Covered by test_review_moments.py,
+    # test_review_writer.py, test_review_endpoints.py.
+    "llm.seca.review.models",
+    "llm.seca.review.moments",
+    "llm.seca.review.writer",
+    "llm.seca.review.service",
+    "llm.seca.review.router",
     # llm.seca.coach.live_controller, llm.seca.coach.executor,
     # llm.seca.coach.confidence_language_controller, and
     # llm.seca.coach.explain_pipeline are excluded from --cov targets:

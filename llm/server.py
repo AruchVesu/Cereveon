@@ -44,6 +44,7 @@ from llm.seca.puzzles.router import router as puzzles_router
 from llm.seca.entitlements import service as entitlements
 from llm.seca.billing.router import router as billing_router
 from llm.seca.feedback.router import router as feedback_router
+from llm.seca.review.router import router as review_router
 
 # register SECA models
 import llm.seca.events.models
@@ -51,6 +52,7 @@ import llm.seca.lichess.models  # noqa: F401  # ensure LinkedAccount is on Base 
 import llm.seca.training.models  # noqa: F401  # ensure TrainingCompletion is on Base before init_schema
 import llm.seca.coach.study_plan.models  # noqa: F401  # ensure MistakeStudyPlan/Puzzle on Base before init_schema
 import llm.seca.feedback.models  # noqa: F401  # ensure FeedbackMessage is on Base before init_schema
+import llm.seca.review.models  # noqa: F401  # ensure GameReview is on Base before init_schema
 
 from llm.seca.engines.stockfish.pool import (
     EnginePoolSettings,
@@ -275,6 +277,15 @@ async def lifespan(app: FastAPI):
 
         cleanup_stale_import_jobs_on_startup()
 
+        # Same janitor pass for game-review jobs: queued/running rows
+        # fail (POST requeues on demand); engine_done rows complete with
+        # deterministic fallback texts so their Wave-2 content survives.
+        from llm.seca.review.service import (  # noqa: PLC0415
+            cleanup_stale_reviews_on_startup,
+        )
+
+        cleanup_stale_reviews_on_startup()
+
         world_model = SafeWorldModel()
         enforce(world_model)
         if os.name == "nt":
@@ -408,6 +419,16 @@ async def lifespan(app: FastAPI):
         _lichess_import_executor.shutdown(wait=False, cancel_futures=True)
     except Exception as exc:  # pylint: disable=broad-except
         logger.warning("Lichess import executor shutdown error: %s", exc)
+
+    # Same non-blocking teardown for the review executor: in-flight
+    # engine/LLM stages race the uvicorn grace window; rows left
+    # non-terminal are swept by cleanup_stale_reviews_on_startup.
+    try:
+        from llm.seca.review.router import shutdown_executor as _review_shutdown
+
+        _review_shutdown()
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("Review executor shutdown error: %s", exc)
 
     if engine_pool:
         engine_pool.close()
@@ -791,6 +812,7 @@ app.include_router(study_plan_router)
 app.include_router(puzzles_router)
 app.include_router(billing_router)
 app.include_router(feedback_router)
+app.include_router(review_router)
 app.include_router(
     inference_router,
     prefix="/seca",

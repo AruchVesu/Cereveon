@@ -147,6 +147,16 @@
                 android:textAppearance="@style/Atrium.Kicker"
                 android:text="" />
 
+            <!-- Post-game AI review — visible only when the replayed game
+                 was imported from Lichess (MainActivity toggles it). -->
+            <Button
+                android:id="@+id/btnCoachReview"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="@dimen/atrium_space_8"
+                android:visibility="gone"
+                android:text="✦ REVIEW" />
+
             <Button
                 android:id="@+id/btnReviewNext"
                 android:layout_width="wrap_content"

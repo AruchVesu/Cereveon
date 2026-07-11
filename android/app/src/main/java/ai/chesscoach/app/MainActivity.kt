@@ -105,10 +105,17 @@ class MainActivity : AppCompatActivity() {
     // imported Lichess games played as Black; null = white/live). Read by
     // the coach chat so its "you" framing follows the player's seat.
     private var reviewPlayerColor: String? = null
+    // The finished game under review: its history event id (the review
+    // API key) and provenance.  The "Coach review" button shows only for
+    // source == "lichess" — in-app games have their own finish surfaces.
+    private var reviewEventId: String? = null
+    private var reviewSource: String? = null
     private lateinit var reviewNavBar: View
     private lateinit var btnReviewPrev: Button
     private lateinit var btnReviewNext: Button
+    private lateinit var btnCoachReview: Button
     private lateinit var txtReviewMove: TextView
+    private lateinit var reviewApiClient: ReviewApiClient
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -144,6 +151,15 @@ class MainActivity : AppCompatActivity() {
                 baseUrl = BuildConfig.COACH_API_BASE,
                 apiKey = BuildConfig.COACH_API_KEY,
                 tokenProvider = { authRepo.getToken() },
+                tokenSink = { newToken -> authRepo.saveToken(newToken) },
+            )
+
+        // Post-game review client (imported Lichess games).  Token is
+        // passed per call by GameReviewBottomSheet via its tokenProvider;
+        // rotation headers land in the same sink as the other clients.
+        reviewApiClient =
+            HttpReviewApiClient(
+                baseUrl = BuildConfig.COACH_API_BASE,
                 tokenSink = { newToken -> authRepo.saveToken(newToken) },
             )
 
@@ -224,9 +240,11 @@ class MainActivity : AppCompatActivity() {
         reviewNavBar = findViewById(R.id.reviewNavBar)
         btnReviewPrev = findViewById(R.id.btnReviewPrev)
         btnReviewNext = findViewById(R.id.btnReviewNext)
+        btnCoachReview = findViewById(R.id.btnCoachReview)
         txtReviewMove = findViewById(R.id.txtReviewMove)
         btnReviewPrev.setOnClickListener { stepReview(-1) }
         btnReviewNext.setOnClickListener { stepReview(+1) }
+        btnCoachReview.setOnClickListener { openCoachReviewSheet() }
         val btnExitToHome = findViewById<Button>(R.id.btnExitToHome)
         val btnReset = findViewById<Button>(R.id.btnReset)
         val btnUndo = findViewById<Button>(R.id.btnUndo)
@@ -1018,13 +1036,19 @@ class MainActivity : AppCompatActivity() {
      * position currently shown — exactly like during a game — scoped to this
      * game's thread (currentServerGameId).
      */
-    fun openFinishedGameReview(eventId: String, gameId: String?) {
+    fun openFinishedGameReview(eventId: String, gameId: String?, source: String? = null) {
         lifecycleScope.launch {
             when (val r = gameApiClient.getGamePositions(eventId)) {
-                is ApiResult.Success ->
+                is ApiResult.Success -> {
+                    // Remembered for the "Coach review" surface: the event id
+                    // keys POST/GET /game/{event_id}/review, and the button
+                    // shows only for imported Lichess games.
+                    reviewEventId = eventId
+                    reviewSource = source
                     loadFinishedGameForReview(
                         r.data.positions, r.data.moves, gameId, r.data.playerColor
                     )
+                }
                 else ->
                     Toast.makeText(
                         this@MainActivity,
@@ -1058,6 +1082,11 @@ class MainActivity : AppCompatActivity() {
         currentServerGameId = gameId?.takeIf { it.isNotBlank() }
         chessBoard.isInteractive = false
         reviewNavBar.visibility = View.VISIBLE
+        // AI review is an imported-Lichess surface (in-app games keep
+        // their existing finish summary + mistake replay).
+        btnCoachReview.visibility =
+            if (reviewSource.equals("lichess", ignoreCase = true)) View.VISIBLE
+            else View.GONE
         renderReviewPly()
     }
 
@@ -1065,6 +1094,28 @@ class MainActivity : AppCompatActivity() {
         if (reviewPositions.isEmpty()) return
         reviewPly = (reviewPly + delta).coerceIn(0, reviewPositions.size - 1)
         renderReviewPly()
+    }
+
+    /**
+     * Jump the replay board to [ply] — the review sheet's "Explore"
+     * action (moment cards + graph markers).  Position indexing matches
+     * GET /game/{id}/positions: index i = board AFTER ply i.
+     */
+    fun jumpReviewToPly(ply: Int) {
+        if (reviewPositions.isEmpty()) return
+        reviewPly = ply.coerceIn(0, reviewPositions.size - 1)
+        renderReviewPly()
+    }
+
+    /** Open the post-game AI review sheet for the game under replay. */
+    private fun openCoachReviewSheet() {
+        val eventId = reviewEventId ?: return
+        GameReviewBottomSheet().apply {
+            reviewApiClient = this@MainActivity.reviewApiClient
+            tokenProvider = { authRepo.getToken() }
+            this.eventId = eventId
+            onExplorePly = { ply -> jumpReviewToPly(ply) }
+        }.show(supportFragmentManager, "game_review")
     }
 
     private fun renderReviewPly() {
@@ -1083,10 +1134,13 @@ class MainActivity : AppCompatActivity() {
         reviewMoves = emptyList()
         reviewPly = 0
         reviewPlayerColor = null
+        reviewEventId = null
+        reviewSource = null
         // Restore the default White-at-bottom orientation for live play.
         chessBoard.flipped = false
         if (wasReviewing) chessBoard.isInteractive = true
         if (::reviewNavBar.isInitialized) reviewNavBar.visibility = View.GONE
+        if (::btnCoachReview.isInitialized) btnCoachReview.visibility = View.GONE
     }
 
     /**
