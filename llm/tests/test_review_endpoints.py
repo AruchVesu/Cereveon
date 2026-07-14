@@ -432,6 +432,16 @@ class TestRunReviewJob:
         assert json.loads(row.llm_json)["outcome"] == LLM_OUTCOME_SKIPPED_ENTITLEMENT
         assert llm.calls == 0
 
+        # The quota snapshot the client renders must AGREE with the gate
+        # that just skipped the stage.  check() reading the pure-counter
+        # row (which admit() never writes for this marker metric) showed
+        # "3 of 3 left" to a capped user — the frozen-quota-line bug
+        # observed on-device 2026-07-14.
+        summary = review_service.entitlement_summary(db_session, player)
+        assert summary["used"] == 3
+        assert summary["remaining"] == 0
+        assert summary["allowed"] is False
+
     def test_same_game_readmission_is_free(
         self, db_session, player, lichess_event, worker_session, monkeypatch
     ):

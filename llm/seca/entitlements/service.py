@@ -76,6 +76,15 @@ METRIC_COACHED_GAME = "coached_game"
 METRIC_CHAT_TURN = "chat_turn"
 METRIC_IMPORT_ANALYSIS = "import_analysis"
 
+#: Metrics metered by DISTINCT-SUBJECT admission markers: ``admit()``
+#: writes one subject-keyed row per admitted unit, so ``check()`` must
+#: count markers (``subject != ""``) for these.  Reading the pure-counter
+#: row (``subject == ""``) would report ``used=0`` forever because
+#: ``admit()`` never writes it — the PR #390 review-quota bug where
+#: capped users saw "3 reviews left" and looped on "Try coach review
+#: again".  ``chat_turn`` stays a pure counter via ``record()``.
+_MARKER_METRICS = frozenset({METRIC_COACHED_GAME, METRIC_IMPORT_ANALYSIS})
+
 _DAILY = "daily"
 _MONTHLY = "monthly"
 
@@ -201,9 +210,9 @@ def check(
 ) -> Decision:
     """Read-only: would the NEXT unit of ``metric`` be within the limit?
 
-    For pure counters ``used`` is the counter row's count; for the
-    marker metric (``coached_game``) it is the number of distinct
-    admitted subjects this period.  Never writes.
+    For pure counters ``used`` is the counter row's count; for marker
+    metrics (``_MARKER_METRICS``) it is the number of distinct admitted
+    subjects this period.  Never writes.
     """
     plan = _plan_for(player)
     if not resolve_enforced():
@@ -223,7 +232,7 @@ def check(
             UsageCounter.metric == metric,
             UsageCounter.period_key == period,
         )
-        if metric == METRIC_COACHED_GAME:
+        if metric in _MARKER_METRICS:
             used = query.filter(UsageCounter.subject != "").count()
         else:
             row = query.filter(UsageCounter.subject == "").one_or_none()
@@ -305,7 +314,8 @@ def admit(
     *,
     now: datetime | None = None,
 ) -> Decision:
-    """Distinct-subject admission (the ``coached_game`` path).
+    """Distinct-subject admission (the ``_MARKER_METRICS`` path:
+    ``coached_game`` per game_id, ``import_analysis`` per game_event_id).
 
     A period admits up to ``limit`` distinct subjects; each admission is
     a marker row, so re-asking for an admitted subject is idempotent and

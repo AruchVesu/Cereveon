@@ -152,14 +152,66 @@ class TestFreeChatQuota:
 
 class TestMonthlyRollover:
     def test_import_analysis_buckets_by_month(self, db, enforced):
+        # import_analysis is a MARKER metric (admitted per game_event_id by
+        # the review worker — service._MARKER_METRICS), so meter it the way
+        # production does.  This test used record() until the check()/admit()
+        # row-shape split was fixed: check() read the never-written
+        # subject=="" counter row and always reported used=0.
         player = _make_player(db)
-        for _ in range(3):
-            service.record(db, player, service.METRIC_IMPORT_ANALYSIS, now=_JULY_3)
+        for i in range(3):
+            service.admit(db, player, service.METRIC_IMPORT_ANALYSIS, f"event-{i}", now=_JULY_3)
         july = service.check(db, player, service.METRIC_IMPORT_ANALYSIS, now=_JULY_4)
         assert not july.allowed, "3/month exhausted within July"
 
         august = service.check(db, player, service.METRIC_IMPORT_ANALYSIS, now=_AUGUST_1)
         assert august.allowed and august.used == 0, "new month, fresh bucket"
+
+
+# ---------------------------------------------------------------------------
+# 4b. check()/admit() marker consistency (the PR #390 review-quota bug)
+# ---------------------------------------------------------------------------
+
+
+class TestImportAnalysisMarkerConsistency:
+    """check() must count the SAME subject-keyed marker rows admit()
+    writes for ``import_analysis``.  Before the fix, check() read the
+    pure-counter row (``subject == ""``) that no code path ever wrote
+    for this metric, so ``entitlement_summary()`` reported
+    ``used=0 / remaining=3 / allowed=True`` forever: a capped free user
+    saw "3 reviews left", tapped "Try coach review again", the skipped
+    re-check re-dispatched the worker, and admit() blocked again — an
+    infinite loop with a wrong quota display."""
+
+    def test_check_counts_admitted_subjects(self, db, enforced):
+        player = _make_player(db)
+        for i in range(2):
+            service.admit(db, player, service.METRIC_IMPORT_ANALYSIS, f"ev-{i}", now=_JULY_3)
+        decision = service.check(db, player, service.METRIC_IMPORT_ANALYSIS, now=_JULY_3)
+        assert (decision.used, decision.remaining, decision.allowed) == (2, 1, True)
+
+    def test_check_blocks_at_marker_limit_and_admit_agrees(self, db, enforced):
+        player = _make_player(db)
+        for i in range(3):
+            admitted = service.admit(
+                db, player, service.METRIC_IMPORT_ANALYSIS, f"ev-{i}", now=_JULY_3
+            )
+            assert admitted.allowed
+        blocked = service.check(db, player, service.METRIC_IMPORT_ANALYSIS, now=_JULY_3)
+        assert not blocked.allowed
+        assert (blocked.used, blocked.remaining) == (3, 0)
+        # Both primitives now agree at the boundary — no more
+        # "check says go, admit says no" loop.
+        fourth = service.admit(db, player, service.METRIC_IMPORT_ANALYSIS, "ev-3", now=_JULY_3)
+        assert not fourth.allowed
+
+    def test_re_check_of_admitted_subject_stays_consistent(self, db, enforced):
+        """Idempotent re-admits (the review worker re-running a game)
+        must not inflate check()'s used count."""
+        player = _make_player(db)
+        for _ in range(4):
+            service.admit(db, player, service.METRIC_IMPORT_ANALYSIS, "same-event", now=_JULY_3)
+        decision = service.check(db, player, service.METRIC_IMPORT_ANALYSIS, now=_JULY_3)
+        assert (decision.used, decision.remaining, decision.allowed) == (1, 2, True)
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +293,10 @@ class TestProThresholds:
 
     def test_pro_imports_50_per_month(self, db, enforced):
         player = _make_player(db, plan="pro")
-        _seed_counter(db, player, service.METRIC_IMPORT_ANALYSIS, "2026-07", 50)
+        # Marker metric: seed 50 distinct admitted subjects — the row shape
+        # admit() actually writes (one subject-keyed marker per review).
+        for i in range(50):
+            service.admit(db, player, service.METRIC_IMPORT_ANALYSIS, f"event-{i}", now=_JULY_3)
         assert not service.check(db, player, service.METRIC_IMPORT_ANALYSIS, now=_JULY_3).allowed
 
 
