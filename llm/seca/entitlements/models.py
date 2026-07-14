@@ -5,14 +5,19 @@ Schema
 One ``usage_counters`` row per metering scope.  Two row shapes share the
 table:
 
-- **Pure counters** (``chat_turn``, ``import_analysis``): one row per
+- **Pure counters** (``chat_turn``): one row per
   ``(player, metric, period)`` whose ``count`` increments on use.
   ``subject`` is the empty-string sentinel.
-- **Admission markers** (``coached_game``): one row per
-  ``(player, metric, period, game_id)``.  The row's existence — not its
-  ``count`` — is the signal: a marker means that game was admitted to
-  the LLM-coached path for the day, so every subsequent move of the
-  same game stays on the same side of the limit.
+- **Admission markers** (``coached_game`` per game_id,
+  ``import_analysis`` per game_event_id — see
+  ``service._MARKER_METRICS``): one row per
+  ``(player, metric, period, subject)``.  The row's existence — not its
+  ``count`` — is the signal: a marker means that unit was admitted to
+  the LLM path for the period, so re-asking for the same subject stays
+  on the same side of the limit.  (``import_analysis`` was documented
+  as a pure counter until PR #390 metered it via ``admit()``; ``check``
+  reading the never-written counter row was the "3 reviews left
+  forever" bug.)
 
 ``period_key`` is a UTC calendar bucket rendered by the (next-subtask)
 service layer: ``YYYY-MM-DD`` for daily metrics, ``YYYY-MM`` for
