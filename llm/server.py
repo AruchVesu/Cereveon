@@ -1249,6 +1249,12 @@ async def live_move(
     # error the route.
     tier = entitlements.admit(db, player, entitlements.METRIC_COACHED_GAME, req.game_id)
 
+    # Same connection-release as /chat: admit() commits only when it
+    # WRITES a marker (a game's first move) — on the common already-
+    # admitted path the read transaction would otherwise hold the pooled
+    # connection across the LLM call below.
+    db.commit()
+
     result = await asyncio.to_thread(
         generate_live_reply,
         req.fen,
@@ -1386,8 +1392,19 @@ def engine_eval(
         if white_score.is_mate():
             mate_in = white_score.mate() or 0
             # Convention matches the rest of the codebase: ±10000 for
-            # mate, signed by side (positive = White mates).
-            score_cp = 10000 if mate_in > 0 else -10000
+            # mate, signed by side (positive = White mates).  ``mate 0``
+            # (the position IS checkmate) needs the board: python-chess
+            # collapses both directions to ``.mate() == 0`` (MateGiven vs
+            # Mate(-0)), destroying the winner's sign — the same hazard
+            # extract_engine_signal._terminal_mate_winner() re-derives
+            # around (2026-06-19 incident).  In a checkmate position the
+            # side to move is the LOSER.
+            if mate_in > 0:
+                score_cp = 10000
+            elif mate_in < 0:
+                score_cp = -10000
+            else:
+                score_cp = -10000 if board.turn == chess.WHITE else 10000
         else:
             score_cp = int(white_score.score(mate_score=10000) or 0)
 
@@ -1811,6 +1828,14 @@ async def chat(
     # clients still send them); they are ignored at this layer.
     derived_profile = _derive_player_profile(player)
     derived_past_mistakes = _derive_past_mistakes(player)
+    # Release the pooled DB connection before the multi-second engine +
+    # DeepSeek work below: an open (even read-only) transaction keeps the
+    # connection checked out for the whole 15-45 s LLM call, and ~15
+    # concurrent slow chats per worker exhaust the default pool for EVERY
+    # authenticated route.  Nothing is pending here (check() is read-only,
+    # rotation commits on its own session); ORM attributes touched later
+    # (record(), save_exchange) lazy-reload on a fresh transaction.
+    db.commit()
     stockfish_json = await _chat_stockfish_json(req.fen)
 
     turns = [_ChatPipelineTurn(role=t.role, content=t.content) for t in req.messages]

@@ -246,10 +246,17 @@ def test_forbid_after_emission_recovers_buffered(monkeypatch):
     # then trips the invented-tactic gate on the bare noun "sacrifice" —
     # the exact prod trip from the 2026-07-09 report.  Attempt 2 is clean,
     # so the terminal must be StreamRecovered with the FULL clean reply.
+    #
+    # The clean prefix MUST exceed _LOOKAHEAD_WORDS so at least one word
+    # clears the emit boundary before "sacrifice" arrives — otherwise the
+    # violation is caught pre-emission and the retry streams live
+    # (StreamDone), which is test_forbid_before_emission_retries_live's
+    # case.  Kept comfortably above the current lookahead (10).
     bad = _words(
-        "Knowing", "when", "to", "give", "up", "material", "matters,",
-        "and", "a", "sacrifice",
+        "Knowing", "when", "to", "give", "up", "material", "in", "a",
+        "tough", "spot", "matters,", "and", "sometimes", "a", "sacrifice",
     )
+    assert len(bad) > csp._LOOKAHEAD_WORDS + 1, "prefix must clear the lookahead to emit first"
     fake = _fake_stream_sequence(bad, _CLEAN_RETRY_REPLY)
     chunks, terminal = _drain_events(_FEN, fake, monkeypatch)
     assert isinstance(terminal, StreamRecovered), terminal
@@ -346,3 +353,16 @@ def test_firewall_block_never_retries(monkeypatch):
     assert terminal.reason == "forbid"
     assert fake.calls["n"] == 1, "firewall blocks must not be retried"
     assert "instructed" not in "".join(chunks).lower()
+
+
+def test_lookahead_covers_longest_per_token_pattern():
+    """The per-token FORBID gate runs BOTH the Mode-2 lexical rules
+    (longest phrase: 3 words) and the output firewall, whose longest
+    multi-word pattern spans ~8 whitespace words ("as an AI language
+    model without any restrictions", ``output_firewall._CAT_B``).  The
+    emit hold-back must be at least that long, or the leading words of
+    a firewall phrase are already on the wire when the gate fires —
+    breaching the "no forbidden content is ever emitted" invariant this
+    module's docstring promises.  Do NOT lower this without
+    re-measuring every pattern set the per-token gate runs."""
+    assert csp._LOOKAHEAD_WORDS >= 10

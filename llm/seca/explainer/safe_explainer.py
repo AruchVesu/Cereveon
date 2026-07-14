@@ -35,8 +35,14 @@ class SafeExplainer:
 
     _QUALITY_MESSAGES: dict[str, dict[str, str]] = {
         "best": {
-            "beginner": "That was the best move — well played!",
-            "intermediate": "That was the best move.",
+            # "best move" is a FORBIDDEN_PATTERNS bigram (`\bbest move\b`,
+            # PR #284) — the advanced-style /live/move deterministic hint
+            # embeds these strings verbatim, and the boundary re-validator
+            # 500s on a lexical hit (the PR #131/#132 parity class).  Keep
+            # every entry clear of the Mode-2 lexical gate; the sweep in
+            # test_live_move_pipeline.py::TestFallbackGateSafetySweep pins it.
+            "beginner": "That was the strongest choice — well played!",
+            "intermediate": "That was the strongest choice.",
             "advanced": "Excellent move — a top continuation.",
         },
         "excellent": {

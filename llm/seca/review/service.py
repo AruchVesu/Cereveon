@@ -344,6 +344,16 @@ def _run_engine_stage(
             engine_pool,
             result=event.result,
             movetime_ms=REVIEW_MOVETIME_MS,
+            # Imported rows KNOW the player's side — pass it so drawn
+            # games don't fall into _infer_player_color's White default
+            # (which made the review show the OPPONENT's accuracy and
+            # blunder counts for a draw played as Black).  Keeps
+            # analysis.player_color consistent with _player_is_white.
+            player_color=(
+                chess.WHITE
+                if event.player_color == "white"
+                else chess.BLACK if event.player_color == "black" else None
+            ),
         )
     except (RuntimeError, ValueError) as exc:
         _fail(db, review, f"engine analysis failed: {exc}")

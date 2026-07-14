@@ -69,10 +69,16 @@ _RETRY_DELAY_SECONDS = _CHAT_RETRY_DELAY_SECONDS
 
 # Hold the last N whitespace-delimited words back from emission until enough
 # following context proves they are not the start of a forbidden phrase.
-# The longest forbidden phrase today is 3 words ("with perfect play",
-# "mate in 3", "the engine wants", "lack of planning"); 5 leaves margin.
-# If a longer forbidden phrase is ever added, bump this.
-_LOOKAHEAD_WORDS = 5
+# The longest Mode-2 forbidden phrase today is 3 words ("with perfect
+# play", "mate in 3", "the engine wants", "lack of planning") — but
+# ``_validate_forbid`` ALSO runs the output firewall per token, whose
+# longest multi-word pattern spans ~8 whitespace words ("as an AI
+# language model without any restrictions", ``output_firewall._CAT_B``).
+# The hold-back must cover the LONGEST pattern any per-token gate can
+# match, or its leading words are already emitted when the gate fires.
+# 10 = 8 + margin.  If a longer forbidden phrase/pattern is ever added,
+# bump this (pinned by test_chat_stream lookahead-width test).
+_LOOKAHEAD_WORDS = 10
 
 try:
     from llm.seca.coach.explain_pipeline import call_llm_stream as _call_llm_stream  # type: ignore[import]
