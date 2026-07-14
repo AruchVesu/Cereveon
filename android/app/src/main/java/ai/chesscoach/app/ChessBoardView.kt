@@ -47,6 +47,11 @@ class ChessBoardView @JvmOverloads constructor(
     var onMovePlayed: ((Int, Int, Int, Int) -> Unit)? = null
     var coachListener: ((String) -> Unit)? = null
     var promotionListener: ((Int, Int) -> Unit)? = null
+
+    // Set for the duration of an AI promotion move so executeMove promotes
+    // the pawn inline (to this piece) instead of firing promotionListener,
+    // which is the human-only dialog.  Null on every human move.
+    private var aiPromotionPiece: Char? = null
     /** Emits a structured [QuickCoachUpdate] after each AI move. */
     var quickCoachListener: ((QuickCoachUpdate) -> Unit)? = null
     /**
@@ -296,7 +301,7 @@ class ChessBoardView @JvmOverloads constructor(
      * ('.' if nothing was captured or the move was rejected).
      * The caller (ChessViewModel) uses this to build the Quick Coach update.
      */
-    fun applyAIMove(fr: Int, fc: Int, tr: Int, tc: Int): Char {
+    fun applyAIMove(fr: Int, fc: Int, tr: Int, tc: Int, promo: Char = ' '): Char {
         if (fr !in 0..7 || fc !in 0..7 || tr !in 0..7 || tc !in 0..7) {
             Log.e("CHESS_BOARD", "AI Move out of bounds: $fr,$fc -> $tr,$tc")
             return '.'
@@ -308,7 +313,24 @@ class ChessBoardView @JvmOverloads constructor(
         }
 
         val capturedPiece = board[tr][tc]
-        executeMove(fr, fc, tr, tc)
+        // The AI applies its own promotion choice inline: executeMove
+        // consults aiPromotionPiece so the pawn is promoted directly and
+        // the HUMAN promotion dialog is NOT fired for the engine's move
+        // (which would otherwise ask the human to choose a piece for the
+        // AI, double-flip whiteToMove, and skip the human's turn).
+        // Default to Queen if the engine somehow reported a promotion
+        // rank without a piece — never leave a pawn stranded on rank 1/8.
+        val isPromotion = board[fr][fc].lowercaseChar() == 'p' && (tr == 0 || tr == 7)
+        aiPromotionPiece = if (isPromotion) promo.takeIf { it.isLetter() } ?: 'Q' else null
+        // try/finally so the flag can never leak into a later HUMAN
+        // promotion (which would silently auto-apply this piece instead of
+        // showing the picker), even if executeMove is one day changed to
+        // throw — today it cannot, the move is already legality-checked.
+        try {
+            executeMove(fr, fc, tr, tc)
+        } finally {
+            aiPromotionPiece = null
+        }
         whiteToMove = !whiteToMove
         checkAndRecordGameOver()
         invalidate()
@@ -393,6 +415,12 @@ class ChessBoardView @JvmOverloads constructor(
     fun promotePawn(r: Int, c: Int, to: Char) {
         board[r][c] = if (board[r][c].isUpperCase()) to.uppercaseChar() else to.lowercaseChar()
         whiteToMove = !whiteToMove
+        // A promotion can itself be the game-ending move (promote to a
+        // queen that delivers mate, or a stalemating under-promotion).
+        // Without this the game stays "live", the mating side never sees
+        // a result, and the caller would dispatch an AI reply into a
+        // finished position.  iOS's promote(at:to:) does the same.
+        checkAndRecordGameOver()
         invalidate()
     }
 
@@ -539,7 +567,17 @@ class ChessBoardView @JvmOverloads constructor(
         enPassantTarget = if (piece.lowercaseChar() == 'p' && abs(tr - sr) == 2) (sr + tr) / 2 to sc else null
         lastMoveFrom = sr to sc; lastMoveTo = tr to tc
         arrows.clear()
-        if (piece.lowercaseChar() == 'p' && (tr == 0 || tr == 7)) promotionListener?.invoke(tr, tc)
+        if (piece.lowercaseChar() == 'p' && (tr == 0 || tr == 7)) {
+            val aiPromo = aiPromotionPiece
+            if (aiPromo != null) {
+                // Engine move: promote inline to the AI's chosen piece,
+                // matching the pawn's colour case.  No dialog.
+                board[tr][tc] = if (piece.isUpperCase()) aiPromo.uppercaseChar() else aiPromo.lowercaseChar()
+            } else {
+                // Human move: defer to the UI to pick a piece.
+                promotionListener?.invoke(tr, tc)
+            }
+        }
         invalidate()
     }
 

@@ -107,7 +107,7 @@ class ChessViewModelHumanMoveCoachTest {
                     else -> aiAfterFen
                 }
             },
-            applyAIMove = { _, _, _, _ -> capturedPiece },
+            applyAIMove = { _, _, _, _, _ -> capturedPiece },
         )
         scheduler.advanceUntilIdle()
     }
@@ -252,7 +252,7 @@ class ChessViewModelHumanMoveCoachTest {
             fr = 6, fc = 4, tr = 4, tc = 4,
             applyHumanMove = { MoveResult.FAILED },
             exportFEN = { "startpos" },
-            applyAIMove = { _, _, _, _ -> '.' },
+            applyAIMove = { _, _, _, _, _ -> '.' },
         )
         scheduler.advanceUntilIdle()
         vm.viewModelScope.cancel(); scheduler.advanceUntilIdle()
@@ -348,7 +348,7 @@ class ChessViewModelHumanMoveCoachTest {
                 fenCallCount2++
                 "startpos"
             },
-            applyAIMove = { _, _, _, _ -> '.' },
+            applyAIMove = { _, _, _, _, _ -> '.' },
         )
         scheduler.advanceUntilIdle()
         vm.viewModelScope.cancel(); scheduler.advanceUntilIdle()

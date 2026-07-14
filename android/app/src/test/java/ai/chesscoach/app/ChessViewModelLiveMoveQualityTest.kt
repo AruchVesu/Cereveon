@@ -73,7 +73,7 @@ class ChessViewModelLiveMoveQualityTest {
             fr = 6, fc = 4, tr = 4, tc = 4,
             applyHumanMove = { MoveResult.SUCCESS },
             exportFEN = { "startpos" },
-            applyAIMove = { _, _, _, _ -> capturedPiece },
+            applyAIMove = { _, _, _, _, _ -> capturedPiece },
         )
         scheduler.advanceUntilIdle()
     }

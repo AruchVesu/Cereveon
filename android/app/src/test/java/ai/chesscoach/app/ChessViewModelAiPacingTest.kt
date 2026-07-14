@@ -59,7 +59,7 @@ class ChessViewModelAiPacingTest {
     private fun playHumanMove(
         vm: ChessViewModel,
         applyHumanMove: () -> MoveResult = { MoveResult.SUCCESS },
-        applyAIMove: (Int, Int, Int, Int) -> Char,
+        applyAIMove: (Int, Int, Int, Int, Char) -> Char,
     ) {
         vm.onHumanMove(
             fr = 6, fc = 4, tr = 4, tc = 4,
@@ -78,7 +78,7 @@ class ChessViewModelAiPacingTest {
             aiThinkPacingMillis = { 2_500L },
         )
 
-        playHumanMove(vm) { _, _, _, _ -> aiMoveApplied = true; '.' }
+        playHumanMove(vm) { _, _, _, _, _ -> aiMoveApplied = true; '.' }
         scheduler.runCurrent()
 
         // The engine has already answered (it is instant), but the reply
@@ -110,7 +110,7 @@ class ChessViewModelAiPacingTest {
             aiThinkPacingMillis = { 2_500L },
         )
 
-        playHumanMove(vm) { _, _, _, _ -> aiMoveApplied = true; '.' }
+        playHumanMove(vm) { _, _, _, _, _ -> aiMoveApplied = true; '.' }
         scheduler.runCurrent()
 
         // Mid-window reset: cancels aiJob, so the cancellable delay() dies
@@ -141,13 +141,13 @@ class ChessViewModelAiPacingTest {
             aiThinkPacingMillis = { 600_000L },
         )
 
-        playHumanMove(vm) { _, _, _, _ -> '.' }
+        playHumanMove(vm) { _, _, _, _, _ -> '.' }
         scheduler.runCurrent()
 
         playHumanMove(
             vm,
             applyHumanMove = { secondHumanMoveAccepted = true; MoveResult.SUCCESS },
-        ) { _, _, _, _ -> '.' }
+        ) { _, _, _, _, _ -> '.' }
         scheduler.runCurrent()
 
         assertTrue(

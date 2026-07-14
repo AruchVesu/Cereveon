@@ -66,22 +66,27 @@ Java_ai_chesscoach_app_ChessNative_getBestMove(
         return nullptr;
     }
 
-    // Get the constructor: AIMove(Int, Int, Int, Int)
-    jmethodID ctor = env->GetMethodID(moveCls, "<init>", "(IIII)V");
+    // Get the constructor: AIMove(Int, Int, Int, Int, Int).  The 5th arg
+    // carries the promotion piece: m.promo is 'Q'/'R'/'B'/'N' (else 0).
+    // Dropping it (the old (IIII)V ctor) left the engine's promoting pawn
+    // un-promoted on the back rank AND misfired the human promotion
+    // dialog for the AI's move — see AIMove.promo / applyAIMove.
+    jmethodID ctor = env->GetMethodID(moveCls, "<init>", "(IIIII)V");
     if (!ctor) {
         LOGE("Could not find AIMove constructor");
         return nullptr;
     }
 
     // Create the object using move coordinates from the engine
-    // Engine uses fromX, fromY, toX, toY
+    // Engine uses fromX, fromY, toX, toY (+ promo)
     return env->NewObject(
         moveCls,
         ctor,
         m.fromX,
         m.fromY,
         m.toX,
-        m.toY
+        m.toY,
+        static_cast<jint>(m.promo)
     );
 }
 
@@ -108,10 +113,11 @@ Java_ai_chesscoach_app_ChessNative_getBestMoveWithStrength(
     jclass moveCls = env->FindClass("ai/chesscoach/app/AIMove");
     if (!moveCls) { LOGE("Could not find AIMove class"); return nullptr; }
 
-    jmethodID ctor = env->GetMethodID(moveCls, "<init>", "(IIII)V");
+    jmethodID ctor = env->GetMethodID(moveCls, "<init>", "(IIIII)V");
     if (!ctor) { LOGE("Could not find AIMove constructor"); return nullptr; }
 
-    return env->NewObject(moveCls, ctor, m.fromX, m.fromY, m.toX, m.toY);
+    return env->NewObject(moveCls, ctor, m.fromX, m.fromY, m.toX, m.toY,
+                          static_cast<jint>(m.promo));
 }
 
 } // extern "C"

@@ -72,7 +72,7 @@ class AdaptiveEngineWiringTest {
             fr = 6, fc = 4, tr = 4, tc = 4,
             applyHumanMove = { MoveResult.SUCCESS },
             exportFEN = { startFen },
-            applyAIMove = { _, _, _, _ -> '.' },
+            applyAIMove = { _, _, _, _, _ -> '.' },
         )
     }
 

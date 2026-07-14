@@ -293,8 +293,8 @@ class MainActivity : AppCompatActivity() {
                     exportFEN = {
                         chessBoard.exportFEN()
                     },
-                    applyAIMove = { afr, afc, atr, atc ->
-                        chessBoard.applyAIMove(afr, afc, atr, atc).also {
+                    applyAIMove = { afr, afc, atr, atc, apromo ->
+                        chessBoard.applyAIMove(afr, afc, atr, atc, apromo).also {
                             updateChapterHeader()
                             persistInProgressSnapshot()
                         }
@@ -1468,7 +1468,9 @@ class MainActivity : AppCompatActivity() {
             chessBoard.promotePawn(r, c, piece)
             viewModel.onPromotionFinished(
                 exportFEN = { chessBoard.exportFEN() },
-                applyAIMove = { afr, afc, atr, atc -> chessBoard.applyAIMove(afr, afc, atr, atc) },
+                applyAIMove = { afr, afc, atr, atc, apromo ->
+                    chessBoard.applyAIMove(afr, afc, atr, atc, apromo)
+                },
                 consumeGameOver = { chessBoard.consumePendingGameOver() },
             )
             dialog.dismiss()

@@ -82,7 +82,7 @@ class ChessViewModelPgnTest {
             fr = fr, fc = fc, tr = tr, tc = tc,
             applyHumanMove = { MoveResult.SUCCESS },
             exportFEN = { "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b" },
-            applyAIMove = { _, _, _, _ -> '.' },
+            applyAIMove = { _, _, _, _, _ -> '.' },
         )
         advanceUntilIdle()
     }
@@ -156,7 +156,7 @@ class ChessViewModelPgnTest {
             fr = 6, fc = 4, tr = 4, tc = 4, // e2e4
             applyHumanMove = { MoveResult.SUCCESS },
             exportFEN = { "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b" },
-            applyAIMove = { _, _, _, _ -> '.' },
+            applyAIMove = { _, _, _, _, _ -> '.' },
             consumeGameOver = { GameResult.WHITE_WINS }, // this move ends the game
         )
         advanceUntilIdle()
@@ -173,7 +173,7 @@ class ChessViewModelPgnTest {
             fr = 6, fc = 4, tr = 4, tc = 4,
             applyHumanMove = { MoveResult.SUCCESS },
             exportFEN = { "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b" },
-            applyAIMove = { _, _, _, _ -> aiMoveApplied = true; '.' },
+            applyAIMove = { _, _, _, _, _ -> aiMoveApplied = true; '.' },
             consumeGameOver = { GameResult.WHITE_WINS },
         )
         advanceUntilIdle()
@@ -193,7 +193,7 @@ class ChessViewModelPgnTest {
             fr = 6, fc = 4, tr = 4, tc = 4,
             applyHumanMove = { MoveResult.FAILED },
             exportFEN = { "" },
-            applyAIMove = { _, _, _, _ -> '.' },
+            applyAIMove = { _, _, _, _, _ -> '.' },
         )
         advanceUntilIdle()
         assertEquals("(no moves)", viewModel.exportPGN())

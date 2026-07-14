@@ -101,7 +101,7 @@ class ChessViewModelEngineEvalTest {
                 // applyHumanMove to capture the pre-move FEN for move quality.
                 if (fenCallCount <= 3) fenBeforeAI else fenAfterAI
             },
-            applyAIMove = { _, _, _, _ -> capturedPiece },
+            applyAIMove = { _, _, _, _, _ -> capturedPiece },
         )
         scheduler.advanceUntilIdle()
     }
@@ -147,7 +147,7 @@ class ChessViewModelEngineEvalTest {
             fr = 6, fc = 4, tr = 4, tc = 4,
             applyHumanMove = { MoveResult.FAILED },
             exportFEN = { "startpos" },
-            applyAIMove = { _, _, _, _ -> '.' },
+            applyAIMove = { _, _, _, _, _ -> '.' },
         )
         scheduler.advanceUntilIdle()
         vm.viewModelScope.cancel(); scheduler.advanceUntilIdle()
