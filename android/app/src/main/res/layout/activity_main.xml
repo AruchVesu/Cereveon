@@ -119,49 +119,68 @@
         </FrameLayout>
 
         <!-- Review-mode move navigation. Hidden during play; shown when a
-             past game is opened from history for replay + live coaching. -->
+             past game is opened from history for replay + live coaching.
+             Vertical: the ◀ / label / ▶ stepper row, then the full-width
+             "Coach review" button on its own row — three pills plus the
+             move label do not fit side by side (the label collapsed to an
+             unreadable sliver), and the review CTA reads better with the
+             prominence of its own line anyway. -->
         <LinearLayout
             android:id="@+id/reviewNavBar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
+            android:orientation="vertical"
             android:visibility="gone"
             android:paddingStart="@dimen/atrium_space_24"
             android:paddingEnd="@dimen/atrium_space_24"
             android:paddingTop="@dimen/atrium_space_8"
             android:paddingBottom="@dimen/atrium_space_8">
 
-            <Button
-                android:id="@+id/btnReviewPrev"
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="◀" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
 
-            <TextView
-                android:id="@+id/txtReviewMove"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:gravity="center"
-                android:textAppearance="@style/Atrium.Kicker"
-                android:text="" />
+                <Button
+                    android:id="@+id/btnReviewPrev"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="◀" />
+
+                <!-- Single line with auto-shrink so long SAN suffixes can
+                     never wrap the mono kicker into a letter stack. -->
+                <TextView
+                    android:id="@+id/txtReviewMove"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:textAppearance="@style/Atrium.Kicker"
+                    android:maxLines="1"
+                    app:autoSizeTextType="uniform"
+                    app:autoSizeMinTextSize="8sp"
+                    app:autoSizeMaxTextSize="12sp"
+                    app:autoSizeStepGranularity="1sp"
+                    android:text="" />
+
+                <Button
+                    android:id="@+id/btnReviewNext"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="▶" />
+
+            </LinearLayout>
 
             <!-- Post-game AI review — visible only when the replayed game
                  was imported from Lichess (MainActivity toggles it). -->
             <Button
                 android:id="@+id/btnCoachReview"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="@dimen/atrium_space_8"
+                android:layout_marginTop="@dimen/atrium_space_4"
                 android:visibility="gone"
-                android:text="✦ REVIEW" />
-
-            <Button
-                android:id="@+id/btnReviewNext"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="▶" />
+                android:text="✦ COACH REVIEW" />
 
         </LinearLayout>
 
