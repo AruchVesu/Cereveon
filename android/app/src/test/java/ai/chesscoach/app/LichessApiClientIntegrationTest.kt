@@ -42,6 +42,13 @@ import org.junit.Test
  * IMPORT_QUERY_CUSTOM    custom max_games / rated propagate to the query string.
  * IMPORT_COUNTS_PARSED   inserted/skipped_duplicate/skipped_invalid parse cleanly.
  *
+ * STARTIMPORT_202_IS_SUCCESS  v2 202 Accepted parses as Success (regression:
+ *                             default successCodes={200} mapped every
+ *                             successful import to HttpError(202)).
+ * STARTIMPORT_200_STILL_SUCCESS  200 stays a success alongside 202.
+ * STARTIMPORT_HTTP_401        auth failure still surfaces as HttpError(401).
+ * STARTIMPORT_202_ROTATES     X-Auth-Token on the 202 reaches the tokenSink.
+ *
  * UNLINK_METHOD          DELETE /lichess/link uses HTTP DELETE.
  * UNLINK_TRUE            `{"unlinked": true}` round-trips.
  * UNLINK_FALSE           `{"unlinked": false}` round-trips (idempotent).
@@ -260,6 +267,57 @@ class LichessApiClientIntegrationTest {
     }
 
     // ===========================================================================
+    // startImport (v2 — async job, HTTP 202)
+    // ===========================================================================
+
+    @Test
+    fun `STARTIMPORT_202_IS_SUCCESS - the v2 Accepted response parses as Success`() = runBlocking {
+        // REGRESSION PIN: the v2 endpoint answers 202 + LichessImportAccepted
+        // (startImport's own KDoc says so), but BaseHttpClient's default
+        // successCodes is {200} — so every successful import mapped to
+        // HttpError(202) → the "unknown error" toast, no progress UI, and
+        // the games appearing "mysteriously" later via the job-resume path.
+        server.enqueue(MockResponse().setResponseCode(202).setBody(START_IMPORT_ACCEPTED_BODY))
+        val result = client().startImport("tok")
+        assertTrue("expected Success, got $result", result is ApiResult.Success<*>)
+        val data = (result as ApiResult.Success<*>).data as LichessImportAccepted
+        assertEquals("job-123", data.jobId)
+        assertEquals("queued", data.status)
+        assertEquals(50, data.targetMaxGames)
+    }
+
+    @Test
+    fun `STARTIMPORT_200_STILL_SUCCESS - a 200 body keeps parsing (idempotent-replay shape)`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(START_IMPORT_ACCEPTED_BODY))
+        val result = client().startImport("tok")
+        assertTrue("expected Success, got $result", result is ApiResult.Success<*>)
+        assertEquals("job-123", ((result as ApiResult.Success<*>).data as LichessImportAccepted).jobId)
+    }
+
+    @Test
+    fun `STARTIMPORT_HTTP_401 - auth failures still surface as HttpError`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"detail":"expired"}"""))
+        val result = client().startImport("tok")
+        assertTrue(result is ApiResult.HttpError)
+        assertEquals(401, (result as ApiResult.HttpError).code)
+    }
+
+    @Test
+    fun `STARTIMPORT_202_ROTATES - X-Auth-Token on the 202 reaches the tokenSink`() = runBlocking {
+        // Rotation rides refreshOnSuccess(): now that 202 IS a success,
+        // the rotated JWT must be forwarded exactly like on a 200.
+        var rotated: String? = null
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(202)
+                .setHeader("X-Auth-Token", "fresh-jwt")
+                .setBody(START_IMPORT_ACCEPTED_BODY)
+        )
+        client(tokenSink = { rotated = it }).startImport("tok")
+        assertEquals("fresh-jwt", rotated)
+    }
+
+    // ===========================================================================
     // Unlink
     // ===========================================================================
 
@@ -311,6 +369,21 @@ class LichessApiClientIntegrationTest {
               "skipped_duplicate": 0,
               "skipped_invalid": 0,
               "last_imported_at": "2026-05-13T08:28:57.755000"
+            }
+        """
+
+        // The v2 202 payload — llm/seca/lichess/router.py startImport
+        // (docs/API_CONTRACTS.md §29, async import job).
+        private const val START_IMPORT_ACCEPTED_BODY = """
+            {
+              "job_id": "job-123",
+              "status": "queued",
+              "inserted": 0,
+              "skipped_duplicate": 0,
+              "skipped_invalid": 0,
+              "target_max_games": 50,
+              "created_at": "2026-07-14T20:00:00Z",
+              "updated_at": "2026-07-14T20:00:00Z"
             }
         """
     }
