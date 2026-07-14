@@ -9,14 +9,30 @@ enum class MoveResult { SUCCESS, PROMOTION, FAILED }
 /**
  * Kotlin AIMove model
  * Used by JNI to return coordinates.
+ *
+ * [promo] is the ASCII code of the promotion piece the engine chose
+ * ('Q'/'R'/'B'/'N'), or 0 when the move is not a promotion.  The JNI
+ * ctor is looked up as ``(IIIII)V`` (native_chess_engine.cpp) — the
+ * default keeps host-JVM construction (tests) ergonomic without the
+ * native side.  [promoChar] decodes it for the board layer; space
+ * means "no promotion".
  */
 data class AIMove(
     val fr: Int,
     val fc: Int,
     val tr: Int,
-    val tc: Int
+    val tc: Int,
+    val promo: Int = 0,
 ) {
     fun isValid() = fr >= 0
+
+    /** The chosen promotion piece as an uppercase letter, or ' ' if none.
+     *  The engine emits uppercase, but we normalise defensively so a
+     *  lowercase source can never strand a pawn on the back rank. */
+    fun promoChar(): Char {
+        val c = promo.toChar().uppercaseChar()
+        return if (c in "QRBN") c else ' '
+    }
 }
 
 /**

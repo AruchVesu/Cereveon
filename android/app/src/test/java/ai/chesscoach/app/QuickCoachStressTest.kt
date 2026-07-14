@@ -99,7 +99,7 @@ class QuickCoachStressTest {
             fr = 6, fc = 4, tr = 4, tc = 4,
             applyHumanMove = { MoveResult.SUCCESS },
             exportFEN = { "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1" },
-            applyAIMove = { _, _, _, _ -> aiApplied.set(true); '.' }
+            applyAIMove = { _, _, _, _, _ -> aiApplied.set(true); '.' }
         )
         assertTrue("AI move must be applied after a successful human move",
             waitFor { aiApplied.get() })
@@ -111,13 +111,13 @@ class QuickCoachStressTest {
             fr = 1, fc = 0, tr = 0, tc = 0,
             applyHumanMove = { MoveResult.PROMOTION },
             exportFEN = { "8/P7/8/8/8/8/8/8 w - - 0 1" },
-            applyAIMove = { _, _, _, _ -> '.' }
+            applyAIMove = { _, _, _, _, _ -> '.' }
         )
 
         val aiApplied = AtomicBoolean(false)
         viewModel.onPromotionFinished(
             exportFEN = { "Q7/8/8/8/8/8/8/8 b - - 0 1" },
-            applyAIMove = { _, _, _, _ -> aiApplied.set(true); '.' }
+            applyAIMove = { _, _, _, _, _ -> aiApplied.set(true); '.' }
         )
         assertTrue("onPromotionFinished must trigger AI move",
             waitFor { aiApplied.get() })
@@ -132,7 +132,7 @@ class QuickCoachStressTest {
                 fr = 6, fc = 4, tr = 4, tc = 4,
                 applyHumanMove = { MoveResult.SUCCESS },
                 exportFEN = { "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1" },
-                applyAIMove = { _, _, _, _ -> '.' }
+                applyAIMove = { _, _, _, _, _ -> '.' }
             )
             Thread.sleep(500)
         } catch (e: Exception) {
@@ -154,7 +154,7 @@ class QuickCoachStressTest {
                 fr = 6, fc = 4, tr = 4, tc = 4,
                 applyHumanMove = { MoveResult.SUCCESS },
                 exportFEN = { "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1" },
-                applyAIMove = { _, _, _, _ -> aiApplied.set(true); '.' }
+                applyAIMove = { _, _, _, _, _ -> aiApplied.set(true); '.' }
             )
             if (waitFor { aiApplied.get() }) successCycles++
             vm.reset()
@@ -194,7 +194,7 @@ class QuickCoachStressTest {
             fr = 6, fc = 4, tr = 4, tc = 4,
             applyHumanMove = { MoveResult.SUCCESS },
             exportFEN = { "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1" },
-            applyAIMove = { _, _, _, _ -> aiApplied.set(true); '.' }
+            applyAIMove = { _, _, _, _, _ -> aiApplied.set(true); '.' }
         )
 
         // Block until the engine is running — guarantees requestId=0 is live inside the coroutine
@@ -218,7 +218,7 @@ class QuickCoachStressTest {
             fr = 6, fc = 4, tr = 3, tc = 4,
             applyHumanMove = { MoveResult.FAILED },
             exportFEN = { "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
-            applyAIMove = { _, _, _, _ -> aiCalled.set(true); '.' }
+            applyAIMove = { _, _, _, _, _ -> aiCalled.set(true); '.' }
         )
         Thread.sleep(200)
         assertFalse("FAILED move must not trigger AI", aiCalled.get())
@@ -231,7 +231,7 @@ class QuickCoachStressTest {
             fr = 1, fc = 0, tr = 0, tc = 0,
             applyHumanMove = { MoveResult.PROMOTION },
             exportFEN = { "8/P7/8/8/8/8/8/8 w - - 0 1" },
-            applyAIMove = { _, _, _, _ -> aiCalled.set(true); '.' }
+            applyAIMove = { _, _, _, _, _ -> aiCalled.set(true); '.' }
         )
         Thread.sleep(200)
         assertFalse("PROMOTION pending must not immediately trigger AI", aiCalled.get())

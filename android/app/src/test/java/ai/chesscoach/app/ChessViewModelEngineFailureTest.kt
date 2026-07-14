@@ -80,7 +80,7 @@ class ChessViewModelEngineFailureTest {
             fr = 6, fc = 4, tr = 4, tc = 4,
             applyHumanMove = { MoveResult.SUCCESS },
             exportFEN = { "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b" },
-            applyAIMove = { _, _, _, _ -> aiMoveApplied = true; '.' }
+            applyAIMove = { _, _, _, _, _ -> aiMoveApplied = true; '.' }
         )
 
         advanceUntilIdle()
@@ -129,7 +129,7 @@ class ChessViewModelEngineFailureTest {
             fr = 6, fc = 4, tr = 4, tc = 4,
             applyHumanMove = { MoveResult.SUCCESS },
             exportFEN = { "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b" },
-            applyAIMove = { _, _, _, _ -> '.' }
+            applyAIMove = { _, _, _, _, _ -> '.' }
         )
         advanceUntilIdle()
 
@@ -139,7 +139,7 @@ class ChessViewModelEngineFailureTest {
             fr = 6, fc = 3, tr = 4, tc = 3,
             applyHumanMove = { secondHumanMoveApplied = true; MoveResult.SUCCESS },
             exportFEN = { "rnbqkbnr/pppppppp/8/8/3PP3/8/PPP2PPP/RNBQKBNR b" },
-            applyAIMove = { _, _, _, _ -> '.' }
+            applyAIMove = { _, _, _, _, _ -> '.' }
         )
         advanceUntilIdle()
 
@@ -169,7 +169,7 @@ class ChessViewModelEngineFailureTest {
             fr = 6, fc = 4, tr = 4, tc = 4,
             applyHumanMove = { MoveResult.SUCCESS },
             exportFEN = { "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b" },
-            applyAIMove = { _, _, _, _ -> aiMoveApplied = true; '.' }
+            applyAIMove = { _, _, _, _, _ -> aiMoveApplied = true; '.' }
         )
 
         advanceUntilIdle()

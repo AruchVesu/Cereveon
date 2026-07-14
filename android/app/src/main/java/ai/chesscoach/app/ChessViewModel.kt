@@ -152,9 +152,10 @@ class ChessViewModel(
 $moves"""
     }
 
-    private fun uciFromCoords(fr: Int, fc: Int, tr: Int, tc: Int): String {
+    private fun uciFromCoords(fr: Int, fc: Int, tr: Int, tc: Int, promo: Char = ' '): String {
         val files = "abcdefgh"
-        return "${files[fc]}${8 - fr}${files[tc]}${8 - tr}"
+        val suffix = if (promo.isLetter()) promo.lowercaseChar().toString() else ""
+        return "${files[fc]}${8 - fr}${files[tc]}${8 - tr}$suffix"
     }
 
     private fun assertTurn(expected: Turn) {
@@ -180,7 +181,7 @@ $moves"""
         fr: Int, fc: Int, tr: Int, tc: Int,
         applyHumanMove: () -> MoveResult,
         exportFEN: () -> String,
-        applyAIMove: (Int, Int, Int, Int) -> Char,
+        applyAIMove: (Int, Int, Int, Int, Char) -> Char,
         consumeGameOver: () -> GameResult? = { null },
     ) {
         if (turn != Turn.HUMAN) return
@@ -227,17 +228,27 @@ $moves"""
 
     fun onPromotionFinished(
         exportFEN: () -> String,
-        applyAIMove: (Int, Int, Int, Int) -> Char,
+        applyAIMove: (Int, Int, Int, Int, Char) -> Char,
         consumeGameOver: () -> GameResult? = { null },
     ) {
         if (turn != Turn.HUMAN) return
+        // The human's promotion may itself have ended the game (a queening
+        // mate or a stalemating under-promotion): promotePawn now records
+        // that, so consume it BEFORE dispatching an AI reply — mirroring
+        // the normal-move path in onHumanMove.  Without this the AI would
+        // be asked to move in a finished position.
+        val over = consumeGameOver()
+        if (over != null) {
+            onGameOver?.invoke(over)
+            return
+        }
         turn = Turn.AI
         requestAIMove(exportFEN, applyAIMove, consumeGameOver)
     }
 
     private fun requestAIMove(
         exportFEN: () -> String,
-        applyAIMove: (Int, Int, Int, Int) -> Char,
+        applyAIMove: (Int, Int, Int, Int, Char) -> Char,
         consumeGameOver: () -> GameResult?,
     ) {
         if (aiThinking || turn != Turn.AI) return
@@ -308,7 +319,9 @@ $moves"""
                         val captured = processAIMoveResult(move, applyAIMove, consumeGameOver)
                         if (captured != null) {
                             // uci is only valid after isValid() passes — compute here
-                            val uci = move?.let { uciFromCoords(it.fr, it.fc, it.tr, it.tc) } ?: ""
+                            val uci = move?.let {
+                                uciFromCoords(it.fr, it.fc, it.tr, it.tc, it.promoChar())
+                            } ?: ""
                             dispatchEngineEval(captured, uci, exportFEN, requestId)
                         }
                     } else {
@@ -454,7 +467,7 @@ $moves"""
 
     private fun processAIMoveResult(
         move: AIMove?,
-        applyAIMove: (Int, Int, Int, Int) -> Char,
+        applyAIMove: (Int, Int, Int, Int, Char) -> Char,
         consumeGameOver: () -> GameResult?,
     ): Char? {
         if (turn != Turn.AI) return null
@@ -466,8 +479,9 @@ $moves"""
 
         assertTurn(Turn.AI)
         turn = Turn.HUMAN
-        val captured = applyAIMove(move.fr, move.fc, move.tr, move.tc)
-        moveHistory.add(uciFromCoords(move.fr, move.fc, move.tr, move.tc))
+        val promo = move.promoChar()
+        val captured = applyAIMove(move.fr, move.fc, move.tr, move.tc, promo)
+        moveHistory.add(uciFromCoords(move.fr, move.fc, move.tr, move.tc, promo))
         // AI's move recorded — surface a game-ending AI move now that
         // exportPGN() would include it.
         consumeGameOver()?.let { onGameOver?.invoke(it) }
