@@ -240,6 +240,14 @@ class HttpLichessApiClient(
         path = "$IMPORT_PATH?max_games=$maxGames&rated=$rated",
         method = "POST",
         headers = bearerHeader(token),
+        // 202 Accepted IS the v2 success (the KDoc above says so) — but
+        // BaseHttpClient's default successCodes is {200}, so every
+        // successful import used to land in the HttpError(202) branch:
+        // the sheet showed the "unknown error" toast, no progress bar,
+        // and the games "mysteriously" appeared later via the
+        // activeImportJobId resume path.  Same widening the sibling
+        // ReviewApiClient.startReview ships for its own 202 contract.
+        successCodes = setOf(HttpURLConnection.HTTP_OK, HttpURLConnection.HTTP_ACCEPTED),
         onResponse = refreshOnSuccess(),
         parse = { body -> ApiJson.decodeFromString<LichessImportAccepted>(body) },
     )
