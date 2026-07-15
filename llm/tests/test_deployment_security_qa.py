@@ -38,14 +38,13 @@ _SECRET_PATTERNS = [
     re.compile(r'-----BEGIN (?:RSA |EC )?PRIVATE KEY-----'),
 ]
 
-# ``llm/Dockerfile`` was renamed to ``llm/Dockerfile.api`` (see
-# fly-deploy.yml:508 — the docker-images job builds the API image
-# from ``./llm/Dockerfile.api``).  The pre-rename entry was retained
-# here long enough to silently no-op two parametrized tests; the
-# 2026-05-24 fresh debt sweep caught the drift and removed it.
+# The production image is built from ``llm/Dockerfile.api`` (the
+# docker-images job in fly-deploy.yml).  The root ``Dockerfile`` (the Fly
+# edge's Node/Ollama image) was deleted 2026-07-15; its entry is removed
+# here rather than left to skip silently (the silent-skip drift class the
+# 2026-05-24 sweep already cleaned once for the pre-rename llm/Dockerfile).
 _DOCKERFILE_PATHS = [
     _LLM_ROOT / "Dockerfile.api",
-    _REPO_ROOT / "Dockerfile",
 ]
 
 _SOURCE_DIRS_TO_SCAN = [

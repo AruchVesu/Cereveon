@@ -8,7 +8,6 @@
 # a single-purpose contract test.
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace  # pylint: disable=no-name-in-module
 
@@ -32,8 +31,13 @@ def _step_named(job: dict, name: str) -> dict:
     raise AssertionError(f"Step {name!r} not found")
 
 
-def _version_tuple(version: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in version.split("."))
+def _optional_step(job: dict, name: str) -> dict | None:
+    """Like _step_named but returns None instead of raising — for asserting
+    a step is ABSENT (e.g. the removed Fly app-image scan)."""
+    for step in job["steps"]:
+        if step.get("name") == name:
+            return step
+    return None
 
 
 def test_ci_workflow_includes_required_gates():
@@ -41,8 +45,10 @@ def test_ci_workflow_includes_required_gates():
     jobs = workflow["jobs"]
 
     assert workflow["permissions"] == {"contents": "read"}
+    # Single production tier: the Fly.io edge (`APP_IMAGE_NAME: cereveon`,
+    # llm/server.js Ollama prototype) was removed 2026-07-15.  Only the
+    # Hetzner llm-API image remains.
     assert workflow["env"] == {
-        "APP_IMAGE_NAME": "cereveon",
         "API_IMAGE_NAME": "cereveon-llm-api",
     }
     assert workflow["concurrency"] == {
@@ -54,7 +60,6 @@ def test_ci_workflow_includes_required_gates():
         "python-tests",
         "python-quality",
         "dependency-security",
-        "node-security",
         "android-build",
         "compose-validate",
         "docker-images",
@@ -62,12 +67,14 @@ def test_ci_workflow_includes_required_gates():
         "deploy",
         "release",
     }.issubset(jobs)
+    # The Fly edge (node-security audit + fly-deploy) is gone.
+    assert "node-security" not in jobs
+    assert "fly-deploy" not in jobs
     assert set(jobs["docker-images"]["needs"]) == {
         "workflow-lint",
         "python-tests",
         "python-quality",
         "dependency-security",
-        "node-security",
         "android-build",
         "compose-validate",
     }
@@ -87,7 +94,6 @@ def test_ci_workflow_hardens_checkout_and_supply_chain_controls():  # pylint: di
         "python-tests",
         "python-quality",
         "dependency-security",
-        "node-security",
         "android-build",
         "compose-validate",
         "docker-images",
@@ -125,10 +131,6 @@ def test_ci_workflow_hardens_checkout_and_supply_chain_controls():  # pylint: di
         _step_named(jobs["workflow-lint"], "Lint GitHub Actions workflows")["uses"]
         == "raven-actions/actionlint@v2"
     )
-    assert (
-        _step_named(jobs["node-security"], "Audit Node dependencies")["run"]
-        == "npm audit --omit=dev --audit-level=high"
-    )
     docker_job = jobs["docker-images"]
     assert docker_job["permissions"] == {
         "contents": "read",
@@ -136,30 +138,26 @@ def test_ci_workflow_hardens_checkout_and_supply_chain_controls():  # pylint: di
         "id-token": "write",
         "attestations": "write",
     }
+    # Only the Hetzner llm-API image remains (the Fly `app_digest` /
+    # build-app is gone).
     assert docker_job["outputs"] == {
         "image_owner": "${{ steps.prep.outputs.owner }}",
-        "app_digest": "${{ steps.build-app.outputs.digest }}",
         "api_digest": "${{ steps.build-api.outputs.digest }}",
     }
     docker_login = _step_named(docker_job, "Log in to GHCR")
     assert docker_login["with"]["username"] == "${{ github.repository_owner }}"
-
-    build_app = _step_named(docker_job, "Build app image")
-    assert build_app["with"]["provenance"] is False
-    assert build_app["with"]["sbom"] is False
-    assert build_app["with"]["build-args"] == "BUILDDATE=${{ github.run_id }}"
 
     build_api = _step_named(docker_job, "Build llm API image")
     assert build_api["with"]["provenance"] is False
     assert build_api["with"]["sbom"] is False
     assert build_api["with"]["build-args"] == "BUILDDATE=${{ github.run_id }}"
     assert _step_named(docker_job, "Install Cosign")["uses"] == "sigstore/cosign-installer@v3"
+    # One image now → one provenance attestation (was two: app + api).
     assert [
         step["uses"]
         for step in docker_job["steps"]
         if step.get("uses") == "actions/attest-build-provenance@v4"
     ] == [
-        "actions/attest-build-provenance@v4",
         "actions/attest-build-provenance@v4",
     ]
 
@@ -172,26 +170,9 @@ def test_ci_workflow_hardens_checkout_and_supply_chain_controls():  # pylint: di
     image_security_login = _step_named(image_security, "Log in to GHCR")
     assert image_security_login["with"]["username"] == "${{ github.repository_owner }}"
 
-    scan_app = _step_named(image_security, "Scan published app image")
-    assert scan_app["uses"] == "aquasecurity/trivy-action@v0.36.0"
-    assert scan_app["with"]["scan-type"] == "image"
-    assert scan_app["with"]["format"] == "table"
-    assert scan_app["with"]["vuln-type"] == "library"
-    assert scan_app["with"]["severity"] == "CRITICAL"
-    assert scan_app["with"]["ignore-unfixed"] is True
-    assert scan_app["with"]["trivy-config"] == "trivy.yaml"
-    assert scan_app["env"]["TRIVY_CACHE_DIR"] == "${{ runner.temp }}/trivy"
-    assert scan_app["env"]["TRIVY_TIMEOUT"] == "15m"
-    assert scan_app["env"]["TRIVY_USERNAME"] == "${{ github.repository_owner }}"
-
-    sarif_app = _step_named(image_security, "Generate app image SARIF")
-    assert sarif_app["uses"] == "aquasecurity/trivy-action@v0.36.0"
-    assert sarif_app["with"]["format"] == "sarif"
-    assert sarif_app["with"]["exit-code"] == "0"
-    assert sarif_app["with"]["ignore-unfixed"] is False
-    assert sarif_app["with"]["trivy-config"] == "trivy.yaml"
-    assert sarif_app["env"]["TRIVY_SKIP_DB_UPDATE"] == "true"
-    assert sarif_app["env"]["TRIVY_USERNAME"] == "${{ github.repository_owner }}"
+    # The Fly app-image scan (scan_app / sarif_app) was removed with the
+    # edge; only the Hetzner llm-API image is scanned now.
+    assert _optional_step(image_security, "Scan published app image") is None
 
     scan_api = _step_named(image_security, "Scan published llm API image")
     assert scan_api["uses"] == "aquasecurity/trivy-action@v0.36.0"
@@ -327,50 +308,39 @@ def test_dependency_security_audits_ci_requirements():
     )
 
 
-def test_container_images_keep_health_checks_and_non_root_runtime():
-    root_dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    assert "ENV NODE_ENV=production" in root_dockerfile
-    # Build-stage Node bumped to 26-alpine 2026-05-13 (Dependabot bump #73
-    # superseded by manual PR after the structural test had to be updated
-    # in lockstep).  Runtime stage still pinned to nodejs22-debian12 because
-    # the distroless project hasn't published a nodejs26 tag yet — once it
-    # does, bump both lines together.
-    assert "FROM node:26-alpine AS deps" in root_dockerfile
-    assert "FROM gcr.io/distroless/nodejs22-debian12:nonroot" in root_dockerfile
-    assert "RUN apk upgrade --no-cache" in root_dockerfile
-    assert "COPY --chown=nonroot:nonroot llm/server.js ./server.js" in root_dockerfile
-    assert (
-        "COPY --from=deps --chown=nonroot:nonroot /app/node_modules ./node_modules"
-        in root_dockerfile
-    )
-    assert "COPY llm/. ." not in root_dockerfile
-    assert 'CMD ["server.js"]' in root_dockerfile
-    assert "HEALTHCHECK" in root_dockerfile
-    assert "/nodejs/bin/node" in root_dockerfile
-    assert "/health" in root_dockerfile
+def test_fly_edge_ollama_prototype_is_removed():
+    """The Fly.io edge — root ``Dockerfile`` → ``llm/server.js`` (a Node/
+    Express Ollama prototype exposing unauthenticated, validator-bypassing
+    /coach·/explain) — was deleted 2026-07-15.  It never fronted
+    cereveon.com (Hetzner's Caddy serves that directly) and 502'd on a
+    non-existent Ollama upstream.  Pin its absence so it can't creep back.
+    """
+    assert not (ROOT / "Dockerfile").exists(), "the Fly edge root Dockerfile is back"
+    assert not (ROOT / "fly.toml").exists(), "root fly.toml is back"
+    assert not (ROOT / "llm" / "fly.toml").exists(), "llm/fly.toml is back"
+    assert not (ROOT / "llm" / "server.js").exists(), "the Node/Ollama server.js is back"
+    assert not (ROOT / "llm" / "package.json").exists(), "llm/package.json (Node) is back"
 
+    # The Hetzner llm-API image (the sole remaining tier) must NOT drag any
+    # Node/Ollama server artifact back in.
+    llm_api_dockerfile = (ROOT / "llm" / "Dockerfile.api").read_text(encoding="utf-8")
+    assert "server.js" not in llm_api_dockerfile
+    assert "package.json" not in llm_api_dockerfile
+
+
+def test_container_image_keeps_health_check_and_non_root_runtime():
+    """The single production image is llm/Dockerfile.api (Hetzner). The
+    former root Dockerfile (Fly edge) is pinned gone by
+    test_fly_edge_ollama_prototype_is_removed."""
     llm_api_dockerfile = (ROOT / "llm" / "Dockerfile.api").read_text(encoding="utf-8")
     assert "apt-get upgrade -y" in llm_api_dockerfile
     assert (
         "rm -rf /app/llm/tests /app/llm/rag/tests /app/llm/.github /app/llm/redis-win"
         in llm_api_dockerfile
     )
-    assert (
-        "rm -f /app/llm/package.json /app/llm/package-lock.json /app/llm/server.js"
-        in llm_api_dockerfile
-    )
     assert "USER appuser" in llm_api_dockerfile
     assert "HEALTHCHECK" in llm_api_dockerfile
     assert "127.0.0.1:8000/health" in llm_api_dockerfile
-
-    # ``llm/Dockerfile`` was deleted in the host_app retirement pass
-    # (2026-05-12) — it was the orphaned Dockerfile that ran the
-    # standalone ``host_app:app`` debug server.  Production has always
-    # used ``llm/Dockerfile.api`` (running ``llm.server:app``); the
-    # invariants for that file are pinned above.
-
-    node_server = (ROOT / "llm" / "server.js").read_text(encoding="utf-8")
-    assert 'app.get("/health"' in node_server
 
 
 def test_runtime_dependency_files_are_pinned():
@@ -381,28 +351,6 @@ def test_runtime_dependency_files_are_pinned():
 
     assert pinned_requirements
     assert all("==" in line for line in pinned_requirements)
-
-    package_json = json.loads((ROOT / "llm" / "package.json").read_text(encoding="utf-8"))
-    dependencies = package_json["dependencies"]
-
-    assert dependencies
-    assert all(not version.startswith(("^", "~")) for version in dependencies.values())
-    assert _version_tuple(dependencies["express"]) >= (4, 22, 1)
-    assert "node-fetch" not in dependencies
-
-    # npm "overrides" force transitive-dep versions when a parent's
-    # constraint is too narrow to absorb a security patch (e.g. express
-    # 4.22.1 pins qs to ~6.14.0, but the qs CVE-2026-8723 fix landed in
-    # 6.15.2).  Same exact-pin discipline applies — `^`/`~` ranges
-    # would let a future dependency resolution silently downgrade the
-    # override and re-open the advisory.
-    overrides = package_json.get("overrides", {})
-    assert all(not version.startswith(("^", "~")) for version in overrides.values())
-    # Lower bound chosen at the time the qs override was added; future
-    # bumps that move qs higher are fine, but the override must not
-    # drop below the CVE-2026-8723 fix version.
-    if "qs" in overrides:
-        assert _version_tuple(overrides["qs"]) >= (6, 15, 2)
 
 
 def test_run_ci_suite_builds_expected_pytest_command(monkeypatch, tmp_path):
@@ -831,76 +779,10 @@ def test_automated_and_manual_deploy_share_concurrency_group():
     )
 
 
-def test_fly_deploy_job_pins_topology():
-    """The Fly.io edge deploy job must:
-    - run only on push to main, gated on the Hetzner deploy succeeding
-      (sequential lockstep — backend's new contract goes live first)
-    - guard on FLY_API_TOKEN before doing anything (skip-with-warning)
-    - use a distinct concurrency group from the Hetzner deploy (`fly-production`)
-    - deploy by digest from the same docker-images job that fed Hetzner,
-      using the APP_IMAGE_NAME (the Node edge), not the API_IMAGE_NAME
-    - share the `production` GitHub environment with the Hetzner deploy
-    """
-    workflow = _load_workflow("fly-deploy.yml")
-    fly_deploy = workflow["jobs"]["fly-deploy"]
-
-    # Sequential ordering: must wait for image build, scan, AND Hetzner deploy.
-    needs = set(fly_deploy["needs"])
-    assert {"docker-images", "image-security", "deploy"}.issubset(
-        needs
-    ), f"fly-deploy must wait for docker-images + image-security + deploy; got {needs}"
-
-    # Trigger gate identical to the Hetzner deploy.
-    assert fly_deploy["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/main'"
-
-    # Concurrency: distinct from Hetzner so unrelated pushes don't serialise
-    # across tiers, but still serialised within Fly itself.
-    assert fly_deploy["concurrency"]["group"] == "fly-production"
-    assert fly_deploy["concurrency"]["cancel-in-progress"] is False
-
-    # Same production GitHub environment, same minimal permissions.
-    assert fly_deploy["environment"] == {"name": "production"}
-    assert fly_deploy["permissions"] == {"contents": "read"}
-
-    # Secret-presence guard runs first; downstream steps gated on it.
-    check_step = _step_named(fly_deploy, "Check Fly secret availability")
-    assert check_step["env"] == {"FLY_API_TOKEN": "${{ secrets.FLY_API_TOKEN }}"}
-    assert check_step["id"] == "fly-check"
-
-    # Checkout hardening matches the rest of the workflow.
-    checkout = _step_named(fly_deploy, "Checkout repository")
-    assert checkout["uses"] == "actions/checkout@v6"
-    assert checkout["with"]["persist-credentials"] is False
-    assert checkout["if"] == "steps.fly-check.outputs.available == 'true'"
-
-    # The deploy step must reference the APP image (Node edge), not the API
-    # image (Python backend that lives on Hetzner).
-    deploy_step = _step_named(fly_deploy, "Deploy edge image to Fly.io")
-    assert deploy_step["if"] == "steps.fly-check.outputs.available == 'true'"
-    image_ref = deploy_step["env"]["DEPLOY_IMAGE"]
-    assert (
-        "APP_IMAGE_NAME" in image_ref
-    ), f"fly-deploy must use APP_IMAGE_NAME (Node edge), not API_IMAGE_NAME; got {image_ref!r}"
-    assert (
-        "app_digest" in image_ref
-    ), "fly-deploy must pin to the APP image digest from docker-images outputs"
-    assert deploy_step["env"]["FLY_API_TOKEN"] == "${{ secrets.FLY_API_TOKEN }}"
-    assert "flyctl deploy --image" in deploy_step["run"]
-    assert "--app chesscoach" in deploy_step["run"]
-
-
-def test_fly_deploy_does_not_share_hetzner_concurrency_group():
-    """Sanity check: the Fly deploy must NOT share the Hetzner concurrency
-    group, otherwise it would be serialised against unrelated Hetzner
-    deploys (e.g. a hotfix triggered from production-deploy.yml)."""
-    workflow = _load_workflow("fly-deploy.yml")
-    hetzner_group = workflow["jobs"]["deploy"]["concurrency"]["group"]
-    fly_group = workflow["jobs"]["fly-deploy"]["concurrency"]["group"]
-    assert hetzner_group != fly_group, (
-        f"Hetzner and Fly deploys must use distinct concurrency groups; "
-        f"both are using {hetzner_group!r}.  This would unnecessarily "
-        f"serialise edge deploys against backend hotfixes."
-    )
+# The Fly.io edge deploy job was removed 2026-07-15 (see
+# test_fly_edge_ollama_prototype_is_removed + the `"fly-deploy" not in
+# jobs` pin in test_ci_workflow_includes_required_gates).  Its former
+# topology / concurrency-isolation tests went with it.
 
 
 def test_android_instrumented_workflow_pins_topology():

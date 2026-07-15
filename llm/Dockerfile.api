@@ -34,8 +34,9 @@ RUN echo "Cache bust: ${BUILDDATE}" \
 
 # copy only llm code
 COPY llm /app/llm
+# The former Node/Ollama edge files were deleted with the Fly edge
+# (2026-07-15), so there is nothing Node to strip from the copied tree.
 RUN rm -rf /app/llm/tests /app/llm/rag/tests /app/llm/.github /app/llm/redis-win \
-    && rm -f /app/llm/package.json /app/llm/package-lock.json /app/llm/server.js /app/llm/test.js /app/llm/test_mixed.js /app/llm/test_unique_fens.js \
     && mkdir -p /app/data \
     && chown -R appuser:appuser /app
 

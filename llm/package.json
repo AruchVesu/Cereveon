@@ -1,9 +1,0 @@
-{
-  "type": "module",
-  "dependencies": {
-    "express": "4.22.1"
-  },
-  "overrides": {
-    "qs": "6.15.2"
-  }
-}
