@@ -70,6 +70,24 @@ _CHECK_FLAGS: frozenset[str] = frozenset({"check:white_to_move", "check:black_to
 #: these from its prompt-side signal dump for the same transiency reason).
 TRANSIENT_CHECK_FLAGS = _CHECK_FLAGS
 
+# ``hanging_piece`` is *semi*-transient in the Mode-1 context (audit
+# 2026-07-14, P2 #2): the flag is computed on the post-player-move board,
+# but the hint renders after the engine's reply — which, often, simply
+# CAPTURES the hanging piece.  The present-tense "You have an undefended
+# piece under attack" then describes a piece that is no longer on the
+# board (the same phantom class as the check fact, PR #313, and the
+# describe_threats tense fix, 2026-07-06).  Unlike check the fact is not
+# ALWAYS resolved by the reply, so Mode-1 rewords it move-scoped ("your
+# last move left …" — true whether or not the capture happened) instead
+# of dropping it.  Chat keeps the present tense: its board IS current.
+_HANGING_FACT_PAST: dict[str, str] = {
+    "hanging_piece:white": (
+        "Your last move left one of your pieces undefended and under attack."
+    ),
+    "hanging_piece:black": ("Your opponent has left a piece undefended."),
+    "hanging_piece": "A piece was left undefended and under attack.",
+}
+
 
 def _eval_fact(evaluation: dict, player_color: str = "white") -> str:
     """Player-perspective sentence for the eval band / mate, or "" if unknown.
@@ -135,6 +153,7 @@ def render_engine_facts(
     player_color: str = "white",
     include_eval: bool = True,
     include_check: bool = True,
+    hanging_past_tense: bool = False,
 ) -> list[str]:
     """Plain-English, player-perspective facts from the engine signal.
 
@@ -153,6 +172,12 @@ def render_engine_facts(
     ``_CHECK_FLAGS``): Mode-1 passes it because the engine's forced reply always
     resolves the check before the hint is read; chat keeps the default so a
     check in the current position is still reported.
+
+    ``hanging_past_tense=True`` swaps the ``hanging_piece`` facts for their
+    move-scoped past-tense variants (``_HANGING_FACT_PAST``): Mode-1 renders
+    after the engine's reply may already have captured the piece, so the
+    present tense would narrate a phantom.  Chat keeps the default present
+    tense — its board is current.
     """
     facts: list[str] = []
     seen: set[str] = set()
@@ -170,7 +195,11 @@ def render_engine_facts(
     for flag in flags:
         if not include_check and flag in _CHECK_FLAGS:
             continue
-        sentence = _FLAG_FACT.get(_flip_color(flag) if flip else flag)
+        effective = _flip_color(flag) if flip else flag
+        if hanging_past_tense and effective in _HANGING_FACT_PAST:
+            sentence: str | None = _HANGING_FACT_PAST[effective]
+        else:
+            sentence = _FLAG_FACT.get(effective)
         if sentence and sentence not in seen:
             seen.add(sentence)
             facts.append(sentence)

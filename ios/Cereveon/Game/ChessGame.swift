@@ -172,8 +172,9 @@ final class ChessGame {
             ? Character(kind.uppercased())
             : Character(kind.lowercased())
         whiteToMove.toggle()
-        // Correctness improvement over Android (which omits this): a promotion can
-        // deliver mate, so re-check game-over after the piece is placed.
+        // A promotion can deliver mate, so re-check game-over after the piece
+        // is placed.  (Android matches this since PR #394 — the "Android
+        // omits this" note that used to live here is stale.)
         checkAndRecordGameOver()
     }
 

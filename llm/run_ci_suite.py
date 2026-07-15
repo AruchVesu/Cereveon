@@ -318,6 +318,12 @@ TEST_TARGETS = [
     "llm/tests/test_review_moments.py",
     "llm/tests/test_review_writer.py",
     "llm/tests/test_review_endpoints.py",
+    # /game/finish idempotent replay (audit 2026-07-14 P2 #1): retried
+    # finishes serve the stored response instead of duplicating the
+    # GameEvent + rating delta (FIN_IDEM_01..07 — replay payload,
+    # pending shape, player scoping, oldest-event-wins, guard placement
+    # + IntegrityError race pins).
+    "llm/tests/test_game_finish_idempotency.py",
 ]
 
 COVERAGE_TARGETS = [

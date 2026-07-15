@@ -73,6 +73,60 @@ def test_include_check_drops_only_the_transient_check_fact():
     assert "Your opponent's king is in check." not in dropped_black
 
 
+def test_hanging_past_tense_swaps_only_the_hanging_facts():
+    """Audit 2026-07-14, P2 #2: Mode-1 renders after the engine's reply,
+    which may already have captured the hanging piece — the present-tense
+    fact then narrates a phantom.  ``hanging_past_tense=True`` swaps in
+    the move-scoped past-tense wording (true either way); every other
+    fact is untouched, and the default (chat, current board) keeps the
+    present tense."""
+    signal = {
+        "tactical_flags": ["hanging_piece:white"],
+        "position_flags": ["material:even"],
+    }
+    # Default (chat): present tense preserved.
+    present = render_engine_facts(signal)
+    assert "You have an undefended piece under attack." in present
+
+    past = render_engine_facts(signal, hanging_past_tense=True)
+    assert "You have an undefended piece under attack." not in past
+    assert (
+        "Your last move left one of your pieces undefended and under attack." in past
+    )
+    assert "Material is even." in past  # non-hanging facts untouched
+
+
+def test_hanging_past_tense_respects_player_color_flip():
+    """The tense swap happens AFTER the colour flip, so a Black player's
+    own hanging piece (board-absolute flag ``hanging_piece:black``) gets
+    the 'your last move' wording."""
+    signal = {"tactical_flags": ["hanging_piece:black"], "position_flags": []}
+    past = render_engine_facts(signal, player_color="black", hanging_past_tense=True)
+    assert past == ["Your last move left one of your pieces undefended and under attack."]
+
+    # And the OPPONENT's hanging piece for a Black player (flag :white)
+    # gets the opponent past-tense wording.
+    opp = render_engine_facts(
+        {"tactical_flags": ["hanging_piece:white"], "position_flags": []},
+        player_color="black",
+        hanging_past_tense=True,
+    )
+    assert opp == ["Your opponent has left a piece undefended."]
+
+
+def test_mode_1_render_uses_past_tense_hanging_fact():
+    """Callsite pin: the Mode-1 prompt renderer must request the
+    past-tense variant (the whole point of the fix); chat's renderer
+    keeps the default.  Source-level because the Mode-1 prompt has no
+    snapshot golden."""
+    import inspect
+
+    from llm.rag.prompts.mode_1 import render as mode_1_render
+
+    src = inspect.getsource(mode_1_render)
+    assert "hanging_past_tense=True" in src
+
+
 def test_eval_band_leads_the_facts():
     facts = render_engine_facts(
         {"evaluation": {"type": "cp", "band": "clear_advantage", "side": "white"}}

@@ -212,6 +212,42 @@ def test_avh_09_discovery_routes_exempt_from_mismatch(client, path: str) -> None
     assert resp.headers.get("X-API-Version") == "2"
 
 
+def test_cors_order_01_cors_is_the_outermost_middleware(server_module) -> None:
+    """CORS_ORDER_01 (audit 2026-07-14, P2 #10): CORSMiddleware must be
+    the LAST-added — therefore OUTERMOST — middleware.  Starlette wraps
+    inside-out (``add_middleware`` inserts at ``user_middleware[0]``),
+    and only an outermost CORS layer can stamp
+    Access-Control-Allow-Origin on responses short-circuited by the
+    other middleware (_LimitBodySize 413/411, api_version_gate 400, the
+    security-header wrapper's error paths).  Latent today (no browser
+    client ships) but silently wrong to leave inverted."""
+    outermost = server_module.app.user_middleware[0]
+    assert "CORSMiddleware" in repr(outermost), (
+        "CORSMiddleware must be registered LAST (outermost); "
+        f"found {outermost!r} in the outermost slot instead"
+    )
+
+
+def test_cors_order_02_oversized_body_413_carries_cors_headers(client) -> None:
+    """CORS_ORDER_02: a response produced by the body-size middleware
+    (outer layer before this fix) must now carry the CORS header for an
+    allowed origin — the behavioural consequence of CORS_ORDER_01."""
+    resp = client.post(
+        "/engine/eval",
+        headers={
+            "X-Api-Key": "ci-test-key",
+            "Origin": "http://localhost:5173",
+            "Content-Type": "application/json",
+        },
+        content=b"x" * (512 * 1024 + 1),
+    )
+    assert resp.status_code == 413
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173", (
+        "413 from _LimitBodySize must carry Access-Control-Allow-Origin "
+        "now that CORS wraps outermost"
+    )
+
+
 def test_avh_10_cors_allow_headers_includes_x_api_version(server_module) -> None:
     """AVH_10: the CORS allow_headers list must include X-API-Version
     so browser-based clients don't fail the preflight on the new

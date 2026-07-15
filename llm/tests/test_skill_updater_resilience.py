@@ -89,3 +89,22 @@ class TestSkillUpdaterResilience:
         """Even after a SkillUpdater failure, the response includes a rating field."""
         result = _finish_game_core(lambda: _BrokenUpdater(), "p1", _DUMMY_EVENT)
         assert "new_rating" in result
+
+    def test_rating_update_locks_the_player_row(self):
+        """SEC_SKILL_UPDATER_ROW_LOCK (audit 2026-07-14, P2 #7): the Elo
+        delta is computed from ``rating_before`` (expected-score curve),
+        so two concurrent /game/finish requests interleaving the
+        read-compute-write would silently drop one delta.  The player
+        fetch must take a FOR UPDATE row lock (honoured by Postgres; a
+        harmless no-op on single-writer SQLite).  Source-level pin — the
+        race needs Postgres-grade concurrency a SQLite unit test cannot
+        reproduce, and losing the lock in a refactor would be silent."""
+        import inspect
+
+        from llm.seca.skills.updater import SkillUpdater
+
+        src = inspect.getsource(SkillUpdater.update_from_event)
+        assert "with_for_update" in src, (
+            "SkillUpdater.update_from_event must lock the Player row "
+            "(with_for_update) before reading rating_before"
+        )

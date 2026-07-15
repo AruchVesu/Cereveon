@@ -342,5 +342,120 @@ class TestConfigureCrashHandled(unittest.TestCase):
         self.assertIs(pool._engines.queue[0], replacement)
 
 
+# ---------------------------------------------------------------------------
+# CR_09..CR_12 — hung-but-alive eviction (audit 2026-07-14, P2 #6)
+# ---------------------------------------------------------------------------
+
+
+class _FlakyEngine(_FakeEngine):
+    """Process stays alive (transport open) but ``play`` fails per a
+    scripted plan — the hung-engine shape the transport probe can't see.
+    ``plan[i] is True`` = the i-th play call raises."""
+
+    def __init__(self, plan: list[bool]) -> None:
+        super().__init__()
+        self._plan = list(plan)
+
+    def play(self, board: chess.Board, limit: chess.engine.Limit, **_):
+        self.play_call_count += 1
+        if self._plan and self._plan.pop(0):
+            raise chess.engine.EngineError("simulated hang: command timed out")
+        move = next(iter(board.legal_moves), None)
+        return chess.engine.PlayResult(move=move, ponder=None)
+
+
+class _AnalyseHangEngine(_FakeEngine):
+    """Alive engine whose ``analyse`` always fails — the
+    ``evaluate_position`` flavour of the hung handle."""
+
+    def analyse(self, board: chess.Board, limit: chess.engine.Limit, **_):
+        raise chess.engine.EngineError("simulated hang: analyse timed out")
+
+
+class TestHungEngineEviction(unittest.TestCase):
+    """The transport probe only catches DEAD subprocesses; a wedged
+    Stockfish that stays alive passed it forever and poisoned its pool
+    slot on every cycle.  After MAX_CONSECUTIVE_ENGINE_FAILURES failed
+    operations the handle must be evicted and replaced."""
+
+    def test_cr_09_hung_engine_evicted_after_strike_limit(self):
+        strikes = StockfishEnginePool.MAX_CONSECUTIVE_ENGINE_FAILURES
+        hung = _FlakyEngine(plan=[True] * strikes)
+        replacement = _FakeEngine()
+        pool = _pool_with(initial_engine=hung, spawn_returns=replacement)
+
+        for _ in range(strikes):
+            with self.assertRaises(chess.engine.EngineError):
+                pool.select_move(fen=_STARTING_FEN)
+
+        self.assertEqual(pool.qsize(), 1, "slot must be preserved")
+        self.assertIs(
+            pool._engines.queue[0],
+            replacement,
+            "hung handle must be evicted at the strike limit",
+        )
+        self.assertTrue(hung.quit_called, "evicted handle must be disposed")
+        self.assertEqual(
+            pool._consecutive_failures,
+            {},
+            "strike bookkeeping must be cleaned on eviction",
+        )
+
+    def test_cr_10_success_resets_strike_count(self):
+        strikes = StockfishEnginePool.MAX_CONSECUTIVE_ENGINE_FAILURES
+        # limit-1 failures, one success, then limit-1 failures again:
+        # never reaches the limit CONSECUTIVELY, so the same handle must
+        # stay pooled throughout.
+        plan = [True] * (strikes - 1) + [False] + [True] * (strikes - 1)
+        flaky = _FlakyEngine(plan=plan)
+        pool = _pool_with(initial_engine=flaky, spawn_returns=_FakeEngine())
+
+        for should_raise in plan:
+            if should_raise:
+                with self.assertRaises(chess.engine.EngineError):
+                    pool.select_move(fen=_STARTING_FEN)
+            else:
+                pool.select_move(fen=_STARTING_FEN)
+
+        self.assertIs(
+            pool._engines.queue[0],
+            flaky,
+            "a success must reset the strike count (no eviction below "
+            "the consecutive limit)",
+        )
+        self.assertFalse(flaky.quit_called)
+
+    def test_cr_11_evaluate_position_failures_also_strike(self):
+        strikes = StockfishEnginePool.MAX_CONSECUTIVE_ENGINE_FAILURES
+        hung = _AnalyseHangEngine()
+        replacement = _FakeEngine()
+        pool = _pool_with(initial_engine=hung, spawn_returns=replacement)
+
+        for _ in range(strikes):
+            with self.assertRaises(chess.engine.EngineError):
+                pool.evaluate_position(fen=_STARTING_FEN, movetime_ms=10)
+
+        self.assertIs(
+            pool._engines.queue[0],
+            replacement,
+            "evaluate_position failures must feed the same strike counter",
+        )
+
+    def test_cr_12_dead_engine_still_replaced_on_first_failure(self):
+        """The strike counter must NOT delay the existing crash path:
+        a dead transport is replaced immediately, not after 3 tries."""
+        dead = _FakeEngine(
+            play_raises=chess.engine.EngineTerminatedError("died mid-play"),
+            transport_closes_after_play=True,
+        )
+        replacement = _FakeEngine()
+        pool = _pool_with(initial_engine=dead, spawn_returns=replacement)
+
+        with self.assertRaises(chess.engine.EngineTerminatedError):
+            pool.select_move(fen=_STARTING_FEN)
+
+        self.assertIs(pool._engines.queue[0], replacement)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

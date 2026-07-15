@@ -125,8 +125,17 @@ def render_mode_1_prompt(
     # post-move position, but the engine's forced reply resolves any check the
     # player just gave, so by the time the hint is read the king is no longer in
     # check — surfacing it produced a phantom "opponent's king is in check".
+    # ``hanging_past_tense=True`` reuses the same staleness reasoning for the
+    # hanging-piece fact: the flag is computed on the post-player-move board,
+    # but the engine's reply (already on the board when the hint is read) may
+    # have captured the piece — the move-scoped past tense stays true either
+    # way (audit 2026-07-14, P2 #2).
     fact_lines = render_engine_facts(
-        engine_signal, player_color=player_color, include_eval=False, include_check=False
+        engine_signal,
+        player_color=player_color,
+        include_eval=False,
+        include_check=False,
+        hanging_past_tense=True,
     )
     threat = describe_threats(fen, last_move_uci) if last_move_uci else ""
     if threat:
