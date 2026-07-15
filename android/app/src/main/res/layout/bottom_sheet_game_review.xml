@@ -42,9 +42,17 @@
         app:atriumKicker="Coach"
         app:atriumTitle="Game review" />
 
-    <ScrollView
+    <!-- NestedScrollView, NOT a plain ScrollView: BottomSheetBehavior only
+         coordinates drags with a nested-scrolling child.  With ScrollView,
+         a downward finger drag (scrolling back UP) was treated as a sheet
+         drag and dismissed the review mid-read; NestedScrollView scrolls
+         the content back to the top first and only then hands the gesture
+         to the sheet.  wrap_content (not a fixed 480dp) so the sheet sizes
+         itself to the content — the fixed height left a dead void under
+         short content and capped tall content into a small window. -->
+    <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
-        android:layout_height="480dp">
+        android:layout_height="wrap_content">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -153,6 +161,6 @@
                 tools:text="TRY COACH REVIEW AGAIN" />
 
         </LinearLayout>
-    </ScrollView>
+    </androidx.core.widget.NestedScrollView>
 
 </LinearLayout>
