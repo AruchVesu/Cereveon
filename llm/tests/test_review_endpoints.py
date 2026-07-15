@@ -442,6 +442,73 @@ class TestRunReviewJob:
         assert summary["remaining"] == 0
         assert summary["allowed"] is False
 
+    def test_pro_daily_cap_skips_llm_stage(
+        self, db_session, player, lichess_event, worker_session, monkeypatch
+    ):
+        """SV_23 (2026-07-15): a PRO player with monthly headroom but ten
+        OTHER games reviewed today hits the daily smoothing cap — Wave 2
+        lands, Wave 3 skips, and the quota snapshot names the DAILY
+        bucket so the client says "more tomorrow", not "upgrade"."""
+        monkeypatch.setattr(entitlements, "resolve_enforced", lambda: True)
+        player.plan = "pro"
+        db_session.commit()
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        for i in range(10):
+            db_session.add(
+                UsageCounter(
+                    player_id=player.id,
+                    metric=entitlements.METRIC_IMPORT_ANALYSIS_DAILY,
+                    period_key=today,
+                    subject=f"other-game-{i}",
+                    count=1,
+                )
+            )
+        db_session.commit()
+
+        review, _ = review_service.start_review(db_session, player, lichess_event)
+        llm = _ScriptedLLM()
+        review_service.run_review_job(review.id, engine_pool=_blunder_pool(), llm=llm)
+
+        db_session.expire_all()
+        row = db_session.get(GameReview, review.id)
+        assert row.status == REVIEW_STATUS_COMPLETE
+        assert row.engine_json is not None
+        payload = json.loads(row.llm_json)
+        assert payload["outcome"] == LLM_OUTCOME_SKIPPED_ENTITLEMENT
+        assert payload["skipped_metric"] == entitlements.METRIC_IMPORT_ANALYSIS_DAILY
+        assert llm.calls == 0
+
+        summary = review_service.entitlement_summary(db_session, player)
+        assert summary["metric"] == entitlements.METRIC_IMPORT_ANALYSIS_DAILY
+        assert summary["allowed"] is False
+        assert summary["remaining"] == 0
+
+    def test_summary_reports_the_tighter_bucket(
+        self, db_session, player, lichess_event, worker_session, monkeypatch
+    ):
+        """SV_24: with both buckets open, the snapshot names whichever has
+        LESS headroom — a pro late in the month sees the monthly count,
+        not a perpetually-fresh daily 10."""
+        monkeypatch.setattr(entitlements, "resolve_enforced", lambda: True)
+        player.plan = "pro"
+        db_session.commit()
+        month = datetime.utcnow().strftime("%Y-%m")
+        for i in range(48):  # monthly remaining 2 < daily remaining 10
+            db_session.add(
+                UsageCounter(
+                    player_id=player.id,
+                    metric=entitlements.METRIC_IMPORT_ANALYSIS,
+                    period_key=month,
+                    subject=f"old-game-{i}",
+                    count=1,
+                )
+            )
+        db_session.commit()
+        summary = review_service.entitlement_summary(db_session, player)
+        assert summary["metric"] == entitlements.METRIC_IMPORT_ANALYSIS
+        assert summary["remaining"] == 2
+        assert summary["allowed"] is True
+
     def test_same_game_readmission_is_free(
         self, db_session, player, lichess_event, worker_session, monkeypatch
     ):
