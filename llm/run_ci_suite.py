@@ -44,6 +44,16 @@ TEST_TARGETS = [
     "llm/tests/test_mistake_analytics.py",
     "llm/tests/test_chat_pipeline.py",
     "llm/tests/test_chat_stream.py",
+    # Freemium chat-quota 402 gate on /chat + /chat/stream (endpoint tier):
+    # 3-turn free cap → documented 402 body, failed pipeline eats no turn,
+    # and the stream route consumes at the terminal event via a fresh
+    # session.  "Tests exist but never run" debt (same class as
+    # test_per_game_chat_alignment / test_lichess_import): the file was
+    # never registered, and its _ChatPipelineSpy had silently drifted out
+    # of sync with generate_chat_reply's arity (player_color) so ALL of it
+    # 500'd — invisible because it wasn't in this list.  Registered +
+    # repaired 2026-07-15.
+    "llm/tests/test_chat_entitlements_402.py",
     # Cereveon app-help layer: detector precision/recall, prompt injection
     # wiring, and guide-text safety (no forbidden output / no engine
     # reveal / no unimplemented-feature claims).

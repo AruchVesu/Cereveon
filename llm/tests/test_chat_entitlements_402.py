@@ -21,7 +21,7 @@ side-effect boundary as history persistence.  Pinned here:
     ``abort`` both — the user saw a reply either way), exactly where
     persistence happens, via a fresh session + detached-safe player
     snapshot.
-6.  Pro plan: blocked at the 100/day soft cap, allowed at 99.
+6.  Pro plan: blocked at the 30/day chat cap, allowed at 29.
 
 Direct endpoint-call style per test_game_checkpoint.py /
 test_live_move_entitlements.py: shared limiter disabled, fake Starlette
@@ -46,6 +46,7 @@ os.environ.setdefault("SECRET_KEY", "ci-secret-key-that-is-32-chars-long!!")
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
 from llm.seca.auth.models import Base, Player
@@ -84,10 +85,17 @@ class _ChatPipelineSpy:
         last_move=None,
         stockfish_json=None,
         force_deterministic=False,
+        player_color="white",
     ):
+        # Signature must track generate_chat_reply's positional contract:
+        # server.chat / chat_stream call it positionally, so a missing
+        # trailing param (player_color, added later) makes the spy reject
+        # the call with a TypeError and every test here 500s.
         if self.raise_exc is not None:
             raise self.raise_exc
-        self.calls.append({"force_deterministic": force_deterministic})
+        self.calls.append(
+            {"force_deterministic": force_deterministic, "player_color": player_color}
+        )
         return SimpleNamespace(reply=_SAFE_REPLY, engine_signal=_SIGNAL, mode="CHAT_V1")
 
 
@@ -99,11 +107,37 @@ def _fake_request() -> StarletteRequest:
 
 
 @pytest.fixture()
-def db_env():
-    """In-memory engine + two session handles (route + inspection)."""
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+def db_env(monkeypatch):
+    """Shared in-memory DB for BOTH the request session and the stream
+    route's fresh ``SessionLocal`` sessions.
+
+    ``/chat/stream`` persists history and records the turn from FRESH
+    sessions opened inside the SSE generator (which runs after the
+    request handler returns — docstring point 5), via the production
+    ``auth.router.SessionLocal``.  Two things are needed for the test to
+    observe those writes:
+
+    * ``StaticPool`` keeps the single ``:memory:`` database alive across
+      every connection, so a freshly-opened session sees the same tables
+      and rows as the request session (without it, each ``:memory:``
+      connection is a private empty DB — the classic StaticPool gotcha).
+    * ``SessionLocal`` is repointed at this engine so the stream route's
+      writes land where the test inspects them, instead of the real
+      (uninitialised) default DB — which produced ``no such table:
+      chat_turns`` and left the quota uncounted.
+    """
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
+
+    import llm.seca.auth.router as auth_router
+
+    monkeypatch.setattr(auth_router, "SessionLocal", session_factory)
+
     session = session_factory()
     try:
         yield SimpleNamespace(session=session, session_factory=session_factory)
