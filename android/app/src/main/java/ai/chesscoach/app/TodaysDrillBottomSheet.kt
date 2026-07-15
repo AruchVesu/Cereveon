@@ -142,7 +142,7 @@ class TodaysDrillBottomSheet : BottomSheetDialogFragment() {
         board = view.findViewById(R.id.todaysDrillBoard)
         statusView = view.findViewById(R.id.todaysDrillStatus)
 
-        board.setFEN(fen)
+        board.loadPosition(fen)
         board.isInteractive = true
         board.onMovePlayed = { fr, fc, tr, tc -> handleAttempt(fr, fc, tr, tc) }
 
@@ -179,7 +179,7 @@ class TodaysDrillBottomSheet : BottomSheetDialogFragment() {
 
         val client = gameApiClient ?: run {
             setStatus("Couldn't reach the engine.", ATRIUM_AMBER_COLOR_RES)
-            board.setFEN(currentFen)
+            board.loadPosition(currentFen)
             board.isInteractive = true
             return
         }
@@ -197,7 +197,7 @@ class TodaysDrillBottomSheet : BottomSheetDialogFragment() {
                         }
                     } else {
                         setStatus("Not quite, try again.", ATRIUM_AMBER_COLOR_RES)
-                        board.setFEN(currentFen)
+                        board.loadPosition(currentFen)
                         board.isInteractive = true
                     }
                 }
@@ -207,12 +207,12 @@ class TodaysDrillBottomSheet : BottomSheetDialogFragment() {
                         else "Move couldn't be verified.",
                         ATRIUM_AMBER_COLOR_RES,
                     )
-                    board.setFEN(currentFen)
+                    board.loadPosition(currentFen)
                     board.isInteractive = true
                 }
                 is ApiResult.NetworkError, ApiResult.Timeout -> {
                     setStatus("Offline. Try again later.", ATRIUM_AMBER_COLOR_RES)
-                    board.setFEN(currentFen)
+                    board.loadPosition(currentFen)
                     board.isInteractive = true
                 }
             }
@@ -296,7 +296,7 @@ class TodaysDrillBottomSheet : BottomSheetDialogFragment() {
                 // leave the sheet open so the user doesn't lose the
                 // "I solved it" moment.
                 setStatus("Solved, but couldn't save. Try again.", ATRIUM_AMBER_COLOR_RES)
-                board.setFEN(currentFen)
+                board.loadPosition(currentFen)
                 board.isInteractive = true
             }
         }

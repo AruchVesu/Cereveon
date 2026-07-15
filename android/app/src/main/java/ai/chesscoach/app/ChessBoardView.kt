@@ -266,6 +266,47 @@ class ChessBoardView @JvmOverloads constructor(
         invalidate()
     }
 
+    /**
+     * Seed the board to a STANDALONE position — the full state re-seed
+     * for puzzle / drill surfaces that reuse one board across unrelated
+     * positions (or re-seed the same position between attempts).
+     *
+     * [setFEN] alone restores only pieces + side to move, deliberately
+     * preserving live-game state (undo history, game-over latch,
+     * incrementally-tracked castling flags, en-passant target) for the
+     * game flows that scrub review positions mid-game.  A puzzle surface
+     * reusing the board inherits that state across positions:
+     *
+     *  * a solved mate-in-1 (or a wrong try that stalemates) latches
+     *    [gameOver], and [applyMove] hard-rejects every move while the
+     *    flag is up — the next puzzle looks frozen;
+     *  * a king/rook move in one puzzle leaves `*Moved` flags true and
+     *    [canCastle] then denies a later puzzle whose solution castles;
+     *  * a stale [enPassantTarget] can validate a phantom en-passant
+     *    capture on the new position and vaporise the wrong pawn.
+     *
+     * This method clears the latch, the pending result, and the undo
+     * history, and re-derives castling rights + the en-passant target
+     * from the FEN's own fields (an absent field reads as no rights /
+     * no target — every puzzle-surface caller passes full 6-field FENs
+     * from the server or [exportFEN]).  Live-game flows keep calling
+     * [setFEN] and are untouched.
+     */
+    fun loadPosition(fen: String) {
+        setFEN(fen)
+        gameOver = false
+        pendingGameResult = null
+        history.clear()
+        val flags = parseCastlingFlags(fen)
+        whiteKingMoved = flags.whiteKingMoved
+        blackKingMoved = flags.blackKingMoved
+        whiteRookAMoved = flags.whiteRookAMoved
+        whiteRookHMoved = flags.whiteRookHMoved
+        blackRookAMoved = flags.blackRookAMoved
+        blackRookHMoved = flags.blackRookHMoved
+        enPassantTarget = parseEnPassantTarget(fen)
+    }
+
     fun addArrow(arrow: Arrow) {
         arrows.add(arrow)
         invalidate()
@@ -764,6 +805,20 @@ class ChessBoardView @JvmOverloads constructor(
         canvas.drawPath(headPath, headPaint)
     }
 
+    /**
+     * Moved-flag view of a FEN's castling-rights field, in the shape the
+     * board tracks internally (a RIGHT present means the king and that
+     * rook are UNMOVED).  Pure data — see [parseCastlingFlags].
+     */
+    data class CastlingFlags(
+        val whiteKingMoved: Boolean,
+        val blackKingMoved: Boolean,
+        val whiteRookAMoved: Boolean,
+        val whiteRookHMoved: Boolean,
+        val blackRookAMoved: Boolean,
+        val blackRookHMoved: Boolean,
+    )
+
     companion object {
         const val STYLE_FLAT = "flat"
         const val STYLE_ENGRAVED = "engraved"
@@ -773,5 +828,43 @@ class ChessBoardView @JvmOverloads constructor(
         /** Variant keys recognised by [boardStyle]; mirrored from
          *  [SettingsBottomSheet.PREF_BOARD_STYLE] row tags. */
         val SUPPORTED_BOARD_STYLES: Set<String> = setOf(STYLE_FLAT, STYLE_ENGRAVED, STYLE_WIREFRAME)
+
+        /**
+         * Derive the board's moved-flags from a FEN's castling field
+         * (3rd space-separated part).  ``K``/``Q``/``k``/``q`` grant the
+         * matching right; ``-`` or an ABSENT field grants none (the
+         * conservative reading — [loadPosition]'s callers always pass
+         * full 6-field FENs, so the absent case is defensive only).
+         * Pure — unit-tested without a view.
+         */
+        fun parseCastlingFlags(fen: String): CastlingFlags {
+            val field = fen.trim().split(" ").getOrNull(2) ?: "-"
+            val whiteShort = field.contains('K')
+            val whiteLong = field.contains('Q')
+            val blackShort = field.contains('k')
+            val blackLong = field.contains('q')
+            return CastlingFlags(
+                whiteKingMoved = !(whiteShort || whiteLong),
+                blackKingMoved = !(blackShort || blackLong),
+                whiteRookAMoved = !whiteLong,
+                whiteRookHMoved = !whiteShort,
+                blackRookAMoved = !blackLong,
+                blackRookHMoved = !blackShort,
+            )
+        }
+
+        /**
+         * Parse a FEN's en-passant field (4th part, e.g. ``e3``) into the
+         * board's (row, col) frame — row 0 = rank 8, col 0 = file a.
+         * ``-``, an absent field, or a malformed square yield ``null``.
+         * Pure — unit-tested without a view.
+         */
+        fun parseEnPassantTarget(fen: String): Pair<Int, Int>? {
+            val field = fen.trim().split(" ").getOrNull(3) ?: return null
+            if (field.length != 2) return null
+            val col = field[0] - 'a'
+            val row = 8 - (field[1] - '0')
+            return if (col in 0..7 && row in 0..7) row to col else null
+        }
     }
 }

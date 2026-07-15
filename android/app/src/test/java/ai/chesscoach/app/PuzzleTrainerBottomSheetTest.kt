@@ -27,6 +27,10 @@ import org.junit.Test
  *  8. BLACK_TO_MOVE_FALSE          FEN with " w " parses as White to move.
  *  9. BLACK_TO_MOVE_MALFORMED     malformed FEN defaults to White (no flip).
  * 10. SIDE_LABELS                  "White to move" / "Black to move" strings.
+ * 11. INTRO_STATUS_WALKABLE        multi-move lines announce the depth
+ *                                  ("White to move · 3 moves to find").
+ * 12. INTRO_STATUS_SINGLE          single-decision / empty lines show just
+ *                                  the side to move (legacy behaviour).
  */
 class PuzzleTrainerBottomSheetTest {
 
@@ -147,6 +151,43 @@ class PuzzleTrainerBottomSheetTest {
             PuzzleTrainerBottomSheet.sideToMoveLabel(
                 "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
             ),
+        )
+    }
+
+    // ── formatIntroStatus ────────────────────────────────────────────
+
+    private val whiteFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    private val blackFen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+
+    @Test
+    fun `INTRO_STATUS_WALKABLE - multi-move lines announce the depth`() {
+        assertEquals(
+            "White to move · 2 moves to find",
+            PuzzleTrainerBottomSheet.formatIntroStatus(
+                whiteFen, listOf("e2e4", "e7e5", "g1f3"),
+            ),
+        )
+        assertEquals(
+            "Black to move · 3 moves to find",
+            PuzzleTrainerBottomSheet.formatIntroStatus(
+                blackFen, listOf("a7a6", "e4e5", "b7b6", "e5e6", "f7e6"),
+            ),
+        )
+    }
+
+    @Test
+    fun `INTRO_STATUS_SINGLE - short and empty lines show just the side`() {
+        assertEquals(
+            "White to move",
+            PuzzleTrainerBottomSheet.formatIntroStatus(whiteFen, emptyList()),
+        )
+        assertEquals(
+            "White to move",
+            PuzzleTrainerBottomSheet.formatIntroStatus(whiteFen, listOf("e2e4")),
+        )
+        assertEquals(
+            "Black to move",
+            PuzzleTrainerBottomSheet.formatIntroStatus(blackFen, listOf("a7a6", "e4e5")),
         )
     }
 }

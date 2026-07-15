@@ -98,6 +98,16 @@ class PuzzleNextResponse(BaseModel):
     fen: str
     expected_move_uci: str
 
+    solution_line_uci: list[str] = []
+    """Full solution walk in UCI: SOLVER moves at even indices, opponent
+    replies at odd ones, ending on a solver move — the trainer sheet
+    walks multi-move puzzles step by step instead of stopping after one
+    move.  A single-decision puzzle carries just its one move.  Display /
+    walk-through hint only, same trust posture as ``expected_move_uci``:
+    every solver move the user plays is judged by the LOCAL engine via
+    ``POST /training/verify-replay``; ``expected_move_uci`` always equals
+    ``solution_line_uci[0]``."""
+
     theme: str
     """Corpus theme tag for library picks (``THEME_VOCABULARY``);
     ``"mix"`` for Lichess picks (the trainer serves un-themed practice)."""
@@ -191,6 +201,7 @@ def next_puzzle(
                 puzzle_id=f"lichess_{puzzle.id}",
                 fen=puzzle.solver_fen,
                 expected_move_uci=puzzle.solver_move_uci,
+                solution_line_uci=list(puzzle.solution_line_uci or (puzzle.solver_move_uci,)),
                 theme="mix",
                 difficulty=(
                     skill_hint_for_rating(float(puzzle.rating)) if puzzle.rating else skill_hint
@@ -213,6 +224,7 @@ def next_puzzle(
         puzzle_id=pick.id,
         fen=pick.fen,
         expected_move_uci=pick.expected_move_uci,
+        solution_line_uci=list(pick.solution_line_uci or (pick.expected_move_uci,)),
         theme=pick.theme,
         difficulty=pick.difficulty,
         source="library",
