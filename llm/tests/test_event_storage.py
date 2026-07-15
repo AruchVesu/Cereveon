@@ -227,3 +227,44 @@ def test_estore_04_get_all_recent_games_spans_players(db, player):
     assert len(rows) == 2
     # Both players represented.
     assert {r.player_id for r in rows} == {player.id, other.id}
+
+
+# ---------------------------------------------------------------------------
+# ESTORE_05 — analytics failure must not fail the finish
+# ---------------------------------------------------------------------------
+
+
+def test_estore_05_analytics_failure_never_fails_the_finish(db, player, monkeypatch, caplog):
+    """The GameEvent commit is the load-bearing write; the AnalyticsLogger
+    emit afterwards is telemetry.  A DB error inside the analytics commit
+    must neither propagate (the "game saved yet the user sees a 500"
+    class) nor leave the session poisoned for the caller's follow-up
+    queries (SkillUpdater, recommendations) — store_game rolls back and
+    returns the already-committed event."""
+    from llm.seca.events import storage as storage_module
+
+    class _ExplodingLogger:
+        def __init__(self, _db):
+            pass
+
+        def log(self, **_kwargs):
+            raise RuntimeError("simulated analytics commit failure")
+
+    monkeypatch.setattr(storage_module, "AnalyticsLogger", _ExplodingLogger)
+
+    storage = EventStorage(db)
+    event = storage.store_game(
+        player_id=str(player.id),
+        pgn="1. e4 e5",
+        result="win",
+        accuracy=0.9,
+        weaknesses={},
+    )
+
+    assert event.id is not None, "the finish must succeed despite the telemetry failure"
+    # Session stays usable after the guard's rollback — the follow-up
+    # queries the /game/finish handler runs on the same session must work.
+    assert db.query(GameEvent).filter_by(id=event.id).count() == 1
+    assert any(
+        "AnalyticsLogger failed" in rec.message for rec in caplog.records
+    ), "the swallowed failure must still be visible to operators"

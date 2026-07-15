@@ -220,9 +220,22 @@ class ChatTurnModel(BaseModel):
     @field_validator("content")
     @classmethod
     def validate_content(cls, v: str, info: ValidationInfo) -> str:
-        # 2000-char cap applies to EVERY turn (both roles), unconditionally.
+        # 2000-char cap: USER turns (and unknown roles — fail closed) are
+        # rejected outright; an oversized user turn is a hostile or buggy
+        # caller.  ASSISTANT turns are TRUNCATED instead: the coach's own
+        # replies are budgeted by CHAT_MAX_COMPLETION_TOKENS (500 tokens ≈
+        # up to ~2500 chars), so a verbose-but-legitimate reply can exceed
+        # 2000 — and rejecting it on replay would 422 every subsequent
+        # /chat call in the thread (the "Coach is offline" wedge) until
+        # the turn ages out of the client's history window.  History is
+        # prompt context only; a truncated tail loses nothing load-bearing.
+        # ``role`` is validated before ``content`` (declaration order,
+        # pinned by a field-order test), so it is available here.
         if len(v) > 2000:
-            raise ValueError("message content too long (max 2000 chars)")
+            if info.data.get("role") == "assistant":
+                v = v[:2000]
+            else:
+                raise ValueError("message content too long (max 2000 chars)")
         if not v:
             return v
         # Only the coach's OWN assistant turns are trusted server output

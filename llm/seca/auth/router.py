@@ -67,7 +67,21 @@ _is_sqlite = DATABASE_URL.startswith("sqlite")
 if _is_sqlite:
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 else:
-    engine = create_engine(DATABASE_URL)
+    # Production (Postgres) pool sizing.  The SQLAlchemy default
+    # (pool_size=5, max_overflow=10) capped each worker at 15 concurrent
+    # checked-out connections — and because request sessions used to stay
+    # checked out across the 15-45 s LLM call, a burst of slow chats could
+    # starve EVERY authenticated route (the /chat and /live/move handlers
+    # now also commit before that call to release early — see server.py).
+    # ``pool_pre_ping`` turns Hetzner-Postgres idle drops into a silent
+    # reconnect instead of a user-facing 500 on the next checkout.
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_size=int(os.getenv("SECA_DB_POOL_SIZE", "10")),
+        max_overflow=int(os.getenv("SECA_DB_MAX_OVERFLOW", "20")),
+        pool_timeout=int(os.getenv("SECA_DB_POOL_TIMEOUT", "30")),
+    )
 
 SessionLocal = sessionmaker(bind=engine)
 

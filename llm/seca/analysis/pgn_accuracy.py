@@ -187,6 +187,7 @@ def compute_accuracy_from_pgn(
     result: str,
     movetime_ms: int = 200,
     max_plies: int = _MAX_PLIES_ANALYSED,
+    player_color: chess.Color | None = None,
 ) -> AccuracyAnalysis:
     """Re-analyse ``pgn_text`` and return canonical accuracy + weakness.
 
@@ -200,6 +201,14 @@ def compute_accuracy_from_pgn(
         The player's reported outcome ("win" / "loss" / "draw").
         Combined with the PGN's Result tag to infer which side was
         the player — see ``_infer_player_color``.
+    player_color:
+        The player's side, when the caller KNOWS it (imported games
+        carry ``GameEvent.player_color``).  Overrides the Result-tag
+        inference, which cannot resolve draws (``_infer_player_color``
+        defaults every draw to White — acceptable for the aggregate
+        accuracy heuristic it was written for, wrong for the per-side
+        review payload: a drawn game the user played as Black would
+        report the OPPONENT's accuracy and blunder counts).
     movetime_ms:
         Per-move analysis budget.  Defaults to 200 ms (raised from
         50 ms on 2026-05-20 — see module docstring "Performance
@@ -224,7 +233,8 @@ def compute_accuracy_from_pgn(
     if game is None:
         raise ValueError("PGN could not be parsed")
 
-    player_color = _infer_player_color(game, result)
+    if player_color is None:
+        player_color = _infer_player_color(game, result)
     board = game.board()
 
     losses_cp: list[int] = []
@@ -355,7 +365,24 @@ def _evaluate_cp(
     eval_type = evaluation.get("type")
     value = int(evaluation.get("value", 0))
     if eval_type == "mate":
-        return _MATE_VALUE_CP if value > 0 else -_MATE_VALUE_CP
+        if value > 0:
+            return _MATE_VALUE_CP
+        if value < 0:
+            return -_MATE_VALUE_CP
+        # ``mate 0`` — the position IS checkmate.  The pool's
+        # ``int(mate_in or 0)`` collapses python-chess's MateGiven /
+        # Mate(-0) distinction to plain 0, destroying the winner's sign
+        # (the extract_engine_signal._terminal_mate_winner hazard,
+        # 2026-06-19 incident).  Re-derive from the position: the side
+        # to move in a checkmate position is the LOSER.  Without this,
+        # the game-WINNING move scores as a ±2×mate-value swing against
+        # the winner and the imported-game review grades it a blunder.
+        board = chess.Board(fen)
+        if board.is_checkmate():
+            return -_MATE_VALUE_CP if board.turn == chess.WHITE else _MATE_VALUE_CP
+        # Defensive: a mate-0 report on a non-checkmate board shouldn't
+        # happen; treat as neutral rather than guessing a winner.
+        return 0
     return value
 
 

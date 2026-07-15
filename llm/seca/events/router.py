@@ -666,6 +666,12 @@ def _finish_game_body(
                 for r in generate_training_recommendations(stats)
             ]
     except Exception:
+        # Rollback before the next ORM call, mirroring the SkillUpdater
+        # block above: a DB failure inside the pipeline leaves the txn
+        # aborted on Postgres, and the rest of this handler (mistake
+        # extraction, GameFinishResult write, response reads) would then
+        # cascade to a 500 even though the GameEvent already committed.
+        db.rollback()
         logger.exception("HistoricalAnalysisPipeline failed; recommendations omitted")
 
     # Mistake-replay extraction (Phase 3).  Cheap piggy-back on the

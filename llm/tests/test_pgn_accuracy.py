@@ -29,6 +29,8 @@ import pytest
 
 from llm.seca.analysis.pgn_accuracy import (
     AccuracyAnalysis,
+    _MATE_VALUE_CP,
+    _evaluate_cp,
     compute_accuracy_from_pgn,
 )
 from llm.seca.events.router import _resolve_authoritative_accuracy
@@ -623,3 +625,95 @@ def test_recent_weakness_loop_does_not_shadow_authoritative():
         "the bandit call.  See pgn_accuracy.py + the PR-5 reviewer "
         "notes for the regression history."
     )
+
+
+# ---------------------------------------------------------------------------
+# PGNACC_UNIT_MATE0 — terminal-mate ("mate 0") sign handling in _evaluate_cp
+# ---------------------------------------------------------------------------
+
+
+class _FakeMatePool:
+    """Pool stand-in that always reports a mate evaluation with the given
+    value — including the sign-destroyed ``value=0`` shape the real pool
+    emits for a terminal checkmate (``int(mate_in or 0)`` collapses
+    python-chess's MateGiven / Mate(-0) both to plain 0)."""
+
+    def __init__(self, value: int):
+        self._value = value
+
+    def evaluate_position(self, *, fen, movetime_ms, queue_timeout_ms=None):
+        return {"evaluation": {"type": "mate", "value": self._value}}
+
+
+class TestEvaluateCpTerminalMateSign:
+    """PGNACC_UNIT_MATE0: a ``mate 0`` evaluation must be signed by the
+    BOARD (the side to move in a checkmate position is the loser), not
+    by the sign-collapsed value.  Before the fix, the game-WINNING move
+    of a White win scored as a ~2×mate-value swing against the winner
+    and the imported-game review graded it a catastrophic blunder."""
+
+    # Scholar's mate — BLACK to move, checkmated: White won.
+    _WHITE_MATES_FEN = "r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4"
+    # Fool's mate — WHITE to move, checkmated: Black won.
+    _BLACK_MATES_FEN = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"
+
+    def test_mate_zero_white_won_is_positive(self):
+        board = chess.Board(self._WHITE_MATES_FEN)
+        assert board.is_checkmate() and board.turn == chess.BLACK  # precondition
+        assert _evaluate_cp(_FakeMatePool(0), self._WHITE_MATES_FEN, 200) == _MATE_VALUE_CP
+
+    def test_mate_zero_black_won_is_negative(self):
+        board = chess.Board(self._BLACK_MATES_FEN)
+        assert board.is_checkmate() and board.turn == chess.WHITE  # precondition
+        assert _evaluate_cp(_FakeMatePool(0), self._BLACK_MATES_FEN, 200) == -_MATE_VALUE_CP
+
+    def test_nonzero_mate_signs_preserved(self):
+        start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        assert _evaluate_cp(_FakeMatePool(3), start, 200) == _MATE_VALUE_CP
+        assert _evaluate_cp(_FakeMatePool(-2), start, 200) == -_MATE_VALUE_CP
+
+    def test_mate_zero_on_non_checkmate_board_is_neutral(self):
+        """Defensive branch: a mate-0 report on a board that is NOT
+        checkmate (shouldn't happen) returns 0 rather than guessing."""
+        start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        assert _evaluate_cp(_FakeMatePool(0), start, 200) == 0
+
+
+# ---------------------------------------------------------------------------
+# PGNACC_UNIT_COLOR — explicit player_color override for draws
+# ---------------------------------------------------------------------------
+
+
+class TestPlayerColorOverride:
+    """PGNACC_UNIT_COLOR: ``player_color`` overrides the Result-tag
+    inference.  ``_infer_player_color`` defaults every DRAW to White —
+    acceptable for the aggregate accuracy heuristic it was written for,
+    wrong for the per-side review payload: a drawn game the user played
+    as Black reported the OPPONENT's accuracy and blunder counts.
+    Imported rows know the side (``GameEvent.player_color``) and the
+    review service now passes it through."""
+
+    def test_draw_without_override_keeps_legacy_white_default(self):
+        pgn = _pgn(["e4", "e5", "Nf3", "Nf6"], result="1/2-1/2")
+        analysis = compute_accuracy_from_pgn(pgn, _FakeEvalPool(cp_by_fen={}), result="draw")
+        assert analysis.player_color == chess.WHITE
+
+    def test_explicit_black_override_wins_for_draws(self):
+        pgn = _pgn(["e4", "e5", "Nf3", "Nf6"], result="1/2-1/2")
+        analysis = compute_accuracy_from_pgn(
+            pgn,
+            _FakeEvalPool(cp_by_fen={}),
+            result="draw",
+            player_color=chess.BLACK,
+        )
+        assert analysis.player_color == chess.BLACK
+
+    def test_override_matches_inference_on_decisive_games(self):
+        """On win/loss games the inference already resolves correctly —
+        the override must agree with it, not fight it."""
+        pgn = _pgn(["e4", "e5", "Nf3", "Nf6"], result="1-0")
+        inferred = compute_accuracy_from_pgn(pgn, _FakeEvalPool(cp_by_fen={}), result="win")
+        overridden = compute_accuracy_from_pgn(
+            pgn, _FakeEvalPool(cp_by_fen={}), result="win", player_color=chess.WHITE
+        )
+        assert inferred.player_color == overridden.player_color == chess.WHITE

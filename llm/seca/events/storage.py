@@ -57,15 +57,28 @@ class EventStorage:
             raise
         self.db.refresh(event)
 
-        AnalyticsLogger(self.db).log(
-            event_type=EventType.GAME_FINISHED,
-            player_id=str(player_id),
-            payload={
-                "result": result,
-                "accuracy": accuracy,
-                "weaknesses": weaknesses,
-            },
-        )
+        try:
+            AnalyticsLogger(self.db).log(
+                event_type=EventType.GAME_FINISHED,
+                player_id=str(player_id),
+                payload={
+                    "result": result,
+                    "accuracy": accuracy,
+                    "weaknesses": weaknesses,
+                },
+            )
+        except Exception:
+            # Telemetry must never fail the finish: the GameEvent above is
+            # already committed, so letting the analytics INSERT propagate
+            # would 500 a request whose load-bearing write succeeded ("game
+            # saved yet the user sees an error") AND leave the session in
+            # InFailedSqlTransaction for the caller's follow-up queries —
+            # the same cascade class as the 2026-05-15 incident (PR #165).
+            self.db.rollback()
+            logger.exception(
+                "AnalyticsLogger failed for GAME_FINISHED; event %s already stored",
+                event.id,
+            )
 
         return event
 

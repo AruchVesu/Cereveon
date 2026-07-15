@@ -72,6 +72,7 @@ from llm.seca.coach.live_move_pipeline import (
     _QUALITY_COMMENT_DIFFICULT,
     generate_live_reply,
 )
+from llm.seca.explainer.safe_explainer import SafeExplainer
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -740,6 +741,61 @@ class TestFallbackGateSafetySweep:
                             f"Quality comment [{grade!r}][{style!r}] matches the "
                             f"forbidden pattern `{pattern}`: {sentence!r} — this "
                             f"would 500 /live/move at the boundary re-validator."
+                        )
+
+    @pytest.mark.parametrize("player_color", ("white", "black", "unknown"))
+    @pytest.mark.parametrize(
+        "kwargs",
+        _SIGNAL_KWARGS,
+        ids=lambda k: f"{k.get('eval_type', 'cp')}-{k['band']}-{k['side']}",
+    )
+    @pytest.mark.parametrize("quality", _QUALITIES)
+    def test_advanced_hint_with_safe_explainer_base_passes_all_gates(
+        self, quality, kwargs, player_color
+    ):
+        """The ADVANCED style surfaces SafeExplainer's base_explanation
+        verbatim (live_move_pipeline deterministic tail) — the exact
+        composition the original sweep passed ``""`` for.  That gap
+        500'd /live/move in production: ``_QUALITY_MESSAGES["best"]``
+        carried the literal "best move" bigram, the boundary's
+        FORBIDDEN_PATTERNS rejected the deterministic hint, and the
+        handler's deterministic re-validate is (deliberately) uncaught.
+        Fires for every degraded-tier advanced-style user whose move
+        graded ``best``, and for all advanced users during LLM outages."""
+        signal = _make_signal(move_quality=quality, **kwargs)
+        base = SafeExplainer().explain(signal, player_color=player_color)
+        assert base.strip(), f"Empty base explanation for {quality}/{kwargs}"
+        hint = _build_hint(
+            _UCI_NORMAL,
+            signal,
+            base,
+            explanation_style="advanced",
+            player_color=player_color,
+        )
+        assert hint.strip()
+        validate_mode_2_negative(hint)
+        validate_mode_2_structure(hint)
+        validate_mode_2_semantic(hint, signal)
+
+    def test_safe_explainer_tables_never_match_forbidden_patterns(self):
+        """Direct drift guard on SafeExplainer's canned strings (quality
+        grades + evaluation bands), mirroring the _QUALITY_COMMENT guard
+        above — a future lexical-gate addition that collides with a
+        SafeExplainer sentence fails HERE naming the exact string."""
+        tables = {
+            "_QUALITY_MESSAGES": SafeExplainer._QUALITY_MESSAGES,
+            "_BAND_MESSAGES": SafeExplainer._BAND_MESSAGES,
+        }
+        for table_name, table in tables.items():
+            for grade, by_level in table.items():
+                for level, sentence in by_level.items():
+                    for pattern in FORBIDDEN_PATTERNS:
+                        assert not re.search(pattern, sentence, re.IGNORECASE), (
+                            f"SafeExplainer.{table_name}[{grade!r}][{level!r}] "
+                            f"matches the forbidden pattern `{pattern}`: "
+                            f"{sentence!r} — the advanced-style /live/move "
+                            f"deterministic hint embeds this verbatim and would "
+                            f"500 at the boundary re-validator."
                         )
 
 

@@ -87,15 +87,22 @@ class _FakeEngine:
     for ``engine.analyse(board, limit)`` to return the shape the
     /engine/eval handler reads."""
 
-    def __init__(self, score_cp: int | None, best_move_uci: str | None):
+    def __init__(self, score_cp: int | None, best_move_uci: str | None, pov_score=None):
         self._score_cp = score_cp
         self._best_move_uci = best_move_uci
+        # Optional pre-built ``chess.engine.PovScore`` — lets mate-score
+        # tests inject the exact object shape ``analyse`` produces for
+        # terminal positions (MateGiven / Mate(-0)), which a Cp wrapper
+        # cannot express.
+        self._pov_score = pov_score
 
     def analyse(self, _board, _limit):
         import chess.engine  # noqa: PLC0415
 
         info: dict = {}
-        if self._score_cp is not None:
+        if self._pov_score is not None:
+            info["score"] = self._pov_score
+        elif self._score_cp is not None:
             info["score"] = chess.engine.PovScore(chess.engine.Cp(self._score_cp), chess.WHITE)
         if self._best_move_uci is not None:
             info["pv"] = [chess.Move.from_uci(self._best_move_uci)]
@@ -237,6 +244,119 @@ class TestEngineEvalContractSchema:
         assert result["source"] == "unavailable"
         assert result["score"] is None
         assert result["best_move"] is None
+
+
+class TestEngineEvalTerminalMateSign:
+    """``score mate 0`` (the position IS checkmate) sign handling.
+
+    python-chess collapses BOTH mate-0 directions to ``.mate() == 0``
+    (``MateGiven`` when White delivered mate, ``Mate(-0)`` when White is
+    mated), so ``10000 if mate_in > 0 else -10000`` always answered
+    -10000 — the eval badge showed "Black completely winning" even when
+    White had just delivered mate.  The handler now re-derives the
+    winner from the board: the side to move in a checkmate position is
+    the LOSER.  Same hazard class as
+    ``extract_engine_signal._terminal_mate_winner`` (2026-06-19).
+    """
+
+    # Scholar's mate — BLACK is to move and checkmated; White won.
+    _WHITE_MATES_FEN = "r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4"
+    # Fool's mate — WHITE is to move and checkmated; Black won.
+    _BLACK_MATES_FEN = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"
+
+    def _run(self, monkeypatch, *, fen, pov_score):
+        import llm.server as server_module
+
+        fake_pool = _FakeEnginePool(_FakeEngine(None, None, pov_score=pov_score))
+        monkeypatch.setattr(server_module, "engine_pool", fake_pool)
+        monkeypatch.setattr(server_module.limiter, "enabled", False)
+        return server_module.engine_eval(
+            req=server_module.EngineEvalRequest(fen=fen),
+            request=MagicMock(),
+            _=None,
+        )
+
+    def test_mate_zero_white_delivered_mate_scores_positive(self, monkeypatch):
+        import chess
+        import chess.engine
+
+        board = chess.Board(self._WHITE_MATES_FEN)
+        assert board.is_checkmate() and board.turn == chess.BLACK  # precondition
+        result = self._run(
+            monkeypatch,
+            fen=self._WHITE_MATES_FEN,
+            pov_score=chess.engine.PovScore(chess.engine.MateGiven, chess.WHITE),
+        )
+        assert result["score"] == 10000, (
+            "White just delivered mate — the White-POV score must be +10000, "
+            f"got {result['score']} (the pre-fix bug returned -10000)."
+        )
+
+    def test_mate_zero_black_delivered_mate_scores_negative(self, monkeypatch):
+        import chess
+        import chess.engine
+
+        board = chess.Board(self._BLACK_MATES_FEN)
+        assert board.is_checkmate() and board.turn == chess.WHITE  # precondition
+        result = self._run(
+            monkeypatch,
+            fen=self._BLACK_MATES_FEN,
+            pov_score=chess.engine.PovScore(chess.engine.Mate(0), chess.WHITE),
+        )
+        assert result["score"] == -10000
+
+    def test_nonzero_mate_signs_preserved(self, monkeypatch):
+        import chess
+        import chess.engine
+
+        start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        plus = self._run(
+            monkeypatch,
+            fen=start,
+            pov_score=chess.engine.PovScore(chess.engine.Mate(3), chess.WHITE),
+        )
+        minus = self._run(
+            monkeypatch,
+            fen=start,
+            pov_score=chess.engine.PovScore(chess.engine.Mate(-2), chess.WHITE),
+        )
+        assert plus["score"] == 10000 and minus["score"] == -10000
+
+
+class TestChatTurnLengthContract:
+    """ChatTurnModel content-length semantics (docs/API_CONTRACTS.md
+    /chat `messages` row).
+
+    USER turns over 2000 chars are rejected (422 semantics) — client-side
+    cap is 2000, so an oversized user turn is a hostile or buggy caller.
+    ASSISTANT turns over 2000 chars are TRUNCATED, not rejected: the
+    coach's own replies are budgeted at 500 completion tokens (≈ up to
+    ~2500 chars), and rejecting a long reply on history replay 422'd
+    every subsequent /chat call in the thread — the "Coach is offline"
+    wedge.
+    """
+
+    def test_user_turn_over_cap_rejected(self):
+        from pydantic import ValidationError as _VE
+
+        from llm.server_schemas import ChatTurnModel
+
+        with pytest.raises(_VE, match="too long"):
+            ChatTurnModel(role="user", content="x" * 2001)
+
+    def test_assistant_turn_over_cap_truncated_not_rejected(self):
+        from llm.server_schemas import ChatTurnModel
+
+        turn = ChatTurnModel(role="assistant", content="y" * 2500)
+        assert len(turn.content) == 2000
+        assert turn.content == "y" * 2000
+
+    def test_turns_at_cap_pass_unchanged_for_both_roles(self):
+        from llm.server_schemas import ChatTurnModel
+
+        for role in ("user", "assistant"):
+            turn = ChatTurnModel(role=role, content="z" * 2000)
+            assert turn.content == "z" * 2000
 
 
 # ---------------------------------------------------------------------------

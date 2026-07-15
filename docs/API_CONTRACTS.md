@@ -244,7 +244,7 @@ is wire-backward-compatible with any unknown client.
 | Field | Type | Constraints |
 |-------|------|-------------|
 | `fen` | `string` | Valid FEN or `"startpos"` |
-| `messages` | `array` | ≤ 50 turns; each message content ≤ 2000 chars |
+| `messages` | `array` | ≤ 50 turns. `user`-turn content ≤ 2000 chars (422 above). `assistant`-turn content over 2000 chars is **truncated server-side**, not rejected: the coach's own replies are budgeted at 500 completion tokens (≈ up to ~2500 chars), so a legitimate reply can exceed the cap — rejecting it on history replay would 422 every later `/chat` call in the thread ("Coach is offline" wedge). History is prompt context only. |
 | `player_profile` | `object \| null` | Optional — keys: `skill_estimate`, `common_mistakes`, `strengths` |
 | `past_mistakes` | `string[] \| null` | Optional — ≤ 20 items |
 | `move_count` | `int \| null` | Optional — 0–10 000; injects "This is move N of the game." into the context block |
