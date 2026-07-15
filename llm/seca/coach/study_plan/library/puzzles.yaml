@@ -9,10 +9,26 @@
 #   difficulty:         string, one of beginner / intermediate / advanced
 #   fen:                string, parseable via chess.Board(fen)
 #   expected_move_uci:  string, MUST be a legal move in the FEN
+#   solution_line_uci:  OPTIONAL string, space-separated UCI walk of the
+#                       full solution (solver moves at even indices,
+#                       opponent replies at odd).  Must start with
+#                       expected_move_uci and replay legally from the FEN.
+#                       Absent = single-decision puzzle.
 #   description:        string, short operator-facing note (no LLM input
 #                       — never shown to users; for corpus review)
 #
-# Phase-3 seed: ~1 puzzle per theme, intentionally simple + verifiable.
+# ROLE CONVENTION (2026-07-15, launch feedback): the side to move is the
+# STUDENT, and the puzzle must put them in the seat their mistake was made
+# in.  Defence themes (queen_safety, hung_piece, back_rank, king_safety)
+# drill SAVING YOUR OWN queen / piece / back rank — never capturing the
+# opponent's.  Exploit themes (fork, pin) drill finding the tactic the
+# player missed.  The corpus carries both White- and Black-to-move entries
+# for the defence themes so the fallback path can serve either colour.
+#
+# Every expected_move_uci must be a clearly-best move (verified by
+# /training/verify-replay against the local engine at drill time), so keep
+# positions sterile: one obviously right idea, no side tactics.
+#
 # Tempo is left empty in v1 — the LLM rarely picks that tag in practice
 # and the library lookup falls back to "generic" cleanly.  Expand by
 # adding entries below; the loader validates every row at startup.
@@ -22,42 +38,43 @@
   difficulty: beginner
   fen: "r1bqk1nr/ppp2ppp/2np4/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQK2R w KQkq - 0 5"
   expected_move_uci: "e1g1"
-  description: "Italian Game, move 5 for White. Both sides developed; the king is exposed in the centre. Castle kingside to tuck the king behind the pawn shield and connect the rooks."
+  description: "Italian Game, move 5 for White. Both sides developed; the king is exposed in the centre. Castle kingside to tuck the king behind the pawn shield and connect the rooks. (Defend-role: secure your own king.)"
 
 - id: fk_001
   theme: fork
   difficulty: intermediate
   fen: "7k/4q3/8/4N3/8/8/8/K7 w - - 0 1"
   expected_move_uci: "e5g6"
-  description: "Knight fork drill. White knight jumps to g6, attacking the king on h8 and the queen on e7 simultaneously. Black must move the king out of check; White captures the queen on the next move. (White king tucked on a1 so the knight isn't pinned to its own king down the e-file by the black queen.)"
+  solution_line_uci: "e5g6 h8g8 g6e7"
+  description: "Knight fork drill (exploit-role: the player MISSED a fork like this). White knight jumps to g6, attacking the king on h8 and the queen on e7 simultaneously. Black's only try ...Kg8 walks into Nxe7+ — actually a royal fork again; the line lets the drill walk the full win of the queen. (White king tucked on a1 so the knight isn't pinned to its own king down the e-file by the black queen.)"
 
 - id: pn_001
   theme: pin
   difficulty: intermediate
   fen: "4k3/4q3/8/8/8/8/8/4R2K w - - 0 1"
   expected_move_uci: "e1e7"
-  description: "Absolute pin against the king. The black queen on e7 is pinned to the king on e8 by the rook on the open e-file. The queen cannot legally move (would expose the king); the rook captures it for free."
+  description: "Absolute pin against the king (exploit-role). The black queen on e7 is pinned to the king on e8 by the rook on the open e-file. The queen cannot legally move (would expose the king); the rook captures it for free."
 
 - id: br_001
   theme: back_rank
   difficulty: intermediate
-  fen: "6k1/5ppp/8/8/8/8/8/4R2K w - - 0 1"
-  expected_move_uci: "e1e8"
-  description: "Classic back-rank mate. Black king on g8 is hemmed in by its own f7/g7/h7 pawn shield (no escape square on the 7th rank). White's rook delivers checkmate by landing on the 8th rank."
+  fen: "6k1/5ppp/8/8/8/8/5PPP/3rR1K1 w - - 0 1"
+  expected_move_uci: "e1d1"
+  description: "Back-rank DEFENCE (defend-role: the player's own back rank was weak). A black rook has infiltrated to d1 on White's first rank, eyeing the e1 rook — with the king boxed in by its own pawn shield, losing control of that rank is fatal. The infiltrator is undefended: capture it with the rook. Rxd1 is the only move that both holds the rank and wins material."
 
 - id: hp_001
   theme: hung_piece
   difficulty: beginner
-  fen: "4k3/8/8/8/3b4/4Q3/8/4K3 w - - 0 1"
-  expected_move_uci: "e3d4"
-  description: "Hanging bishop. Black's bishop sits on d4 with no defenders within range; White's queen on e3 attacks it along the long diagonal. Capture the free piece."
+  fen: "6k1/5ppp/8/4p3/3N4/8/5PPP/6K1 w - - 0 1"
+  expected_move_uci: "d4f5"
+  description: "Save the attacked piece (defend-role: the player HUNG a piece; the drill is noticing your own piece is en prise). Black's e5 pawn attacks the white knight on d4. Any safe square saves it — f5 is the most active perch; standing still or hopping to e6 (covered by f7) loses the knight for nothing."
 
 - id: qs_001
   theme: queen_safety
   difficulty: beginner
-  fen: "rnb1kbnr/ppp1pppp/8/3pq3/5B2/3P4/PPP1PPPP/RN1QKBNR w KQkq - 0 4"
-  expected_move_uci: "f4e5"
-  description: "Early-queen punishment. Black's queen came out too early to e5; White's dark-squared bishop on f4 captures it. The dark-square diagonal is the queen's blind spot when undefended."
+  fen: "6k1/5ppp/5b2/8/7Q/8/5PPP/6K1 w - - 0 1"
+  expected_move_uci: "h4e4"
+  description: "Save the attacked queen (defend-role: the player's own queen was harassed/lost). The bishop on f6 attacks the white queen on h4, and the bishop is defended by the g7 pawn — capturing it loses queen for bishop. Step the queen to safety; e4 is the most active safe square (d4 and g5 stay on the bishop's diagonals, h6 is covered by g7)."
 
 - id: op_001
   theme: opening_principles
@@ -88,52 +105,62 @@
   description: "Open-file rook capture. The black knight on e6 sits on the same file as White's rook on e3; nothing blocks the attack and the knight has no defender. The rook captures with check (the king on e8 is now attacked along the e-file)."
 
 # --- Second puzzle per named theme (day-7 stays on-theme) ---------------------
-# Added so a thin theme no longer forces the day-7 slot onto a generic backfill:
-# every named theme below now carries two entries.  Tempo stays intentionally
-# empty (positional_play draws from king-safety).  Each expected_move_uci is a
-# forcing / clearly-best move so /training/verify-replay accepts it.
+# Every named theme carries two entries so a thin theme doesn't force the
+# day-7 slot onto a generic backfill.  For the defence themes the second
+# entry is BLACK to move, so the corpus fallback can side-match either
+# colour.  Tempo stays intentionally empty (positional_play draws from
+# king-safety).  Each expected_move_uci is a forcing / clearly-best move so
+# /training/verify-replay accepts it.
 
 - id: ks_002
   theme: king_safety
   difficulty: beginner
   fen: "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQK2R w KQkq - 2 5"
   expected_move_uci: "e1g1"
-  description: "Giuoco Piano, move 5 for White. Both sides are developed but the king still sits in the centre. Castle kingside to tuck it behind the pawn shield and connect the rooks — the fundamental king-safety move."
+  description: "Giuoco Piano, move 5 for White. Both sides are developed but the king still sits in the centre. Castle kingside to tuck it behind the pawn shield and connect the rooks — the fundamental king-safety move. (Defend-role: secure your own king.)"
 
 - id: fk_002
   theme: fork
   difficulty: intermediate
   fen: "q3k3/8/8/1N6/8/8/8/4K3 w - - 0 1"
   expected_move_uci: "b5c7"
-  description: "Knight fork winning the queen. The knight leaps to c7, checking the king on e8 and simultaneously attacking the queen on a8. The king must step out of check; the knight takes the queen next move."
+  solution_line_uci: "b5c7 e8d7 c7a8"
+  description: "Knight fork winning the queen (exploit-role). The knight leaps to c7, checking the king on e8 and simultaneously attacking the queen on a8. The king must step out of check (...Kd7 is typical); the knight takes the queen. The line walks both solver moves."
 
 - id: pn_002
   theme: pin
   difficulty: intermediate
   fen: "R4q1k/8/8/8/8/8/8/6K1 w - - 0 1"
   expected_move_uci: "a8f8"
-  description: "Back-rank pin. The black queen on f8 is pinned to the king on h8 along the 8th rank by the rook on a8 — it cannot leave the rank without exposing the king. The rook captures it for free; the king on h8 is too far to recapture on f8."
+  description: "Back-rank pin (exploit-role). The black queen on f8 is pinned to the king on h8 along the 8th rank by the rook on a8 — it cannot leave the rank without exposing the king. The rook captures it for free; the king on h8 is too far to recapture on f8."
 
 - id: br_002
   theme: back_rank
   difficulty: intermediate
-  fen: "6k1/5ppp/8/8/8/8/8/R6K w - - 0 1"
-  expected_move_uci: "a1a8"
-  description: "Back-rank mate. The black king on g8 is boxed in by its own f7/g7/h7 pawns. The rook swings to a8 and delivers checkmate along the empty 8th rank."
+  fen: "3Rr1k1/5ppp/8/8/8/8/5PPP/6K1 b - - 0 1"
+  expected_move_uci: "e8d8"
+  description: "Back-rank DEFENCE, Black to move (defend-role mirror of br_001). A white rook has infiltrated to d8 on Black's back rank, eyeing the e8 rook with the black king boxed in by f7/g7/h7. The infiltrator is undefended: ...Rxd8 is the only move that holds the rank and wins material."
 
 - id: hp_002
   theme: hung_piece
   difficulty: beginner
-  fen: "4k3/8/8/8/b7/8/8/R3K3 w - - 0 1"
-  expected_move_uci: "a1a4"
-  description: "Hanging bishop. The black bishop on a4 has wandered off with no defender; White's rook on a1 slides up the open a-file and wins it for nothing."
+  fen: "6k1/5ppp/8/3n4/4P3/8/5PPP/6K1 b - - 0 1"
+  expected_move_uci: "d5f4"
+  description: "Save the attacked piece, Black to move (defend-role mirror of hp_001). White's e4 pawn attacks the black knight on d5. Any safe square saves it — f4 is the most active; standing still loses the knight for nothing."
 
 - id: qs_002
   theme: queen_safety
   difficulty: beginner
-  fen: "4k3/8/8/8/7q/6P1/8/4K3 w - - 0 1"
-  expected_move_uci: "g3h4"
-  description: "Early-queen punishment. The black queen raided to h4 with no support; the modest g3 pawn simply captures it. Bringing the queen out early exposes it to exactly this kind of pawn hit."
+  fen: "6k1/5ppp/8/7q/8/5B2/5PPP/6K1 b - - 0 1"
+  expected_move_uci: "h5e5"
+  description: "Save the attacked queen, Black to move (defend-role mirror of qs_001). The bishop on f3 attacks the black queen on h5, and the bishop is defended by the g2 pawn — capturing loses queen for bishop. Step the queen to safety; e5 is the most active safe square (d5 and g4 stay on the bishop's diagonals, h3 is covered by g2)."
+
+- id: ks_003
+  theme: king_safety
+  difficulty: beginner
+  fen: "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N1P/PPP2PP1/RNBQK2R b KQkq - 0 5"
+  expected_move_uci: "e8g8"
+  description: "Giuoco Piano, move 5 for Black (after 1.e4 e5 2.Nf3 Nc6 3.Bc4 Nf6 4.d3 Bc5 5.h3). Black is fully developed on the kingside; castle to tuck the king behind the f7/g7/h7 shield. Black-to-move king-safety coverage for the corpus fallback."
 
 - id: op_002
   theme: opening_principles

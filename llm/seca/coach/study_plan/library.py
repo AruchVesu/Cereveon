@@ -108,6 +108,16 @@ class LibraryPuzzle:
     * ``expected_move_uci`` must be a legal move in ``fen`` (so a
       puzzle that lost its expected move during edit doesn't ship
       a broken position to a player)
+    * ``solution_line_uci`` (optional in YAML, space-separated) must start
+      with ``expected_move_uci`` and replay legally from ``fen``
+
+    ``solution_line_uci`` is the full known solution walk (solver moves at
+    even indices, opponent replies at odd ones).  ``()`` means the puzzle is
+    a single-decision drill whose whole solution is ``expected_move_uci`` —
+    the shape every corpus entry had before multi-move support, and the
+    default for entries that don't declare a line.  Lichess-sourced puzzles
+    (adapted through ``lichess_puzzles._to_library_puzzle``) carry the full
+    upstream line here.
     """
 
     id: str
@@ -116,6 +126,7 @@ class LibraryPuzzle:
     fen: str
     expected_move_uci: str
     description: str
+    solution_line_uci: tuple[str, ...] = ()
 
 
 class LibraryValidationError(ValueError):
@@ -245,6 +256,8 @@ def _validate_entry(entry: object, source: str, seen_ids: set[str]) -> LibraryPu
             f"{expected_move_uci!r} is not a legal move in FEN {fen!r}"
         )
 
+    solution_line = _validate_solution_line(entry, source, puzzle_id, fen, expected_move_uci)
+
     return LibraryPuzzle(
         id=puzzle_id,
         theme=theme,
@@ -252,7 +265,59 @@ def _validate_entry(entry: object, source: str, seen_ids: set[str]) -> LibraryPu
         fen=fen,
         expected_move_uci=expected_move_uci,
         description=description,
+        solution_line_uci=solution_line,
     )
+
+
+def _validate_solution_line(
+    entry: dict,
+    source: str,
+    puzzle_id: str,
+    fen: str,
+    expected_move_uci: str,
+) -> tuple[str, ...]:
+    """Validate the OPTIONAL ``solution_line_uci`` field of one YAML entry.
+
+    When present it must be a space-separated UCI string that starts with
+    ``expected_move_uci`` (the two fields must agree or the client's
+    single-move fallback and the multi-move walk would drill different
+    moves) and must replay legally from ``fen``.  Absent -> ``()`` (a
+    single-decision puzzle).  Same fail-loud posture as the rest of the
+    loader: a bad line crashes startup, not a player's drill.
+    """
+    raw_line = entry.get("solution_line_uci")
+    if raw_line is None:
+        return ()
+    if not isinstance(raw_line, str) or not raw_line.strip():
+        raise LibraryValidationError(
+            f"{source}: puzzle {puzzle_id!r} solution_line_uci must be a "
+            f"non-empty space-separated string when present"
+        )
+
+    moves = raw_line.split()
+    if moves[0] != expected_move_uci:
+        raise LibraryValidationError(
+            f"{source}: puzzle {puzzle_id!r} solution_line_uci must start "
+            f"with expected_move_uci {expected_move_uci!r} (got {moves[0]!r})"
+        )
+
+    replay = chess.Board(fen)
+    for idx, uci in enumerate(moves):
+        try:
+            line_move = chess.Move.from_uci(uci)
+        except (ValueError, chess.InvalidMoveError) as exc:
+            raise LibraryValidationError(
+                f"{source}: puzzle {puzzle_id!r} solution_line_uci[{idx}] "
+                f"{uci!r} does not parse: {exc}"
+            ) from exc
+        if line_move not in replay.legal_moves:
+            raise LibraryValidationError(
+                f"{source}: puzzle {puzzle_id!r} solution_line_uci[{idx}] "
+                f"{uci!r} is not legal at that point in the line"
+            )
+        replay.push(line_move)
+
+    return tuple(moves)
 
 
 # Maps the aggregate ``MistakeCategory`` (from

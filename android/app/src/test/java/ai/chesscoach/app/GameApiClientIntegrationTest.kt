@@ -630,6 +630,63 @@ class GameApiClientIntegrationTest {
         assertNull((result as ApiResult.Success<*>).data)
     }
 
+    @Test
+    fun `INT_PLAN_TODAY_SOLUTION_LINE - today_puzzle decodes its walk line`() = runBlocking {
+        val withLine = """
+{
+  "plan_id": "p2",
+  "theme": "queen_safety",
+  "verdict": "",
+  "anchor_category": null,
+  "status": "active",
+  "total_days": 3,
+  "today_puzzle": {
+    "day_offset": 3,
+    "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2",
+    "expected_move_uci": "b8c6",
+    "solution_line_uci": ["b8c6", "f1c4", "g8f6"],
+    "source_type": "library",
+    "due_at": "2026-07-15T00:00:00"
+  },
+  "days": []
+}"""
+        server.enqueue(MockResponse().setResponseCode(200).setBody(withLine))
+        val result = client(token = "tok").getCoachPlanToday()
+        assertTrue(result is ApiResult.Success<*>)
+        val puzzle = ((result as ApiResult.Success<*>).data as CoachPlanResponse).todayPuzzle!!
+        assertEquals(listOf("b8c6", "f1c4", "g8f6"), puzzle.solutionLineUci)
+        assertEquals("b8c6", puzzle.expectedMoveUci)
+    }
+
+    @Test
+    fun `INT_PLAN_TODAY_SOLUTION_LINE_ABSENT - legacy today_puzzle defaults to empty walk`() =
+        runBlocking {
+            // A server predating solution_line_uci (or a day-0 original,
+            // which sends []) must decode to an empty list — the sheet then
+            // runs the single-decision drill.
+            val legacyPuzzle = """
+{
+  "plan_id": "p3",
+  "theme": "king_safety",
+  "verdict": "",
+  "total_days": 3,
+  "today_puzzle": {
+    "day_offset": 0,
+    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "expected_move_uci": "f3e5",
+    "source_type": "original",
+    "due_at": "2026-07-15T00:00:00"
+  },
+  "days": []
+}"""
+            server.enqueue(MockResponse().setResponseCode(200).setBody(legacyPuzzle))
+            val result = client(token = "tok").getCoachPlanToday()
+            assertTrue(result is ApiResult.Success<*>)
+            val puzzle =
+                ((result as ApiResult.Success<*>).data as CoachPlanResponse).todayPuzzle!!
+            assertTrue(puzzle.solutionLineUci.isEmpty())
+        }
+
     // ---------------------------------------------------------------------------
     // GET /puzzles/next — standalone puzzle trainer (docs/API_CONTRACTS.md §37)
     // ---------------------------------------------------------------------------

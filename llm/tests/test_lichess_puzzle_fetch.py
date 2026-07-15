@@ -14,7 +14,8 @@ fetcher tests monkeypatch ``fetch_puzzle_by_theme`` directly.
 
 Pinned invariants
 -----------------
-PZ_01  happy path derives solver FEN/side/move; solution[0] legal, side correct.
+PZ_01  happy path derives solver FEN/side/move; solution[0] legal, side correct,
+       and the FULL solution line is captured verbatim.
 PZ_02  illegal solution[0] in derived position -> LichessParseError (fail closed).
 PZ_03  missing/None initialPly -> LichessParseError.
 PZ_04  angle not in the allowlist -> ValueError (never touches the URL).
@@ -25,8 +26,10 @@ PZ_08  malformed JSON body -> LichessParseError.
 PZ_09  missing game/puzzle objects -> LichessParseError.
 PZ_10  request carries angle + difficulty as query params to /api/puzzle/next.
 PZ_11  pgn over the char cap -> LichessParseError.
+PZ_12  an illegal LATER solution ply -> LichessParseError (whole-line fail-closed).
 
-FV_01  two side-matched puzzles collected (distinct ids, wrong side skipped).
+FV_01  two side-matched multi-move puzzles collected (distinct ids, wrong side
+       skipped, early stop once two multi-move matches are in hand).
 FV_02  feature flag off -> [] with zero fetches.
 FV_03  theme with no Lichess slug -> [] with zero fetches.
 FV_04  every fetch errors -> [] (no exception escapes), bounded calls.
@@ -34,6 +37,19 @@ FV_05  rate-limit stops the batch early, returns what was collected.
 FV_06  call count is bounded by STUDY_PLAN_LICHESS_MAX_FETCHES.
 FV_07  duplicate ids are de-duplicated.
 FV_08  every _THEME_TO_ANGLE value is in the client's angle allowlist.
+FV_09  defend-role themes (queen_safety / hung_piece / king_safety /
+       back_rank) fetch the defensiveMove angle — the player practices
+       SAVING their own piece, never capturing the opponent's (launch
+       feedback: a queen-safety mistake served "attack the opponent's
+       queen" drills).
+FV_10  exploit-role themes (fork / pin) keep their own theme angle.
+FV_11  single-move side matches do NOT stop the hunt: the budget keeps
+       hunting for multi-move puzzles, and a multi-move match wins the
+       pair over an earlier single-move one.
+FV_12  the returned pair is ordered by rating ascending (day 3 easier,
+       day 7 harder); the full solution line survives the adaptation.
+FV_13  _difficulty_order starts at the player's band and stretches HARDER
+       before easier ("too easy" launch feedback).
 """
 
 from __future__ import annotations
@@ -161,7 +177,8 @@ def _puzzle_body(
 class TestFetchPuzzleByTheme:
     def test_happy_path_derives_solver_position(self, monkeypatch):
         """PZ_01 — replaying the pgn lands on the solver position where
-        solution[0] is legal, and the side to move is the solver's side."""
+        solution[0] is legal, the side to move is the solver's side, and the
+        FULL solution line is captured for the multi-move drill walk."""
         _patch_http(monkeypatch, body=_puzzle_body())
         puzzle = fetch_puzzle_by_theme("fork", difficulty="normal")
 
@@ -170,6 +187,7 @@ class TestFetchPuzzleByTheme:
         assert puzzle.rating == 1500
         assert "opening" in puzzle.themes
         assert puzzle.solver_move_uci == "a7a6"
+        assert puzzle.solution_line_uci == ("a7a6", "b5a4")
         assert puzzle.side == chess.BLACK
         board = chess.Board(puzzle.solver_fen)
         assert board.turn == chess.BLACK
@@ -180,6 +198,15 @@ class TestFetchPuzzleByTheme:
         rather than shipped as a broken puzzle."""
         _patch_http(monkeypatch, body=_puzzle_body(solution=["e2e4"]))  # e-pawn already moved
         with pytest.raises(LichessParseError, match="not legal"):
+            fetch_puzzle_by_theme("fork")
+
+    def test_illegal_later_solution_ply_fails_closed(self, monkeypatch):
+        """PZ_12 — the WHOLE line is validated, not just its first move: an
+        illegal ply deeper in the solution rejects the puzzle (a partially
+        legal line would strand the drill sheet mid-walk)."""
+        # After 3.Bb5 a6, White's e-pawn already sits on e4 — e2e4 is illegal.
+        _patch_http(monkeypatch, body=_puzzle_body(solution=["a7a6", "e2e4"]))
+        with pytest.raises(LichessParseError, match=r"solution\[1\] not legal"):
             fetch_puzzle_by_theme("fork")
 
     def test_missing_initial_ply_rejected(self, monkeypatch):
@@ -250,15 +277,22 @@ class TestFetchPuzzleByTheme:
 _WHITE_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 _BLACK_FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
 
+# Solution-line stand-ins.  ``plies=3`` (two solver decisions) is the shape
+# the fetcher prefers; ``plies=1`` is the degraded single-decision puzzle.
+_WHITE_LINE = ("e2e4", "e7e5", "g1f3")
+_BLACK_LINE = ("a7a6", "e4e5", "b7b6")
 
-def _lp(pid: str, side: chess.Color, rating: int = 1500) -> LichessPuzzle:
+
+def _lp(pid: str, side: chess.Color, rating: int = 1500, plies: int = 3) -> LichessPuzzle:
+    line = _BLACK_LINE if side == chess.BLACK else _WHITE_LINE
     return LichessPuzzle(
         id=pid,
         rating=rating,
         themes=("fork",),
         solver_fen=_BLACK_FEN if side == chess.BLACK else _WHITE_FEN,
-        solver_move_uci="a7a6" if side == chess.BLACK else "e2e4",
+        solver_move_uci=line[0],
         side=side,
+        solution_line_uci=line[:plies],
     )
 
 
@@ -282,7 +316,8 @@ class _QueuedFetch:
 
 class TestFetchSideMatchedVariants:
     def test_two_side_matched_collected(self, monkeypatch):
-        """FV_01 — keeps only the requested side, distinct ids, up to two."""
+        """FV_01 — keeps only the requested side, distinct ids, up to two;
+        stops as soon as two MULTI-MOVE side matches are in hand."""
         monkeypatch.setenv("STUDY_PLAN_LICHESS_ENABLED", "1")
         fake = _QueuedFetch(
             [_lp("b1", chess.BLACK), _lp("w1", chess.WHITE), _lp("b2", chess.BLACK)]
@@ -294,7 +329,7 @@ class TestFetchSideMatchedVariants:
         )
         assert [p.id for p in out] == ["lichess_b1", "lichess_b2"]
         assert all(chess.Board(p.fen).turn == chess.BLACK for p in out)
-        assert len(fake.calls) == 3  # stopped as soon as two matched
+        assert len(fake.calls) == 3  # stopped as soon as two multi-move matched
 
     def test_disabled_flag_short_circuits(self, monkeypatch):
         """FV_02 — flag off returns [] and never calls the client."""
@@ -309,13 +344,15 @@ class TestFetchSideMatchedVariants:
         assert fake.calls == []
 
     def test_unmapped_theme_short_circuits(self, monkeypatch):
-        """FV_03 — a theme with no Lichess slug returns [] without a fetch."""
+        """FV_03 — a theme with no Lichess slug returns [] without a fetch.
+        (``queen_safety`` used to be the unmapped example; it now maps to
+        ``defensiveMove`` — see FV_09 — so ``tempo`` is the fixture.)"""
         monkeypatch.setenv("STUDY_PLAN_LICHESS_ENABLED", "1")
         fake = _QueuedFetch([_lp("b1", chess.BLACK)])
         monkeypatch.setattr(lichess_client, "fetch_puzzle_by_theme", fake)
 
         out = lichess_puzzles.fetch_side_matched_variants(
-            theme="queen_safety", side_to_move=chess.BLACK, skill_hint="intermediate"
+            theme="tempo", side_to_move=chess.BLACK, skill_hint="intermediate"
         )
         assert out == []
         assert fake.calls == []
@@ -373,6 +410,48 @@ class TestFetchSideMatchedVariants:
         )
         assert [p.id for p in out] == ["lichess_b1", "lichess_b2"]
 
+    def test_single_move_matches_do_not_stop_the_hunt(self, monkeypatch):
+        """FV_11 — two single-move side matches arrive first, but the loop
+        keeps spending its budget hunting multi-move puzzles; a later
+        multi-move match displaces a single-move one in the final pair."""
+        monkeypatch.setenv("STUDY_PLAN_LICHESS_ENABLED", "1")
+        monkeypatch.setenv("STUDY_PLAN_LICHESS_MAX_FETCHES", "5")
+        fake = _QueuedFetch(
+            [
+                _lp("s1", chess.BLACK, rating=1100, plies=1),
+                _lp("s2", chess.BLACK, rating=1200, plies=1),
+                _lp("m1", chess.BLACK, rating=1500, plies=3),
+                _lp("w1", chess.WHITE, plies=3),
+                _lp("w2", chess.WHITE, plies=3),
+            ]
+        )
+        monkeypatch.setattr(lichess_client, "fetch_puzzle_by_theme", fake)
+
+        out = lichess_puzzles.fetch_side_matched_variants(
+            theme="fork", side_to_move=chess.BLACK, skill_hint="intermediate"
+        )
+        # The multi-move match leads the pair; one single-move survivor
+        # fills the second slot; the whole budget was spent hunting.
+        assert len(fake.calls) == 5
+        assert {p.id for p in out} == {"lichess_m1", "lichess_s1"}
+
+    def test_pair_ordered_by_rating_and_line_survives(self, monkeypatch):
+        """FV_12 — day 3 gets the lower-rated puzzle, day 7 the higher-rated
+        one (the week ramps up), and the full solution line survives the
+        LibraryPuzzle adaptation for the multi-move drill walk."""
+        monkeypatch.setenv("STUDY_PLAN_LICHESS_ENABLED", "1")
+        fake = _QueuedFetch(
+            [_lp("hard", chess.BLACK, rating=1900), _lp("easy", chess.BLACK, rating=1300)]
+        )
+        monkeypatch.setattr(lichess_client, "fetch_puzzle_by_theme", fake)
+
+        out = lichess_puzzles.fetch_side_matched_variants(
+            theme="fork", side_to_move=chess.BLACK, skill_hint="intermediate"
+        )
+        assert [p.id for p in out] == ["lichess_easy", "lichess_hard"]
+        assert all(p.solution_line_uci == _BLACK_LINE for p in out)
+        assert all(p.expected_move_uci == _BLACK_LINE[0] for p in out)
+
 
 class TestThemeAngleMapping:
     def test_every_mapped_angle_is_allowlisted(self):
@@ -380,3 +459,48 @@ class TestThemeAngleMapping:
         break every fetch for that theme; pin the two in sync."""
         for theme, angle in lichess_puzzles._THEME_TO_ANGLE.items():
             assert angle in lichess_client._PUZZLE_ANGLE_ALLOWED, (theme, angle)
+
+    def test_defend_role_themes_fetch_defensive_move(self, monkeypatch):
+        """FV_09 — the launch-feedback regression: themes whose lesson is
+        protecting the player's OWN queen / piece / king / back rank must
+        fetch the defensiveMove angle, never the attacker-seat theme slug
+        (a queen-safety mistake used to serve 'win the opponent's early
+        queen' drills)."""
+        defend_themes = {"queen_safety", "hung_piece", "king_safety", "back_rank"}
+        for theme in defend_themes:
+            assert lichess_puzzles._THEME_TO_ANGLE.get(theme) == "defensiveMove", theme
+
+        # And the fetch actually carries that angle upstream.
+        monkeypatch.setenv("STUDY_PLAN_LICHESS_ENABLED", "1")
+        fake = _QueuedFetch([_lp("b1", chess.BLACK), _lp("b2", chess.BLACK)])
+        monkeypatch.setattr(lichess_client, "fetch_puzzle_by_theme", fake)
+        lichess_puzzles.fetch_side_matched_variants(
+            theme="queen_safety", side_to_move=chess.BLACK, skill_hint="intermediate"
+        )
+        assert fake.calls, "queen_safety must reach the live path now"
+        assert all(angle == "defensiveMove" for angle, _ in fake.calls)
+
+    def test_exploit_role_themes_keep_their_slug(self):
+        """FV_10 — a missed fork/pin is drilled by FINDING forks/pins, so
+        those themes keep their own Lichess slugs."""
+        assert lichess_puzzles._THEME_TO_ANGLE["fork"] == "fork"
+        assert lichess_puzzles._THEME_TO_ANGLE["pin"] == "pin"
+
+
+class TestDifficultyOrder:
+    def test_fan_stretches_harder_before_easier(self):
+        """FV_13 — the band walk starts at the player's band and probes
+        HARDER bands before easier ones ('too easy' launch feedback)."""
+        assert lichess_puzzles._difficulty_order("beginner") == [
+            "easier", "normal", "harder", "hardest", "easiest",
+        ]
+        assert lichess_puzzles._difficulty_order("intermediate") == [
+            "normal", "harder", "hardest", "easier", "easiest",
+        ]
+        assert lichess_puzzles._difficulty_order("advanced") == [
+            "harder", "hardest", "normal", "easier", "easiest",
+        ]
+        # Unknown hints fall back to the intermediate walk.
+        assert lichess_puzzles._difficulty_order("weird") == [
+            "normal", "harder", "hardest", "easier", "easiest",
+        ]

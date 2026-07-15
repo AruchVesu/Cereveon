@@ -49,6 +49,18 @@ Pinned invariants
 34. TODAY_UNLOCKS_NEXT_WHEN_DUE           day-3 surfaces once its due_at elapses AND day-0 is solved.
 35. TODAY_CATCHUP_STAYS_SEQUENTIAL        a fully-elapsed schedule still unlocks one day at a time, in order.
 36. COMPLETE_SURFACES_NEXT_WHEN_DUE       completing day-0 with day-3 already due returns day-3 immediately.
+37. LIBRARY_LINE_VALIDATED                optional YAML solution_line_uci must start with the
+                                          expected move and replay legally, else load fails loud.
+38. CORPUS_DEFEND_ROLE                    defence-theme corpus entries put the STUDENT in the
+                                          defender's seat (own queen/piece attacked; back-rank
+                                          infiltrator captured) on BOTH colours — the launch-
+                                          feedback fix for "queen safety showed me attacking
+                                          the opponent's queen".
+39. AGENT_PERSISTS_SOLUTION_LINE          day-3/7 library rows store the full solution walk;
+                                          day-0 originals store NULL.
+40. TODAY_SURFACES_SOLUTION_LINE          the wire carries solution_line_uci for library
+                                          puzzles ([] for day-0; single-move fallback for
+                                          legacy rows).
 """
 
 from __future__ import annotations
@@ -1052,6 +1064,158 @@ class TestPuzzleLibraryLoad:
         lib = lib_module.load_library()
         assert lib == {theme: [] for theme in lib_module.THEME_VOCABULARY}
 
+    def test_solution_line_parsed_and_defaulted(self, tmp_path, monkeypatch):
+        """LIBRARY_LINE_VALIDATED (happy path) — an entry WITH a line loads
+        it as a tuple; an entry WITHOUT one defaults to () (single-decision
+        puzzle)."""
+        from llm.seca.coach.study_plan import library as lib_module
+
+        self._write_yaml(
+            tmp_path,
+            content=(
+                "- id: with_line\n"
+                "  theme: fork\n"
+                "  difficulty: intermediate\n"
+                '  fen: "7k/4q3/8/4N3/8/8/8/K7 w - - 0 1"\n'
+                '  expected_move_uci: "e5g6"\n'
+                '  solution_line_uci: "e5g6 h8g8 g6e7"\n'
+                '  description: "walkable"\n'
+                "- id: without_line\n"
+                "  theme: generic\n"
+                "  difficulty: beginner\n"
+                '  fen: "8/4P3/8/8/8/8/8/4K2k w - - 0 1"\n'
+                '  expected_move_uci: "e7e8q"\n'
+                '  description: "single"\n'
+            ),
+        )
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", tmp_path)
+        lib = lib_module.load_library()
+        assert lib["fork"][0].solution_line_uci == ("e5g6", "h8g8", "g6e7")
+        assert lib["generic"][0].solution_line_uci == ()
+
+    def test_solution_line_must_start_with_expected_move(self, tmp_path, monkeypatch):
+        """LIBRARY_LINE_VALIDATED — a line whose first move disagrees with
+        expected_move_uci is rejected (the single-move fallback and the
+        walk would drill different moves)."""
+        from llm.seca.coach.study_plan import library as lib_module
+
+        self._write_yaml(
+            tmp_path,
+            content=(
+                "- id: line_mismatch\n"
+                "  theme: fork\n"
+                "  difficulty: intermediate\n"
+                '  fen: "7k/4q3/8/4N3/8/8/8/K7 w - - 0 1"\n'
+                '  expected_move_uci: "e5g6"\n'
+                '  solution_line_uci: "e5c6 h8g8 c6e7"\n'
+                '  description: "mismatch"\n'
+            ),
+        )
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", tmp_path)
+        with pytest.raises(
+            lib_module.LibraryValidationError, match="must start with expected_move_uci"
+        ):
+            lib_module.load_library()
+
+    def test_solution_line_illegal_ply_rejected(self, tmp_path, monkeypatch):
+        """LIBRARY_LINE_VALIDATED — an illegal ply anywhere in the line fails
+        the load loud (a broken line would strand the drill mid-walk)."""
+        from llm.seca.coach.study_plan import library as lib_module
+
+        self._write_yaml(
+            tmp_path,
+            content=(
+                "- id: line_illegal\n"
+                "  theme: fork\n"
+                "  difficulty: intermediate\n"
+                '  fen: "7k/4q3/8/4N3/8/8/8/K7 w - - 0 1"\n'
+                '  expected_move_uci: "e5g6"\n'
+                '  solution_line_uci: "e5g6 e7e6 g6e7"\n'
+                '  description: "reply e7e6 ignores the check from g6 — illegal ply"\n'
+            ),
+        )
+        monkeypatch.setattr(lib_module, "_LIBRARY_DIR", tmp_path)
+        with pytest.raises(lib_module.LibraryValidationError, match="is not legal"):
+            lib_module.load_library()
+
+
+class TestCorpusRoleConvention:
+    """CORPUS_DEFEND_ROLE — the shipped corpus must keep the student in the
+    seat their mistake was made in (2026-07-15 launch feedback: a
+    queen-safety mistake served 'capture the opponent's early queen'
+    drills).  These pins are mechanical, so a future corpus edit that
+    quietly re-inverts a role fails CI."""
+
+    @staticmethod
+    def _entries(theme):
+        from llm.seca.coach.study_plan.library import load_library
+
+        entries = load_library()[theme]
+        assert entries, f"corpus must ship {theme} puzzles"
+        return entries
+
+    def test_queen_safety_defends_own_queen(self):
+        """Every queen_safety entry: the side to move has their OWN queen
+        attacked, and the expected move moves that queen to a safe square."""
+        for p in self._entries("queen_safety"):
+            board = chess.Board(p.fen)
+            move = chess.Move.from_uci(p.expected_move_uci)
+            piece = board.piece_at(move.from_square)
+            assert piece is not None and piece.piece_type == chess.QUEEN
+            assert piece.color == board.turn, p.id
+            assert board.attackers(not board.turn, move.from_square), (
+                f"{p.id}: the mover's queen must be under attack"
+            )
+            after = board.copy()
+            after.push(move)
+            assert not after.attackers(after.turn, move.to_square), (
+                f"{p.id}: the expected move must land the queen on a safe square"
+            )
+
+    def test_hung_piece_saves_own_piece(self):
+        """Every hung_piece entry: the side to move has their OWN (non-king,
+        non-pawn) piece attacked, and the expected move saves it."""
+        for p in self._entries("hung_piece"):
+            board = chess.Board(p.fen)
+            move = chess.Move.from_uci(p.expected_move_uci)
+            piece = board.piece_at(move.from_square)
+            assert piece is not None and piece.color == board.turn, p.id
+            assert piece.piece_type not in (chess.KING, chess.PAWN), p.id
+            assert board.attackers(not board.turn, move.from_square), (
+                f"{p.id}: the mover's piece must be under attack"
+            )
+            after = board.copy()
+            after.push(move)
+            assert not after.attackers(after.turn, move.to_square), (
+                f"{p.id}: the expected move must save the attacked piece"
+            )
+
+    def test_back_rank_repels_infiltrator(self):
+        """Every back_rank entry: the expected move captures an enemy piece
+        ON the mover's own back rank — defending the rank, not mating the
+        opponent's."""
+        for p in self._entries("back_rank"):
+            board = chess.Board(p.fen)
+            move = chess.Move.from_uci(p.expected_move_uci)
+            back_rank = 0 if board.turn == chess.WHITE else 7
+            assert chess.square_rank(move.to_square) == back_rank, (
+                f"{p.id}: the defence must happen on the mover's own back rank"
+            )
+            target = board.piece_at(move.to_square)
+            assert target is not None and target.color != board.turn, (
+                f"{p.id}: the expected move must capture the infiltrator"
+            )
+
+    def test_defence_themes_cover_both_colours(self):
+        """The corpus fallback must be able to side-match either colour for
+        the defence themes (the live Lichess path already side-matches; the
+        corpus used to be all-White)."""
+        for theme in ("queen_safety", "hung_piece", "back_rank", "king_safety"):
+            sides = {chess.Board(p.fen).turn for p in self._entries(theme)}
+            assert sides == {chess.WHITE, chess.BLACK}, (
+                f"{theme} corpus entries must include both colours, got {sides}"
+            )
+
 
 class TestPuzzleLibraryPicker:
     """``library.pick_two_puzzles`` — deterministic per plan_id."""
@@ -1934,6 +2098,44 @@ class TestTodayPlanEndpoint:
         assert result.today_puzzle.fen == _MISTAKE_FEN
         assert result.today_puzzle.expected_move_uci == _PLAYED_UCI
         assert result.today_puzzle.source_type == PUZZLE_SOURCE_ORIGINAL
+        # Day-0's expected move is the player's BAD move, not a solution —
+        # there is nothing to walk (TODAY_SURFACES_SOLUTION_LINE).
+        assert result.today_puzzle.solution_line_uci == []
+
+    def test_library_day_surfaces_solution_line(self, db_session, player, game_event):
+        """TODAY_SURFACES_SOLUTION_LINE — a due library puzzle carries its
+        stored walk as a UCI list; a LEGACY library row (written before the
+        column existed, so NULL) falls back to its single expected move."""
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+        )
+        by_offset = {p.day_offset: p for p in plan.puzzles}
+        # Simulate the agent's library writes: day-3 a modern multi-move row,
+        # day-7 a legacy row (library source, NULL line).
+        by_offset[3].source_type = PUZZLE_SOURCE_LIBRARY
+        by_offset[3].fen = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
+        by_offset[3].expected_move_uci = "b8c6"
+        by_offset[3].solution_line_uci = "b8c6 f1c4 g8f6"
+        by_offset[7].source_type = PUZZLE_SOURCE_LIBRARY
+        by_offset[7].expected_move_uci = "g8f6"
+        by_offset[7].solution_line_uci = None
+        by_offset[0].completed_at = datetime.utcnow()
+        db_session.commit()
+        _rewind_schedule(db_session, plan, days=7)
+
+        result = _call_today(player, db_session)
+        assert result.today_puzzle.day_offset == 3
+        assert result.today_puzzle.solution_line_uci == ["b8c6", "f1c4", "g8f6"]
+
+        by_offset[3].completed_at = datetime.utcnow()
+        db_session.commit()
+        result = _call_today(player, db_session)
+        assert result.today_puzzle.day_offset == 7
+        assert result.today_puzzle.solution_line_uci == ["g8f6"]
 
     def test_next_day_locked_until_due(self, db_session, player, game_event):
         """TODAY_LOCKS_NEXT_DAY_UNTIL_DUE — solving day-0 on the day the
@@ -2301,7 +2503,7 @@ class TestLichessVariantSourcing:
         'it could be defended."}'
     )
 
-    def _variant(self, pid, fen, move):
+    def _variant(self, pid, fen, move, line=()):
         from llm.seca.coach.study_plan.library import LibraryPuzzle
 
         return LibraryPuzzle(
@@ -2311,6 +2513,7 @@ class TestLichessVariantSourcing:
             fen=fen,
             expected_move_uci=move,
             description="lichess stub",
+            solution_line_uci=tuple(line),
         )
 
     def test_day0_fixture_is_black_to_move(self):
@@ -2363,6 +2566,38 @@ class TestLichessVariantSourcing:
         # The fetcher was asked for the day-0 mistake's side + theme.
         assert captured["side_to_move"] == chess.BLACK
         assert captured["theme"] == "king_safety"
+
+    def test_solution_line_persisted_for_library_days(
+        self, db_session, player, game_event, monkeypatch
+    ):
+        """AGENT_PERSISTS_SOLUTION_LINE — multi-move variants store their
+        full walk (space-joined) on the day-3/7 rows; a single-decision
+        variant stores its one expected move; day-0 stays NULL (its
+        expected move is the player's BAD move, not a solution)."""
+        from llm.seca.coach.study_plan import lichess_puzzles
+
+        b1 = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2"
+        b2 = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 2 3"
+        variants = [
+            self._variant("lichess_x1", b1, "b8c6", line=("b8c6", "f1c4", "g8f6")),
+            self._variant("lichess_x2", b2, "g8f6"),  # single-decision
+        ]
+        monkeypatch.setattr(
+            lichess_puzzles, "fetch_side_matched_variants", lambda **kw: list(variants)
+        )
+
+        plan = generate_plan(
+            db=db_session,
+            player_id=player.id,
+            source_event_id=game_event.id,
+            mistake_fen=_MISTAKE_FEN,
+            played_uci=_PLAYED_UCI,
+            llm=_ScriptedLLM([self._CLEAN_JSON]),
+        )
+        by_offset = {p.day_offset: p for p in plan.puzzles}
+        assert by_offset[0].solution_line_uci is None
+        assert by_offset[3].solution_line_uci == "b8c6 f1c4 g8f6"
+        assert by_offset[7].solution_line_uci == "g8f6"
 
     def test_empty_result_falls_back_to_corpus(
         self, db_session, player, game_event, monkeypatch

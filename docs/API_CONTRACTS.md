@@ -1761,9 +1761,19 @@ YAML corpus.  Day-0 is always the player's original mistake position.
 The day-3 / day-7 variants lead with the day-0 mistake's OWN `theme`
 (a king-safety mistake yields king-safety practice); the aggregate
 `anchor_category` is only a backfill pool, consulted when that specific
-theme is too thin to fill both days.  The Android `TodaysDrillCard` is
-still pending (phase 4) so no client polls this endpoint in production
-today.
+theme is too thin to fill both days.
+
+Practice selection is **role-aware** (2026-07-15, launch feedback):
+Lichess theme puzzles are always solved from the winning side, so themes
+whose lesson is protecting the player's OWN material — `queen_safety`,
+`hung_piece`, `king_safety`, `back_rank` — source from Lichess's
+`defensiveMove` angle (find the move that keeps your own position safe)
+instead of the attacker-seat theme slugs, and the corpus entries for
+those themes drill saving your own queen/piece/rank.  Exploit themes
+(`fork`, `pin` — the mistake was MISSING the tactic) keep their own
+slugs.  Variants also prefer **multi-move** puzzles (at least two solver
+decisions; see `today_puzzle.solution_line_uci`) and the day-3 / day-7
+pair is ordered by puzzle rating ascending so the week ramps up.
 
 The `theme` field is one of the following tags:
 
@@ -1804,6 +1814,7 @@ No body.  Reads the authenticated player from the bearer token.
     "day_offset":         <int>,
     "fen":                <string>,
     "expected_move_uci":  <string>,
+    "solution_line_uci":  [<string>, ...],
     "source_type":        <string>,
     "due_at":             <string>
   } | null,
@@ -1830,8 +1841,9 @@ No body.  Reads the authenticated player from the bearer token.
 | `today_puzzle` | `object \| null` | The day available to solve right now: the FIRST incomplete day, once its `due_at` has elapsed.  `null` when the next day is still calendar-locked (e.g. day-0 solved on creation day; day-3 opens at +3 days — the client hides the drill card) or when every day is solved (the plan is about to flip to `completed`). |
 | `today_puzzle.day_offset` | `int` | One of `0`, `3`, `7`.  Maps to "Day 1 / 3", "Day 2 / 3", "Day 3 / 3" via a static client-side label. |
 | `today_puzzle.fen` | `string` | Position the puzzle drops the user into. |
-| `today_puzzle.expected_move_uci` | `string` | The expected move at that FEN (UCI), a display / short-circuit HINT only — it is never the correctness oracle.  Whether a replay counts as solved is decided by the LOCAL engine on `POST /training/verify-replay` (§ mistakes).  For day-0 puzzles this is the player's ORIGINAL bad move — the puzzle asks the user to find a stronger alternative.  For library variants it is the puzzle's expected solution (Lichess's first solution move for a Lichess-sourced puzzle). |
-| `today_puzzle.source_type` | `string` | `"original"` for day-0 (the player's actual mistake) and any day whose library lookup didn't find a match; `"library"` for day-3 / day-7 practice puzzles.  Library puzzles are matched to the day-0 mistake's theme AND side-to-move, sourced live from Lichess (`GET /api/puzzle/next`) when available and falling back to the curated YAML corpus (`llm/seca/coach/study_plan/library/`) otherwise — wire-identical either way (both are `"library"`).  Lets the UI title the puzzle accordingly ("Replay your mistake" vs "Practice: <theme>"). |
+| `today_puzzle.expected_move_uci` | `string` | The expected move at that FEN (UCI), a display / short-circuit HINT only — it is never the correctness oracle.  Whether a replay counts as solved is decided by the LOCAL engine on `POST /training/verify-replay` (§ mistakes).  For day-0 puzzles this is the player's ORIGINAL bad move — the puzzle asks the user to find a stronger alternative.  For library variants it is the puzzle's expected solution (Lichess's first solution move for a Lichess-sourced puzzle), always equal to `solution_line_uci[0]` when that list is non-empty. |
+| `today_puzzle.solution_line_uci` | `string[]` | Full solution walk for `"library"` puzzles, in UCI: SOLVER moves at even indices, opponent replies at odd ones, always ending on a solver move.  A single-decision puzzle carries just its one move.  The client walks the line — the user must find each solver move (each judged by the LOCAL engine via `POST /training/verify-replay` at the then-current position; an engine-approved deviation from the line also counts as solved), and the client auto-plays the odd-index opponent replies.  Same hint-only trust posture as `expected_move_uci`: the line never decides correctness by itself.  **Empty (`[]`) for `"original"` day-0 puzzles** — their `expected_move_uci` is the player's bad move, not a solution — and clients must then fall back to the single-move drill flow.  Added 2026-07-15; older clients ignore the field (single-move behaviour unchanged). |
+| `today_puzzle.source_type` | `string` | `"original"` for day-0 (the player's actual mistake) and any day whose library lookup didn't find a match; `"library"` for day-3 / day-7 practice puzzles.  Library puzzles are matched to the day-0 mistake's theme, side-to-move AND role (see the role-aware selection note above), sourced live from Lichess (`GET /api/puzzle/next`) when available and falling back to the curated YAML corpus (`llm/seca/coach/study_plan/library/`) otherwise — wire-identical either way (both are `"library"`).  Lets the UI title the puzzle accordingly ("Replay your mistake" vs "Practice: <theme>"). |
 | `today_puzzle.due_at` | `string` | ISO-8601 UTC timestamp of when this day unlocked (plan creation + `day_offset` days).  Always `<= now` when `today_puzzle` is non-null — the endpoint only serves puzzles that are actually due. |
 | `days` | `array` | The full week schedule, ordered by `day_offset` (always `total_days` entries).  Powers the week-overview screen — each entry is `completed` (done), `is_due` (the one to do now), or neither (a later day, locked until the earlier days are solved). |
 | `days[].day_offset` | `int` | One of `0`, `3`, `7`. |
