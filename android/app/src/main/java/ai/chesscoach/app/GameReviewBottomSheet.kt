@@ -115,9 +115,16 @@ class GameReviewBottomSheet : BottomSheetDialogFragment() {
             else -> "unclear"
         }
 
-        /** "level → clearly losing".  Pure. */
+        /** "level → clearly losing", or "stayed clearly losing" when the
+         *  move didn't change the band — an arrow-to-itself read as a
+         *  glitch on-device ("clearly losing → clearly losing", 2026-07-15
+         *  report).  Pure. */
         fun momentTransition(moment: ReviewMoment): String =
-            "${bandPhrase(moment.bandBefore)} → ${bandPhrase(moment.bandAfter)}"
+            if (moment.bandBefore == moment.bandAfter) {
+                "stayed ${bandPhrase(moment.bandAfter)}"
+            } else {
+                "${bandPhrase(moment.bandBefore)} → ${bandPhrase(moment.bandAfter)}"
+            }
 
         /** Quota line, or null when nothing useful to show.  Pure. */
         fun quotaLine(entitlement: ReviewEntitlement?): String? {
