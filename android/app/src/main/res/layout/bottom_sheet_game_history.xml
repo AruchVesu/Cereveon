@@ -111,10 +111,16 @@
         android:visibility="gone"
         tools:visibility="visible" />
 
-    <!-- Scrollable history list. -->
-    <ScrollView
+    <!-- Scrollable history list.  NestedScrollView, NOT a plain ScrollView:
+         BottomSheetBehavior only coordinates drags with a nested-scrolling
+         child, so with ScrollView a downward finger drag (scrolling back UP
+         through a long game list) dismissed the sheet mid-scroll — the same
+         bug fixed on the review sheet in PR #399.  wrap_content (was a fixed
+         400dp) so short lists don't trail a dead void and long ones use the
+         sheet's full height. -->
+    <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
-        android:layout_height="400dp">
+        android:layout_height="wrap_content">
 
         <LinearLayout
             android:id="@+id/historyList"
@@ -125,7 +131,7 @@
             android:paddingEnd="@dimen/atrium_space_24"
             android:paddingTop="@dimen/atrium_space_8" />
 
-    </ScrollView>
+    </androidx.core.widget.NestedScrollView>
 
     <!-- Empty / error state. -->
     <TextView
