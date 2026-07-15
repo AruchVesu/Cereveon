@@ -39,7 +39,15 @@ class SkillUpdater:
     # ---------------------------------
     def update_from_event(self, player_id: str, event: GameEvent):
 
-        player = self.db.query(Player).filter_by(id=player_id).first()
+        # ``with_for_update()`` serialises concurrent rating writes for the
+        # same player (audit 2026-07-14, P2 #7): the Elo delta depends on
+        # ``rating_before`` (expected-score curve), so two /game/finish
+        # requests interleaving read-compute-write from the same base would
+        # silently drop one delta.  The row lock is held until the caller's
+        # commit — a few ms of handler work.  Postgres honours FOR UPDATE;
+        # SQLite ignores it (single-writer database, so the race cannot
+        # occur there anyway).
+        player = self.db.query(Player).filter_by(id=player_id).with_for_update().first()
         if not player:
             return
 

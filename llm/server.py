@@ -258,6 +258,14 @@ async def lifespan(app: FastAPI):
     if _log_config.configure_logging():
         logger.info("JSON structured logging enabled")
 
+    # ---- Fatal boot phase: database + schema -------------------------
+    # A failure here means NO authenticated route can serve — crashing
+    # the boot is strictly better than the audit P2 #9 failure mode
+    # (2026-07-14): the previous single try caught this in the engine
+    # handler below, logged "Stockfish engine pool DISABLED", and the
+    # process kept serving 500s off a missing/broken schema while the
+    # log blamed the engine.  DB/migration errors now abort startup
+    # with the real cause at CRITICAL.
     try:
         init_db()
         # SQLAlchemy schema + small SQLite-only migrations.  Moved out of
@@ -265,7 +273,20 @@ async def lifespan(app: FastAPI):
         # to access Pydantic request models in tests) no longer pays the
         # cost of opening the DB and running DDL.
         init_auth_schema()
+    except Exception:
+        logger.critical(
+            "Database/schema initialisation FAILED — aborting startup "
+            "(this is NOT an engine-pool problem)",
+            exc_info=True,
+        )
+        raise
 
+    # ---- Best-effort boot phase: stale-job janitors -------------------
+    # Plain UPDATE sweeps over just-initialised tables.  A failure here
+    # leaves stale rows (imports coalesce onto orphans until the next
+    # boot; review POSTs requeue failed rows on demand) — degraded, not
+    # fatal, so it must not take the whole API down with it.
+    try:
         # Sweep Lichess import jobs left in ``queued`` / ``running`` by
         # a prior crash or SIGTERM.  Their worker thread is gone; the
         # row would otherwise block ``start_import_job`` coalescing
@@ -285,7 +306,13 @@ async def lifespan(app: FastAPI):
         )
 
         cleanup_stale_reviews_on_startup()
+    except Exception:
+        logger.exception(
+            "Startup janitors failed; stale job rows remain until the "
+            "next boot (import/review POST paths self-heal on demand)"
+        )
 
+    try:
         world_model = SafeWorldModel()
         enforce(world_model)
         if os.name == "nt":
@@ -468,24 +495,14 @@ if not _cors_origins:
         len(_cors_origins),
     )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_methods=["GET", "POST"],
-    # ``X-API-Version`` is explicitly allowed so browser / WebView clients
-    # can send the schema-version header through a CORS preflight without
-    # tripping the default ``Access-Control-Allow-Headers`` filter.  See
-    # the api_version_gate middleware below for the enforcement semantics.
-    allow_headers=["Authorization", "Content-Type", "X-Api-Key", "X-API-Version"],
-    # Browser scripts can only read a small CORS-safelisted set of
-    # response headers without an explicit expose_headers list.  The
-    # two API-versioning headers are exposed here so browser-based
-    # clients (dev tools, future web UI) can read the server's
-    # accepted-version range without parsing the body.  Non-browser
-    # clients (Android via OkHttp/HttpURLConnection) read all response
-    # headers regardless and are unaffected.
-    expose_headers=["X-API-Version", "X-API-Versions-Supported"],
-)
+# NOTE: the CORSMiddleware registration lives BELOW, after every other
+# middleware registration (Starlette runs the LAST-added middleware
+# OUTERMOST).  It used to be added here — first, therefore innermost —
+# which meant any response short-circuited by an outer middleware
+# (_LimitBodySize 413/411, api_version_gate 400, security-header 500s)
+# carried no Access-Control-Allow-Origin and was unreadable to a browser
+# client (audit 2026-07-14, P2 #10; latent — no browser client ships
+# today).  Origin config stays here where it is validated.
 
 # ---- Request body size limit (512 KB) ------------------------------------
 _MAX_BODY_BYTES = 512 * 1024
@@ -798,6 +815,35 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
             "X-API-Versions-Supported": _API_VERSIONS_SUPPORTED_HEADER,
         },
     )
+
+
+# ---- CORS (must be the LAST add_middleware → OUTERMOST) -------------------
+# Starlette wraps middleware inside-out: the last registration handles the
+# request first and the response last, so ONLY an outermost CORSMiddleware
+# can stamp Access-Control-Allow-Origin on responses produced by the other
+# middleware layers (_LimitBodySize 413/411, api_version_gate 400, the
+# security-header wrapper's error paths) — see the audit P2 #10 note at the
+# origin-config block above.  Keep this below every other
+# ``app.add_middleware`` / ``@app.middleware`` registration; the
+# middleware-order pin in test_api_security asserts CORS is outermost.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST"],
+    # ``X-API-Version`` is explicitly allowed so browser / WebView clients
+    # can send the schema-version header through a CORS preflight without
+    # tripping the default ``Access-Control-Allow-Headers`` filter.  See
+    # the api_version_gate middleware above for the enforcement semantics.
+    allow_headers=["Authorization", "Content-Type", "X-Api-Key", "X-API-Version"],
+    # Browser scripts can only read a small CORS-safelisted set of
+    # response headers without an explicit expose_headers list.  The
+    # two API-versioning headers are exposed here so browser-based
+    # clients (dev tools, future web UI) can read the server's
+    # accepted-version range without parsing the body.  Non-browser
+    # clients (Android via OkHttp/HttpURLConnection) read all response
+    # headers regardless and are unaffected.
+    expose_headers=["X-API-Version", "X-API-Versions-Supported"],
+)
 
 
 app.include_router(auth_router)
@@ -1817,6 +1863,18 @@ async def chat(
     # Free-tier chat quota — checked FIRST so an over-limit turn costs
     # no Stockfish/DeepSeek work, and returned as non-2xx so the
     # token-rotation middleware leaves the presented JWT valid.
+    #
+    # ACCEPTED RACE (audit 2026-07-14, P2 #8): this check and the
+    # record() after the 2xx boundary are deliberately not atomic.  Two
+    # concurrent turns at limit-1 can both pass and both record — the
+    # user gets one extra turn; the counter self-corrects on the next
+    # check.  The race only ever OVER-ADMITS (record's atomic increment
+    # can't lose counts), the client is a single phone (concurrent chat
+    # turns require a deliberate replay), and closing it would need a
+    # row lock held across a 15-45s LLM call — the exact pool-exhaustion
+    # failure mode the audit's P1 #7 removed.  Do not "fix" this with a
+    # lock; revisit only if the metric ever gates something expensive
+    # enough that one free over-admission matters.
     tier = entitlements.check(db, player, entitlements.METRIC_CHAT_TURN)
     if not tier.allowed:
         return _chat_limit_response(tier)

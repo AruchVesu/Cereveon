@@ -336,6 +336,27 @@ def init_schema() -> None:
             )
             conn.commit()
 
+        # /game/finish idempotency (audit 2026-07-14, P2 #1).  One
+        # GameEvent per live game: the Android client re-POSTs the
+        # identical finish on Timeout, and two concurrent retries can
+        # both pass the handler's replay-guard SELECT.  The handler
+        # guard (events/router._replayed_finish_response) is the
+        # primary dedup on both dialects; this partial index closes
+        # the concurrent-retry race on Postgres.  NULLs exempt by the
+        # predicate: legacy rows, Lichess imports, and pre-game_id
+        # clients keep inserting freely.  Same Postgres-only gating
+        # rationale as the import-jobs index above.
+        if not _is_sqlite:
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                    "ix_game_events_app_game_id_unique "
+                    "ON game_events (app_game_id) "
+                    "WHERE app_game_id IS NOT NULL"
+                )
+            )
+            conn.commit()
+
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

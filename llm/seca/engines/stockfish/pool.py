@@ -261,6 +261,16 @@ class FenMoveCache:
 
 
 class StockfishEnginePool:
+    #: Consecutive failed operations after which a process-alive engine is
+    #: evicted anyway (audit 2026-07-14, P2 #6).  The transport probe in
+    #: ``_is_engine_alive`` only catches DEAD subprocesses; a hung-but-alive
+    #: Stockfish (internal deadlock, stopped reading stdin) passes it forever
+    #: and keeps cycling through the pool, timing out every request it
+    #: serves.  Three strikes tolerates transient load-induced timeouts (a
+    #: false eviction merely costs one ~50ms respawn) while bounding how
+    #: long a wedged engine can poison its slot.
+    MAX_CONSECUTIVE_ENGINE_FAILURES = 3
+
     def __init__(self, settings: EnginePoolSettings):
         self.settings = settings
         self._engines: queue.Queue[chess.engine.SimpleEngine] = queue.Queue(
@@ -268,6 +278,12 @@ class StockfishEnginePool:
         )
         self._started = False
         self._lock = threading.Lock()
+        # id(engine) -> consecutive failed operations.  Only the thread
+        # holding an engine (queue ownership is exclusive) touches that
+        # engine's entry, so no extra locking is needed; entries are
+        # popped on success, death, or eviction so the dict cannot grow
+        # past pool_size live handles.
+        self._consecutive_failures: dict[int, int] = {}
 
     def startup(self) -> None:
         with self._lock:
@@ -308,8 +324,13 @@ class StockfishEnginePool:
                     pass
             self._started = False
 
-    def _release_engine(self, engine: chess.engine.SimpleEngine | None) -> None:
-        """Return *engine* to the pool, or replace it if it has died.
+    def _release_engine(
+        self,
+        engine: chess.engine.SimpleEngine | None,
+        *,
+        healthy: bool = True,
+    ) -> None:
+        """Return *engine* to the pool, or replace it if it is unusable.
 
         ``select_move``'s ``finally`` used to call ``self._engines.put(engine)``
         unconditionally.  When the Stockfish subprocess crashed during
@@ -318,26 +339,65 @@ class StockfishEnginePool:
         next acquirer pulled a corpse — second-order failures across
         the next pool_size requests until the queue cycled out.
 
-        This helper is the central release point.  It performs a cheap
-        liveness probe; if the subprocess is no longer running, the
-        dead handle is dropped, a fresh engine is spawned to take its
-        slot, and the pool size is preserved.  If the spawn itself
-        fails (binary missing, system out of file descriptors), the
-        slot is forfeited with a WARNING — the alternative would be
-        to deadlock the pool waiting for a healthy spawn that may
-        never come, which is worse than running with one fewer engine
-        until the operator restarts.
+        This helper is the central release point, with two eviction
+        triggers:
+
+        * DEAD — the cheap transport probe says the subprocess is gone:
+          replace immediately (the original crash-recovery path).
+        * HUNG (audit 2026-07-14, P2 #6) — the process is alive but the
+          operation FAILED (``healthy=False`` from the caller: timeout,
+          EngineError, no-move).  A wedged engine passes the transport
+          probe forever, so after ``MAX_CONSECUTIVE_ENGINE_FAILURES``
+          consecutive failed operations the handle is killed and
+          replaced anyway.  A success resets the strike count.
+
+        If the replacement spawn itself fails (binary missing, system
+        out of file descriptors), the slot is forfeited with a WARNING —
+        the alternative would be to deadlock the pool waiting for a
+        healthy spawn that may never come, which is worse than running
+        with one fewer engine until the operator restarts.
         """
         if engine is None:
             return
 
-        if self._is_engine_alive(engine):
+        if not self._is_engine_alive(engine):
+            self._consecutive_failures.pop(id(engine), None)
+            logger.warning("Stockfish subprocess died during a request; recycling pool slot")
+            self._replace_engine_slot(engine)
+            return
+
+        if healthy:
+            self._consecutive_failures.pop(id(engine), None)
             self._engines.put(engine)
             return
 
-        logger.warning("Stockfish subprocess died during a request; recycling pool slot")
-        # Try to harvest the dead process; ``engine.quit()`` is safe to
-        # call on an already-terminated engine but may raise — swallow.
+        strikes = self._consecutive_failures.get(id(engine), 0) + 1
+        if strikes < self.MAX_CONSECUTIVE_ENGINE_FAILURES:
+            self._consecutive_failures[id(engine)] = strikes
+            self._engines.put(engine)
+            return
+
+        self._consecutive_failures.pop(id(engine), None)
+        logger.warning(
+            "Stockfish engine failed %d consecutive operations while its "
+            "process stayed alive; evicting the hung handle and recycling "
+            "the pool slot",
+            strikes,
+        )
+        self._replace_engine_slot(engine)
+
+    def _replace_engine_slot(self, engine: chess.engine.SimpleEngine) -> None:
+        """Dispose of *engine* and put a fresh spawn in its slot (best effort)."""
+        # A HUNG engine's ``quit()`` can itself block on the unread UCI
+        # pipe — kill the transport first so quit returns immediately
+        # (raises EngineTerminatedError on an already-dead process;
+        # swallowed either way).
+        transport = getattr(engine, "transport", None)
+        if transport is not None:
+            try:
+                transport.kill()
+            except Exception:
+                pass
         try:
             engine.quit()
         except Exception:
@@ -347,7 +407,7 @@ class StockfishEnginePool:
             replacement = self._spawn_engine()
         except Exception:
             logger.exception(
-                "Stockfish respawn failed after crash; pool slot forfeited "
+                "Stockfish respawn failed; pool slot forfeited "
                 "until next process restart (queue size now %d/%d)",
                 self._engines.qsize(),
                 self.settings.pool_size,
@@ -472,16 +532,22 @@ class StockfishEnginePool:
         # The release path goes through ``_release_engine`` so a
         # crashed subprocess (raised as ``EngineTerminatedError`` or
         # leaving a closed transport behind) is detected and the slot
-        # is repopulated with a fresh engine instead of a corpse.
+        # is repopulated with a fresh engine instead of a corpse.  The
+        # ``healthy`` flag feeds the hung-engine strike counter: it only
+        # flips True once the operation fully succeeded, so any raise —
+        # timeout, EngineError, no-move — counts as a strike against
+        # this handle (P2 #6).
+        healthy = False
         try:
             self._apply_runtime_options(engine, target_elo=target_elo)
             limit = chess.engine.Limit(time=self.resolve_movetime_ms(mode, movetime_ms) / 1000.0)
             result = engine.play(resolved_board, limit)
             if result.move is None:
                 raise RuntimeError("Stockfish returned no move")
+            healthy = True
             return result.move
         finally:
-            self._release_engine(engine)
+            self._release_engine(engine, healthy=healthy)
 
     def evaluate_position(
         self,
@@ -540,11 +606,16 @@ class StockfishEnginePool:
         except queue.Empty as exc:
             raise RuntimeError(f"Stockfish queue wait exceeded {timeout_ms}ms") from exc
 
+        # Same healthy-flag contract as ``select_move``: a raise from
+        # ``analyse`` (timeout, EngineError) is a strike against this
+        # handle's hung-engine counter (P2 #6).
+        healthy = False
         try:
             limit = chess.engine.Limit(time=movetime_ms / 1000.0)
             info = engine.analyse(board, limit)
+            healthy = True
         finally:
-            self._release_engine(engine)
+            self._release_engine(engine, healthy=healthy)
 
         score = info.get("score") if isinstance(info, dict) else None
         if score is None:

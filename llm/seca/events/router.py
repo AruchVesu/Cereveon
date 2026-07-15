@@ -21,6 +21,7 @@ from llm.seca.analytics.training_recommendations import generate_training_recomm
 
 logger = logging.getLogger(__name__)
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 
 from llm.seca.auth.router import get_db, get_current_player
@@ -449,6 +450,66 @@ def finish_game(
             _log_config.game_id_var.reset(game_id_token)
 
 
+def _replayed_finish_response(db: DBSession, player, app_game_id: str):
+    """Serve a retried /game/finish from its already-committed first run.
+
+    The Android client re-POSTs an identical finish on Timeout
+    (``withRetry`` x3 in GameApiClient) — a mobile network that dropped
+    the RESPONSE after the server committed used to produce a second
+    GameEvent history row and a second rating application (audit
+    2026-07-14, P2 #1).  When a GameEvent for this ``app_game_id``
+    already exists, the finish already happened:
+
+    * stored ``GameFinishResult`` present → return the exact payload the
+      original POST returned (true idempotent replay, engine cost
+      skipped).
+    * event exists but the result row never landed (the original
+      request died between the event commit and the response
+      persistence, or a pre-#195 legacy row) → 202 ``{status:
+      "pending"}`` — the same polling contract
+      ``GET /game/finish/{event_id}/status`` serves for exactly this
+      window.  Re-running the finish here would double-apply the
+      rating, which is the bug this guard exists to close.
+
+    Returns ``None`` when no event exists (fresh finish — proceed).
+    Never raises: a corrupt stored payload logs and falls through to
+    the pending shape rather than 500ing a retry.
+    """
+    event = (
+        db.query(GameEvent)
+        .filter(
+            GameEvent.player_id == str(player.id),
+            GameEvent.app_game_id == app_game_id,
+        )
+        .order_by(GameEvent.created_at.asc())
+        .first()
+    )
+    if event is None:
+        return None
+
+    result_row = (
+        db.query(GameFinishResult).filter(GameFinishResult.event_id == str(event.id)).first()
+    )
+    if result_row is not None:
+        try:
+            payload = json.loads(result_row.response_json)
+            logger.info(
+                "FINISH_REPLAY served stored response for game_id=%s event=%s",
+                _safe_log(app_game_id),
+                event.id,
+            )
+            return payload
+        except (json.JSONDecodeError, TypeError):
+            logger.exception(
+                "FINISH_REPLAY stored response unreadable for event %s; serving pending",
+                event.id,
+            )
+    return JSONResponse(
+        status_code=202,
+        content={"status": "pending", "event_id": str(event.id)},
+    )
+
+
 def _finish_game_body(
     req: GameFinishRequest,
     request: Request,
@@ -456,6 +517,14 @@ def _finish_game_body(
     player,
     db: DBSession,
 ):
+    # Idempotent-replay guard — MUST run before the engine recompute so
+    # a retry costs one SELECT, not a ~40-acquire Stockfish batch.  Only
+    # game_id-carrying finishes can be deduplicated; legacy clients
+    # without /game/start still create one event per POST.
+    if req.game_id:
+        replayed = _replayed_finish_response(db, player, req.game_id)
+        if replayed is not None:
+            return replayed
 
     # Server-side accuracy + weakness recompute.  Closes the client-trust
     # gap on /game/finish; falls back to the request fields when the
@@ -479,17 +548,29 @@ def _finish_game_body(
     rating_before = player.rating
     confidence_before = player.confidence
 
-    event = storage.store_game(
-        player_id=player.id,
-        pgn=req.pgn,
-        result=req.result,
-        accuracy=accuracy,
-        weaknesses=weaknesses,
-        # Link this history row back to the live game's chat thread so the
-        # game-history UI can load its coaching conversation.  Already
-        # validated + normalised (blank -> None) by GameFinishRequest.
-        app_game_id=req.game_id,
-    )
+    try:
+        event = storage.store_game(
+            player_id=player.id,
+            pgn=req.pgn,
+            result=req.result,
+            accuracy=accuracy,
+            weaknesses=weaknesses,
+            # Link this history row back to the live game's chat thread so the
+            # game-history UI can load its coaching conversation.  Already
+            # validated + normalised (blank -> None) by GameFinishRequest.
+            app_game_id=req.game_id,
+        )
+    except IntegrityError:
+        # Two concurrent retries both passed the replay guard's SELECT;
+        # this one lost the INSERT race to the Postgres partial unique
+        # index on app_game_id (init_schema).  The winner's row is the
+        # finish — serve it instead of 500ing the retry.  store_game
+        # already rolled the session back before re-raising.
+        if req.game_id:
+            replayed = _replayed_finish_response(db, player, req.game_id)
+            if replayed is not None:
+                return replayed
+        raise
 
     # If the client tracked the game_id from /game/start, mark the
     # corresponding `games` row complete.  Best-effort: a missing /

@@ -1,9 +1,22 @@
 #include <jni.h>
+#include <mutex>
 #include <string>
 #include <android/log.h>
 #include "SachmatuLenta.h"
 
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "AI_NATIVE", __VA_ARGS__)
+
+// The engine instances below are local per call, but SachmatuLenta's
+// transposition table is a single static 40 MB array shared across ALL
+// instances (deliberate: per-instance tables would multiply BSS, and the
+// cache surviving across calls is the point).  Two threads entering these
+// JNI functions concurrently would race on it unsynchronized (audit
+// 2026-07-14, P2 #12): a torn entry that still passes the hash check can
+// inject a wrong best-move hint into the search.  App call sites are
+// sequential today, so this lock is uncontended in practice — it makes
+// the "two ViewModels on two dispatchers" future safe by construction
+// rather than by convention.
+static std::mutex g_ttSearchMutex;
 
 // A legitimate FEN / 64-char board string is well under this bound; reject
 // pathologically long input rather than parse it.  This bounds the parser's
@@ -44,7 +57,10 @@ Java_ai_chesscoach_app_ChessNative_getBestMove(
     const char* fenStr = env->GetStringUTFChars(fen, nullptr);
     if (!fenStr) return nullptr;
 
-    // 2️⃣ LOCAL engine instance (🔥 KEY FIX)
+    // 2️⃣ LOCAL engine instance (🔥 KEY FIX) — but the search below
+    // still touches the shared static TT; hold the process-wide lock
+    // for the whole load+search (see g_ttSearchMutex above).
+    std::lock_guard<std::mutex> ttLock(g_ttSearchMutex);
     SachmatuLenta engine;
     bool loaded = loadFenIntoEngine(engine, fenStr);
 
@@ -102,6 +118,8 @@ Java_ai_chesscoach_app_ChessNative_getBestMoveWithStrength(
     const char* fenStr = env->GetStringUTFChars(fen, nullptr);
     if (!fenStr) return nullptr;
 
+    // Same shared-TT lock as getBestMove above.
+    std::lock_guard<std::mutex> ttLock(g_ttSearchMutex);
     SachmatuLenta engine;
     bool loaded = loadFenIntoEngine(engine, fenStr);
     env->ReleaseStringUTFChars(fen, fenStr);
