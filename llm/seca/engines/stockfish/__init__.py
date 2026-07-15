@@ -1,5 +1,6 @@
 from .pool import (
     EnginePoolSettings,
+    FenEvalCache,
     FenMoveCache,
     StockfishEnginePool,
     engine_config_fingerprint,
@@ -7,6 +8,7 @@ from .pool import (
 
 __all__ = [
     "EnginePoolSettings",
+    "FenEvalCache",
     "FenMoveCache",
     "StockfishEnginePool",
     "engine_config_fingerprint",
