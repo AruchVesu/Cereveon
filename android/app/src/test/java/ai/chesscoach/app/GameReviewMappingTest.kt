@@ -155,6 +155,22 @@ class GameReviewMappingTest {
     }
 
     @Test
+    fun `MAP_MOMENT_TEXT - unchanged band reads stayed, not an arrow to itself`() {
+        // "clearly losing → clearly losing" read as a glitch on-device
+        // (2026-07-15): a blunder played while already deep in a losing
+        // band doesn't move the five-step band, so say the band HELD.
+        val unchanged = ReviewMoment(
+            ply = 23, moveNumber = 12, san = "Qe3",
+            momentType = "blunder", phase = "opening",
+            bandBefore = "losing", bandAfter = "losing",
+        )
+        assertEquals(
+            "stayed clearly losing",
+            GameReviewBottomSheet.momentTransition(unchanged),
+        )
+    }
+
+    @Test
     fun `MAP_QUOTA - renders only with limit and remaining`() {
         assertNull(GameReviewBottomSheet.quotaLine(null))
         assertNull(GameReviewBottomSheet.quotaLine(ReviewEntitlement(remaining = null)))
