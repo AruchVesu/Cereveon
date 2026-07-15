@@ -53,7 +53,11 @@ class GameReviewBottomSheet : BottomSheetDialogFragment() {
         fun actionFor(review: GameReviewResponse): ReviewAction = when {
             review.status == GameReviewResponse.STATUS_FAILED -> ReviewAction.RETRY_FAILED
             review.status != GameReviewResponse.STATUS_COMPLETE -> ReviewAction.NONE
-            review.llm?.outcome == ReviewLlm.OUTCOME_SKIPPED_ENTITLEMENT -> ReviewAction.UPGRADE
+            review.llm?.outcome == ReviewLlm.OUTCOME_SKIPPED_ENTITLEMENT ->
+                // A pro user hitting the daily/monthly cap has nothing to
+                // buy — showing UPGRADE to a subscriber reads as a bug.
+                if (review.entitlement?.plan == ReviewEntitlement.PLAN_PRO) ReviewAction.NONE
+                else ReviewAction.UPGRADE
             review.llm?.outcome == ReviewLlm.OUTCOME_FALLBACK -> ReviewAction.RETRY_COACH
             else -> ReviewAction.NONE
         }
@@ -67,8 +71,14 @@ class GameReviewBottomSheet : BottomSheetDialogFragment() {
             GameReviewResponse.STATUS_FAILED ->
                 "The review could not be completed. Try again."
             else -> when (review.llm?.outcome) {
-                ReviewLlm.OUTCOME_SKIPPED_ENTITLEMENT ->
-                    "Engine review ready. Coach commentary is a Pro feature this month."
+                ReviewLlm.OUTCOME_SKIPPED_ENTITLEMENT -> when {
+                    review.entitlement?.metric == ReviewEntitlement.METRIC_DAILY ->
+                        "Engine review ready. Daily coach-review limit reached — more tomorrow."
+                    review.entitlement?.plan == ReviewEntitlement.PLAN_PRO ->
+                        "Engine review ready. Monthly coach-review limit reached."
+                    else ->
+                        "Engine review ready. Coach commentary is a Pro feature this month."
+                }
                 ReviewLlm.OUTCOME_FALLBACK ->
                     "Review ready (coach used quick notes this time)."
                 else -> "Review ready."
@@ -126,11 +136,16 @@ class GameReviewBottomSheet : BottomSheetDialogFragment() {
                 "${bandPhrase(moment.bandBefore)} → ${bandPhrase(moment.bandAfter)}"
             }
 
-        /** Quota line, or null when nothing useful to show.  Pure. */
+        /** Quota line, or null when nothing useful to show.  Pure.  The
+         *  server reports the BINDING bucket: the pro daily smoothing cap
+         *  reads "today", the monthly ceiling "this month". */
         fun quotaLine(entitlement: ReviewEntitlement?): String? {
             val remaining = entitlement?.remaining ?: return null
             val limit = entitlement.limit ?: return null
-            return "$remaining of $limit coach reviews left this month."
+            val window =
+                if (entitlement.metric == ReviewEntitlement.METRIC_DAILY) "today"
+                else "this month"
+            return "$remaining of $limit coach reviews left $window."
         }
     }
 

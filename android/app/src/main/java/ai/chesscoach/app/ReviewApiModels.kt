@@ -151,4 +151,14 @@ data class ReviewEntitlement(
     val limit: Int? = null,
     val used: Int? = null,
     val remaining: Int? = null,
-)
+) {
+    companion object {
+        /** Monthly ceiling (free 3 / pro 50). */
+        const val METRIC_MONTHLY = "import_analysis"
+
+        /** Pro daily smoothing cap (10/day) — resets at midnight UTC. */
+        const val METRIC_DAILY = "import_analysis_daily"
+
+        const val PLAN_PRO = "pro"
+    }
+}

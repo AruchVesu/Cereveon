@@ -75,6 +75,15 @@ KNOWN_PLANS = (PLAN_FREE, PLAN_PRO)
 METRIC_COACHED_GAME = "coached_game"
 METRIC_CHAT_TURN = "chat_turn"
 METRIC_IMPORT_ANALYSIS = "import_analysis"
+#: Daily smoothing companion to ``import_analysis`` (2026-07-15): the
+#: monthly cap is the abuse ceiling; this one bounds ENGINE load — a
+#: bulk backfill reviewing dozens of imports in one evening competes
+#: with /live/move for the Stockfish pool (~up to 40s engine per
+#: review).  Same per-game subject as the monthly metric, so a same-day
+#: retry of the same game never double-charges either bucket.  Only
+#: configured for PRO (free's 3/month makes a daily bound meaningless);
+#: plans without a config are not metered on it by construction.
+METRIC_IMPORT_ANALYSIS_DAILY = "import_analysis_daily"
 
 #: Metrics metered by DISTINCT-SUBJECT admission markers: ``admit()``
 #: writes one subject-keyed row per admitted unit, so ``check()`` must
@@ -83,7 +92,9 @@ METRIC_IMPORT_ANALYSIS = "import_analysis"
 #: ``admit()`` never writes it — the PR #390 review-quota bug where
 #: capped users saw "3 reviews left" and looped on "Try coach review
 #: again".  ``chat_turn`` stays a pure counter via ``record()``.
-_MARKER_METRICS = frozenset({METRIC_COACHED_GAME, METRIC_IMPORT_ANALYSIS})
+_MARKER_METRICS = frozenset(
+    {METRIC_COACHED_GAME, METRIC_IMPORT_ANALYSIS, METRIC_IMPORT_ANALYSIS_DAILY}
+)
 
 _DAILY = "daily"
 _MONTHLY = "monthly"
@@ -128,6 +139,12 @@ LIMITS: dict[str, dict[str, Limit]] = {
         # is the priciest per-unit surface.
         METRIC_CHAT_TURN: Limit(30, _DAILY, BEHAVIOR_BLOCK),
         METRIC_IMPORT_ANALYSIS: Limit(50, _MONTHLY, BEHAVIOR_BLOCK),
+        # Reviews are the CHEAPEST LLM surface (~$0.002/review measured
+        # 2026-07-15, ≈$0.10/mo worst case at the monthly cap) — the
+        # daily bound protects the shared Stockfish pool from bulk
+        # backfills, not the token budget.  10/day × ~40s worst-case
+        # engine ≈ 7 min/day ceiling.
+        METRIC_IMPORT_ANALYSIS_DAILY: Limit(10, _DAILY, BEHAVIOR_BLOCK),
     },
 }
 

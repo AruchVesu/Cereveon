@@ -2162,12 +2162,18 @@ Semantics by existing-row state (at the current `analysis_version`):
 
 **Never 402s.**  The engine review (Wave 2: banded eval series, move
 classification counts, critical moments) is free on every imported
-game; the `import_analysis` entitlement (free 3 / month, pro 50 /
-month) gates only the LLM stage.  A blocked stage completes the review
-with `llm.outcome == "skipped_entitlement"` and the quota snapshot in
-`entitlement` drives the client's upgrade CTA.  Admission is
-per-game-subject (`entitlements.admit`), so re-reviewing the same game
-never double-charges the quota.
+game; the entitlements gate only the LLM stage — the `import_analysis`
+monthly ceiling (free 3 / pro 50) plus, for pro, the
+`import_analysis_daily` smoothing cap (10/day; protects the shared
+Stockfish pool from bulk backfills, not the token budget —
+~$0.002/review measured 2026-07-15).  A blocked stage completes the
+review with `llm.outcome == "skipped_entitlement"` (plus a
+`skipped_metric` field naming the bucket); the `entitlement` snapshot
+reports the BINDING bucket — `metric` is `"import_analysis"` (monthly)
+or `"import_analysis_daily"` (today) — which drives the client copy
+(upgrade CTA for free; "more tomorrow" for a capped pro).  Admission
+is per-game-subject (`entitlements.admit`) in BOTH buckets, so
+re-reviewing the same game never double-charges either.
 
 ### Response body (200 / 202) — shared with §39a
 

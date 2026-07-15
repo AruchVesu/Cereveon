@@ -204,11 +204,11 @@ def start_review(  # pylint: disable=too-many-return-statements
         if outcome == LLM_OUTCOME_FULL:
             return existing, False
         if outcome == LLM_OUTCOME_SKIPPED_ENTITLEMENT:
-            # Don't churn the row while the cap is still in force —
+            # Don't churn the row while a cap is still in force —
             # admit() is idempotent per subject, so a blocked check here
-            # stays blocked in the worker too.
-            decision = entitlements.check(db, player, entitlements.METRIC_IMPORT_ANALYSIS)
-            if not decision.allowed:
+            # stays blocked in the worker too.  Both buckets must have
+            # room (monthly ceiling AND the pro daily smoothing cap).
+            if not _binding_review_decision(db, player).allowed:
                 return existing, False
         existing.status = REVIEW_STATUS_ENGINE_DONE
         db.commit()
@@ -469,18 +469,42 @@ def _run_llm_stage(
     llm: "BaseLLM | None",
 ) -> None:
     """Wave 3 — entitlement-gated coach texts.  Never raises upward."""
+    # Two admission buckets, both per-game-subject (a same-day retry of
+    # the same game re-admits both for free): the MONTHLY ceiling is
+    # admitted first, then the pro DAILY smoothing cap (2026-07-15;
+    # free plans carry no daily config → not metered on it).  Ordering
+    # note: a monthly marker written before a daily block is harmless —
+    # the game keeps its monthly admission and simply runs tomorrow
+    # when the daily bucket rolls over.
     decision = entitlements.admit(
         db,
         player,
         entitlements.METRIC_IMPORT_ANALYSIS,
         subject=str(review.game_event_id),
     )
+    if decision.allowed:
+        daily = entitlements.admit(
+            db,
+            player,
+            entitlements.METRIC_IMPORT_ANALYSIS_DAILY,
+            subject=str(review.game_event_id),
+        )
+        if not daily.allowed:
+            decision = daily
     if not decision.allowed:
-        review.llm_json = json.dumps({KEY_OUTCOME: LLM_OUTCOME_SKIPPED_ENTITLEMENT})
+        review.llm_json = json.dumps(
+            {
+                KEY_OUTCOME: LLM_OUTCOME_SKIPPED_ENTITLEMENT,
+                # Which bucket blocked — ops/debug context; the client
+                # reads the binding metric from `entitlement` instead.
+                "skipped_metric": decision.metric,
+            }
+        )
         db.commit()
         logger.info(
-            "review %s LLM stage skipped: entitlement (plan=%s remaining=%s)",
+            "review %s LLM stage skipped: entitlement (metric=%s plan=%s remaining=%s)",
             review.id,
+            decision.metric,
             decision.plan,
             decision.remaining,
         )
@@ -590,11 +614,39 @@ def serialize_review(review: GameReview, *, entitlement: dict | None = None) -> 
     }
 
 
+def _binding_review_decision(db: DBSession, player: Player):
+    """The decision that currently governs this player's next review.
+
+    Non-consuming.  Checks the monthly ceiling AND the pro daily
+    smoothing cap and returns whichever binds: a blocked bucket wins
+    (the daily one first — it unblocks sooner, so its copy is the more
+    actionable), otherwise the bucket with the smaller remaining
+    headroom (unlimited/not-metered buckets never bind).
+    """
+    monthly = entitlements.check(db, player, entitlements.METRIC_IMPORT_ANALYSIS)
+    daily = entitlements.check(db, player, entitlements.METRIC_IMPORT_ANALYSIS_DAILY)
+    if not daily.allowed:
+        return daily
+    if not monthly.allowed:
+        return monthly
+    if daily.remaining is not None and (
+        monthly.remaining is None or daily.remaining < monthly.remaining
+    ):
+        return daily
+    return monthly
+
+
 def entitlement_summary(db: DBSession, player: Player) -> dict:
-    """Non-consuming quota snapshot for the client's CTA copy."""
-    decision = entitlements.check(db, player, entitlements.METRIC_IMPORT_ANALYSIS)
+    """Non-consuming quota snapshot for the client's CTA copy.
+
+    Reports the BINDING bucket (monthly ceiling vs pro daily smoothing
+    cap) so the client's copy names the limit the user would actually
+    hit next; ``metric`` distinguishes the two ("import_analysis" =
+    monthly, "import_analysis_daily" = today's cap).
+    """
+    decision = _binding_review_decision(db, player)
     return {
-        "metric": entitlements.METRIC_IMPORT_ANALYSIS,
+        "metric": decision.metric,
         "allowed": decision.allowed,
         "plan": decision.plan,
         "limit": decision.limit,
