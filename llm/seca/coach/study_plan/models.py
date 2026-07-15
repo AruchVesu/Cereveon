@@ -179,6 +179,18 @@ class MistakeStudyPuzzle(Base):
     # variants this is the puzzle's expected solution move.
     expected_move_uci: Mapped[str] = mapped_column(String, nullable=False)
 
+    # Full solution walk for library variants, as a space-separated UCI
+    # string (solver moves at even indices, opponent replies at odd ones,
+    # always ending on a solver move) — e.g. Lichess's complete solution
+    # line, so the drill sheet can walk a multi-move puzzle instead of
+    # stopping after one move.  Display / walk-through hint only: every
+    # solver move the user plays is still judged by the LOCAL engine via
+    # ``/training/verify-replay``.  NULL for day-0 originals (their
+    # ``expected_move_uci`` is the player's BAD move, not a solution) and
+    # for library rows written before this column existed (the router
+    # falls back to the single ``expected_move_uci``).
+    solution_line_uci: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # One of ``PUZZLE_SOURCES``.  Lets the response distinguish
     # "your actual mistake" from "library variant" so the UI can
     # title the puzzle accordingly ("Replay your mistake" vs

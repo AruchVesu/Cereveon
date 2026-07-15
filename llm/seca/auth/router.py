@@ -314,6 +314,20 @@ def init_schema() -> None:
             _column_type_for_dialect("TEXT", "VARCHAR"),
         )
 
+        # Multi-move study-plan drills.  Space-separated UCI walk of a
+        # library puzzle's full solution (Lichess line or curated corpus
+        # line) so the drill sheet can walk more than one move.  Nullable:
+        # day-0 originals and legacy library rows have none — the router
+        # then falls back to the single expected_move_uci.  Postgres needs
+        # the ADD COLUMN because create_all skips existing tables; SQLite
+        # for dev files that pre-date the column.
+        _ensure_column(
+            conn,
+            "mistake_study_puzzles",
+            "solution_line_uci",
+            "TEXT",
+        )
+
         # Lichess background-import jobs (PR: v2 async import).  One
         # non-terminal row per player is enforced by:
         #   (a) llm.seca.lichess.get_player_import_lock — primary

@@ -563,7 +563,17 @@ def fetch_user_games(
 # "healthy mix" angle — used by the standalone puzzle trainer
 # (``GET /puzzles/next``), which serves un-themed practice.
 _PUZZLE_ANGLE_ALLOWED: frozenset[str] = frozenset(
-    {"fork", "pin", "backRankMate", "hangingPiece", "exposedKing", "opening", "endgame", "mix"}
+    {
+        "fork",
+        "pin",
+        "backRankMate",
+        "hangingPiece",
+        "exposedKing",
+        "defensiveMove",
+        "opening",
+        "endgame",
+        "mix",
+    }
 )
 
 # Difficulty bands accepted by ?difficulty= on /api/puzzle/next.
@@ -590,8 +600,12 @@ class LichessPuzzle:
     ``solver_fen`` is the position the human faces; ``side`` is the side to
     move there (the solver's colour); ``solver_move_uci`` is Lichess's first
     solution move — a display / short-circuit hint only, NOT a correctness
-    oracle (the local engine judges the replay).  All three are derived and
-    legality-checked at fetch time so a malformed upstream response fails
+    oracle (the local engine judges the replay).  ``solution_line_uci`` is the
+    FULL Lichess solution (solver moves at even indices, opponent replies at
+    odd ones, always ending on a solver move) so a multi-move puzzle can be
+    walked step by step; same hint-only trust posture — each solver move a
+    user plays is still judged by the local engine.  Everything is derived
+    and legality-checked at fetch time so a malformed upstream response fails
     closed instead of shipping a broken position downstream.
     """
 
@@ -601,6 +615,7 @@ class LichessPuzzle:
     solver_fen: str
     solver_move_uci: str
     side: chess.Color
+    solution_line_uci: tuple[str, ...] = ()
 
 
 def _parse_puzzle_payload(payload: object) -> LichessPuzzle:
@@ -637,9 +652,6 @@ def _parse_puzzle_payload(payload: object) -> LichessPuzzle:
         raise LichessParseError("puzzle payload missing solution")
     if len(solution) > _MAX_PUZZLE_SOLUTION_MOVES:
         raise LichessParseError("puzzle solution exceeds cap")
-    sol0 = solution[0]
-    if not isinstance(sol0, str) or not sol0:
-        raise LichessParseError("puzzle solution[0] not a string")
     # ``bool`` is an ``int`` subclass; exclude it explicitly so a JSON
     # ``true`` can't masquerade as a ply count.
     if not isinstance(initial_ply, int) or isinstance(initial_ply, bool) or initial_ply < 0:
@@ -661,20 +673,36 @@ def _parse_puzzle_payload(payload: object) -> LichessPuzzle:
         except ValueError as exc:  # covers Illegal/Invalid/Ambiguous move errors
             raise LichessParseError(f"puzzle pgn replay failed: {exc}") from exc
 
-    try:
-        move = chess.Move.from_uci(sol0)
-    except ValueError as exc:
-        raise LichessParseError(f"puzzle solution move not UCI: {exc}") from exc
-    if move not in board.legal_moves:
-        raise LichessParseError("puzzle solution[0] not legal in derived position")
+    # Validate the FULL solution line, not just its first move: the study
+    # plan stores the whole line so the drill sheet can walk a multi-move
+    # puzzle (auto-playing the opponent replies at odd indices).  Replay on a
+    # fresh board (rebuilt from the decision-point FEN, which carries the
+    # castling/en-passant state) so ``board`` stays the decision point.  Any
+    # non-UCI or illegal ply fails the whole puzzle closed — a defect here
+    # means the pgn/initialPly derivation drifted, and a partially-legal
+    # line would strand the drill mid-walk.
+    replay = chess.Board(board.fen())
+    validated: list[str] = []
+    for idx, sol in enumerate(solution):
+        if not isinstance(sol, str) or not sol:
+            raise LichessParseError(f"puzzle solution[{idx}] not a string")
+        try:
+            move = chess.Move.from_uci(sol)
+        except ValueError as exc:
+            raise LichessParseError(f"puzzle solution[{idx}] not UCI: {exc}") from exc
+        if move not in replay.legal_moves:
+            raise LichessParseError(f"puzzle solution[{idx}] not legal in derived position")
+        replay.push(move)
+        validated.append(sol)
 
     return LichessPuzzle(
         id=pid.strip(),
         rating=rating,
         themes=themes,
         solver_fen=board.fen(),
-        solver_move_uci=sol0,
+        solver_move_uci=validated[0],
         side=board.turn,
+        solution_line_uci=tuple(validated),
     )
 
 

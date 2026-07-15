@@ -148,6 +148,7 @@ class StudyPlanOverviewBottomSheet : BottomSheetDialogFragment() {
                 verdict = response.verdict,
                 fen = puzzle.fen,
                 expectedMoveUci = puzzle.expectedMoveUci,
+                solutionLineUci = puzzle.solutionLineUci,
             )
             sheet.gameApiClient = gameApiClient
             // Capture the FM before dismissing — show the drill on the

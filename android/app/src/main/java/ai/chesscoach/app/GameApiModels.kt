@@ -541,6 +541,15 @@ data class TodayPuzzleDto(
     val fen: String = "",
     /** Engine's preferred move at [fen] (UCI), used by the verifier. */
     @SerialName("expected_move_uci") val expectedMoveUci: String = "",
+    /** Full solution walk for ``"library"`` puzzles, in UCI: SOLVER moves
+     *  at even indices, opponent replies at odd ones, ending on a solver
+     *  move.  The drill sheet walks it — each user move is still judged
+     *  by the local engine via ``/training/verify-replay``; the odd-index
+     *  replies auto-play.  Empty for ``"original"`` day-0 puzzles (their
+     *  expected move is the player's BAD move, not a solution) and for
+     *  responses from servers predating the field — both fall back to
+     *  the single-move drill flow. */
+    @SerialName("solution_line_uci") val solutionLineUci: List<String> = emptyList(),
     /** ``"original"`` for day-0 (the player's actual mistake) or
      *  ``"library"`` for theme-matched corpus variants. */
     @SerialName("source_type") val sourceType: String = "",

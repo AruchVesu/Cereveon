@@ -53,6 +53,7 @@ from llm.seca.auth.models import Player
 from llm.seca.auth.router import get_current_player, get_db
 from llm.seca.coach.study_plan.models import (
     PLAN_DAY_OFFSETS,
+    PUZZLE_SOURCE_LIBRARY,
     STATUS_ACTIVE,
     STATUS_COMPLETED,
     MistakeStudyPlan,
@@ -86,6 +87,15 @@ class TodayPuzzleResponse(BaseModel):
     """ISO-8601 UTC timestamp.  ``due_at <= now()`` is invariant when
     this object is non-null (the endpoint only returns puzzles that
     are actually due)."""
+
+    solution_line_uci: list[str] = []
+    """Full solution walk for ``"library"`` puzzles, in UCI: solver moves
+    at even indices, opponent replies at odd ones, ending on a solver
+    move.  Single-decision puzzles carry just their one move.  Display /
+    walk-through hint only — every solver move the user plays is judged
+    by the LOCAL engine via ``POST /training/verify-replay``.  Empty for
+    ``"original"`` day-0 puzzles: their ``expected_move_uci`` is the
+    player's BAD move, not a solution, so there is nothing to walk."""
 
 
 class PlanDayResponse(BaseModel):
@@ -174,6 +184,22 @@ class TodayPlanResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _solution_line_for(puzzle: MistakeStudyPuzzle) -> list[str]:
+    """The solution walk to put on the wire for one puzzle row.
+
+    Only ``"library"`` puzzles have a solution to walk.  Rows written since
+    multi-move support carry the full line in ``solution_line_uci``; legacy
+    library rows (column NULL) fall back to their single
+    ``expected_move_uci``, which for a Lichess-sourced row was the line's
+    first move anyway.  ``"original"`` day-0 rows return ``[]`` — their
+    expected move is the player's bad move, not a solution.
+    """
+    if puzzle.source_type != PUZZLE_SOURCE_LIBRARY:
+        return []
+    stored = (puzzle.solution_line_uci or "").split()
+    return stored if stored else [puzzle.expected_move_uci]
+
+
 def _serialize_plan(plan: MistakeStudyPlan) -> TodayPlanResponse:
     """Build the wire response from a plan + its puzzles.
 
@@ -218,6 +244,7 @@ def _serialize_plan(plan: MistakeStudyPlan) -> TodayPlanResponse:
                 expected_move_uci=puzzle.expected_move_uci,
                 source_type=puzzle.source_type,
                 due_at=puzzle.due_at.isoformat(),
+                solution_line_uci=_solution_line_for(puzzle),
             )
         days.append(
             PlanDayResponse(

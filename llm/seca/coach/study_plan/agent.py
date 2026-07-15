@@ -458,6 +458,13 @@ def _populate_library_variants(
                 continue
             row.fen = picked.fen
             row.expected_move_uci = picked.expected_move_uci
+            # Full solution walk (Lichess line, or a curated YAML line).  A
+            # single-decision puzzle stores just its expected move so the
+            # wire shape is uniform for every library row; day-0 keeps NULL
+            # (its expected move is the player's BAD move, not a solution).
+            row.solution_line_uci = " ".join(
+                picked.solution_line_uci or (picked.expected_move_uci,)
+            )
             row.source_type = PUZZLE_SOURCE_LIBRARY
         db.commit()
     except Exception:  # noqa: BLE001

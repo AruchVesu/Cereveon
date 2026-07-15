@@ -26,6 +26,18 @@ import org.junit.Test
  * 11. PRETTY_THEME_SNAKE_CASE   "king_safety" → "King safety" (sentence-cased).
  * 12. PRETTY_THEME_SINGLE_WORD  "fork" → "Fork".
  * 13. PRETTY_THEME_EMPTY        "" → empty string.
+ * 14. WALKABLE_THRESHOLD        a line walks at >= 3 plies (two solver decisions);
+ *                               shorter/empty lines run the single-decision drill.
+ * 15. WALK_CONTINUES_ON_LINE    a line-following move mid-walk yields Continue with
+ *                               the scripted reply + the next solver index.
+ * 16. WALK_SOLVES_ON_LAST_MOVE  the line's final solver move yields Solved.
+ * 17. WALK_SOLVES_ON_DEVIATION  an engine-approved move OFF the line yields Solved
+ *                               (never punished, never walks a stale script).
+ * 18. WALK_SOLVES_ON_TRAILING_REPLY  a (malformed) line ending on an opponent reply
+ *                               solves at the boundary instead of stranding the walk.
+ * 19. UCI_COORDS_ROUNDTRIP      uciToCoords inverts rowColToUci; malformed → null.
+ * 20. UCI_PROMO_CHAR            5-char UCI exposes the promo letter, else ' '.
+ * 21. WALK_STATUS_COPY          upfront depth announcement + per-step progress.
  */
 class TodaysDrillBottomSheetTest {
 
@@ -152,5 +164,154 @@ class TodaysDrillBottomSheetTest {
         assertEquals("Fork", TodaysDrillBottomSheet.prettyTheme("fork"))
         assertEquals("Pin", TodaysDrillBottomSheet.prettyTheme("pin"))
         assertEquals("Tempo", TodaysDrillBottomSheet.prettyTheme("tempo"))
+    }
+
+    // ── Multi-move walk state machine ────────────────────────────────
+
+    // 1.e4 e5 2.Nf3-style stand-in line: solver at 0 and 2, reply at 1.
+    private val threePlyLine = listOf("e2e4", "e7e5", "g1f3")
+    private val fivePlyLine = listOf("e2e4", "e7e5", "g1f3", "b8c6", "f1c4")
+
+    @Test
+    fun `WALKABLE_THRESHOLD - three plies walk, fewer run single-decision`() {
+        assertEquals(false, TodaysDrillBottomSheet.isWalkable(emptyList()))
+        assertEquals(false, TodaysDrillBottomSheet.isWalkable(listOf("e2e4")))
+        assertEquals(false, TodaysDrillBottomSheet.isWalkable(listOf("e2e4", "e7e5")))
+        assertEquals(true, TodaysDrillBottomSheet.isWalkable(threePlyLine))
+        assertEquals(true, TodaysDrillBottomSheet.isWalkable(fivePlyLine))
+    }
+
+    @Test
+    fun `WALKABLE_THRESHOLD - solver move count is the even-index ply count`() {
+        assertEquals(0, TodaysDrillBottomSheet.solverMoveCount(emptyList()))
+        assertEquals(1, TodaysDrillBottomSheet.solverMoveCount(listOf("e2e4")))
+        assertEquals(2, TodaysDrillBottomSheet.solverMoveCount(threePlyLine))
+        assertEquals(3, TodaysDrillBottomSheet.solverMoveCount(fivePlyLine))
+    }
+
+    @Test
+    fun `WALK_CONTINUES_ON_LINE - line-following move yields the scripted reply`() {
+        val step = TodaysDrillBottomSheet.nextDrillStep(fivePlyLine, 0, "e2e4")
+        assertEquals(
+            TodaysDrillBottomSheet.DrillStepOutcome.Continue(
+                opponentReplyUci = "e7e5",
+                nextLineIndex = 2,
+            ),
+            step,
+        )
+        val second = TodaysDrillBottomSheet.nextDrillStep(fivePlyLine, 2, "g1f3")
+        assertEquals(
+            TodaysDrillBottomSheet.DrillStepOutcome.Continue(
+                opponentReplyUci = "b8c6",
+                nextLineIndex = 4,
+            ),
+            second,
+        )
+    }
+
+    @Test
+    fun `WALK_SOLVES_ON_LAST_MOVE - the final solver move completes the drill`() {
+        assertEquals(
+            TodaysDrillBottomSheet.DrillStepOutcome.Solved,
+            TodaysDrillBottomSheet.nextDrillStep(threePlyLine, 2, "g1f3"),
+        )
+        assertEquals(
+            TodaysDrillBottomSheet.DrillStepOutcome.Solved,
+            TodaysDrillBottomSheet.nextDrillStep(fivePlyLine, 4, "f1c4"),
+        )
+    }
+
+    @Test
+    fun `WALK_SOLVES_ON_DEVIATION - an engine-approved off-line move completes`() {
+        // The engine said the move is sound but it isn't the scripted one:
+        // the rest of the line no longer applies, so the drill is solved.
+        assertEquals(
+            TodaysDrillBottomSheet.DrillStepOutcome.Solved,
+            TodaysDrillBottomSheet.nextDrillStep(fivePlyLine, 0, "d2d4"),
+        )
+        assertEquals(
+            TodaysDrillBottomSheet.DrillStepOutcome.Solved,
+            TodaysDrillBottomSheet.nextDrillStep(fivePlyLine, 2, "b1c3"),
+        )
+    }
+
+    @Test
+    fun `WALK_SOLVES_ON_SINGLE_DECISION - short and empty lines always solve`() {
+        assertEquals(
+            TodaysDrillBottomSheet.DrillStepOutcome.Solved,
+            TodaysDrillBottomSheet.nextDrillStep(emptyList(), 0, "e2e4"),
+        )
+        assertEquals(
+            TodaysDrillBottomSheet.DrillStepOutcome.Solved,
+            TodaysDrillBottomSheet.nextDrillStep(listOf("e2e4"), 0, "e2e4"),
+        )
+    }
+
+    @Test
+    fun `WALK_SOLVES_ON_TRAILING_REPLY - a line ending on a reply solves at the boundary`() {
+        // Defensive: a 4-ply line ends on an opponent reply.  The move at
+        // index 2 is the last SOLVER move — there is no next decision, so
+        // the walk must solve rather than script a trailing reply with
+        // nothing to find after it.
+        val evenLine = listOf("e2e4", "e7e5", "g1f3", "b8c6")
+        assertEquals(
+            TodaysDrillBottomSheet.DrillStepOutcome.Solved,
+            TodaysDrillBottomSheet.nextDrillStep(evenLine, 2, "g1f3"),
+        )
+    }
+
+    // ── UCI coordinate helpers ───────────────────────────────────────
+
+    @Test
+    fun `UCI_COORDS_ROUNDTRIP - uciToCoords inverts rowColToUci`() {
+        // e2 = row 6, col 4; e4 = row 4, col 4 in ChessBoardView's frame.
+        val coords = TodaysDrillBottomSheet.uciToCoords("e2e4")!!
+        assertEquals(listOf(6, 4, 4, 4), coords.toList())
+        assertEquals(
+            "e2",
+            MistakeReplayBottomSheet.rowColToUci(coords[0], coords[1]),
+        )
+        assertEquals(
+            "e4",
+            MistakeReplayBottomSheet.rowColToUci(coords[2], coords[3]),
+        )
+        // Corner-to-corner sanity: a8 is row 0 col 0, h1 is row 7 col 7.
+        assertEquals(
+            listOf(0, 0, 7, 7),
+            TodaysDrillBottomSheet.uciToCoords("a8h1")!!.toList(),
+        )
+    }
+
+    @Test
+    fun `UCI_COORDS_ROUNDTRIP - malformed strings yield null`() {
+        assertEquals(null, TodaysDrillBottomSheet.uciToCoords(""))
+        assertEquals(null, TodaysDrillBottomSheet.uciToCoords("e2"))
+        assertEquals(null, TodaysDrillBottomSheet.uciToCoords("z9e4"))
+        assertEquals(null, TodaysDrillBottomSheet.uciToCoords("e2e9"))
+    }
+
+    @Test
+    fun `UCI_PROMO_CHAR - promotion letter surfaces, plain moves get a space`() {
+        assertEquals('q', TodaysDrillBottomSheet.uciPromotionChar("e7e8q"))
+        assertEquals('n', TodaysDrillBottomSheet.uciPromotionChar("a2a1n"))
+        assertEquals(' ', TodaysDrillBottomSheet.uciPromotionChar("e2e4"))
+    }
+
+    // ── Walk status copy ─────────────────────────────────────────────
+
+    @Test
+    fun `WALK_STATUS_COPY - upfront depth then per-step progress`() {
+        assertEquals(
+            "This one runs deeper — find 2 moves.",
+            TodaysDrillBottomSheet.formatWalkStatus(found = 0, total = 2),
+        )
+        assertEquals(
+            "Correct — find the next move (1 of 2).",
+            TodaysDrillBottomSheet.formatWalkStatus(found = 1, total = 2),
+        )
+        assertEquals(
+            "Correct — find the next move (2 of 3).",
+            TodaysDrillBottomSheet.formatWalkStatus(found = 2, total = 3),
+        )
     }
 }
