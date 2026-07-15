@@ -56,7 +56,9 @@ import llm.seca.review.models  # noqa: F401  # ensure GameReview is on Base befo
 
 from llm.seca.engines.stockfish.pool import (
     EnginePoolSettings,
+    FenEvalCache,
     StockfishEnginePool,
+    engine_config_fingerprint,
 )
 from llm.rag.engine_signal.extract_engine_signal import extract_engine_signal
 from llm.rag.engine_signal.move_quality import classify_move_quality, eval_to_player_cp
@@ -349,7 +351,20 @@ async def lifespan(app: FastAPI):
             blitz_movetime_ms=max(20, _env_int("ENGINE_BLITZ_MOVETIME_MS", 25)),
             queue_timeout_ms=max(1, _env_int("ENGINE_QUEUE_TIMEOUT_MS", 50)),
         )
-        engine_pool = StockfishEnginePool(settings)
+        # Read-through eval cache: /live/move evaluates the pre- and
+        # post-move position of every player move at the same 200 ms
+        # budget the /game/finish accuracy recompute uses, so by the
+        # time a game ends nearly every position of its PGN is already
+        # scored.  Without the cache the finish recompute re-paid all
+        # of it in one synchronous batch — the 10-20 s the post-game
+        # summary sheet used to wait.  REDIS_URL (set in prod compose)
+        # lets warm entries survive a mid-game deploy; without it the
+        # in-process L1 still covers the single-worker deployment.
+        eval_cache = FenEvalCache(
+            redis_url=os.getenv("REDIS_URL") or None,
+            engine_config_fingerprint=engine_config_fingerprint(settings),
+        )
+        engine_pool = StockfishEnginePool(settings, eval_cache=eval_cache)
         engine_pool.startup()
         # Expose on app.state for routes that need it without late
         # imports.  The events router uses this for the server-side
@@ -390,6 +405,10 @@ async def lifespan(app: FastAPI):
 
         logger.info("DB initialized")
         logger.info("Stockfish engine pool initialized (size=%d)", settings.pool_size)
+        logger.info(
+            "Stockfish eval cache attached (redis=%s)",
+            "yes" if os.getenv("REDIS_URL") else "no; in-process L1 only",
+        )
     except SystemExit:
         # The SECA safety freeze (``llm.seca.safety.freeze._crash``)
         # raises ``SystemExit(1)`` via ``sys.exit`` when the runtime

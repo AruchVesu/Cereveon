@@ -20,11 +20,16 @@ The default ``movetime_ms=200`` gives the engine enough depth
 that depth-7-10 shallow eval was missing (e.g., a player walking
 their king out gradually — each individual king step might look
 < 100 cp at shallow depth, while the cumulative position is already
-losing).  A 40-move game with a cold cache finishes in ~8 s;
-``FenMoveCache`` populated during live play makes most positions
-cache hits.  Each move requires exactly one engine call
-(the position-after-the-move serves as the position-before for the
-next iteration).
+losing).  A 40-move game with a cold cache finishes in ~8 s.  For a
+game played with live coaching, the pool's ``FenEvalCache`` —
+populated by the very same 200 ms evaluations ``/live/move`` runs on
+the pre- and post-move position of every player move — serves nearly
+every position, so the recompute completes in well under a second
+and the post-game summary is not gated on a second full engine pass.
+Cold-cache paths (offline finishes retried on cold start, imported
+games) still pay the full batch.  Each move requires at most one
+engine call (the position-after-the-move serves as the
+position-before for the next iteration; cache hits skip even that).
 
 The 200 ms default was raised from 50 ms on 2026-05-20 after the
 mistake-replay detector consistently surfaced downstream

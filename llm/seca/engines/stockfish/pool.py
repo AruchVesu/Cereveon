@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import queue
@@ -74,7 +75,8 @@ def engine_config_fingerprint(
     *,
     override: str | None = None,
 ) -> str:
-    """Stable 12-char hash of engine settings — included in move-cache keys.
+    """Stable 12-char hash of engine settings — included in the cache keys
+    of both engine caches (``FenMoveCache`` moves, ``FenEvalCache`` evals).
 
     Any change to the fields below produces a new fingerprint, which lands
     every cache lookup in a fresh namespace and effectively invalidates
@@ -260,6 +262,185 @@ class FenMoveCache:
                 self._memory_cache.popitem(last=False)
 
 
+# ---------------------------------------------------------------------------
+# Position-evaluation cache
+# ---------------------------------------------------------------------------
+
+#: Eval-cache namespace version.  Bump when the payload layout or the
+#: position-key derivation changes; that alone invalidates every stored
+#: entry.  Per-config invalidation is handled by the engine-config
+#: fingerprint participating in the key digest — same split as the move
+#: cache above.
+_EVAL_CACHE_VERSION = "v1"
+_EVAL_DEFAULT_NAMESPACE = f"fen_eval:{_EVAL_CACHE_VERSION}"
+
+#: Entries must survive from a game's FIRST live-move evaluation to its
+#: /game/finish recompute — games run 10-30 minutes, resumed games
+#: longer.  Six hours keeps a same-session resume warm; anything older
+#: falls back to a fresh engine pass (correct, just slower).
+_EVAL_TTL_SECONDS = 6 * 3600
+
+#: L1 bound.  A full game touches ≤ ~400 entries (two evaluations per
+#: ply, 200-ply analysis cap) at ~100 bytes each; 4096 covers every
+#: concurrently-live game a single worker realistically serves.
+_EVAL_MAX_MEMORY_ITEMS = 4096
+
+#: Bounds a cached payload must satisfy before it is served.  Stockfish
+#: cp scores stay within ±~2000 for non-mate positions and the callers'
+#: mate collapse uses ±10000 (``pgn_accuracy._MATE_VALUE_CP``); anything
+#: outside these bounds is a corrupted or poisoned entry and is treated
+#: as a miss, mirroring the ``_UCI_MOVE_RE`` posture of the move cache.
+_EVAL_MAX_ABS_CP = 20_000
+_EVAL_MAX_ABS_MATE = 500
+
+
+class FenEvalCache:
+    """Cache for ``StockfishEnginePool.evaluate_position`` scores.
+
+    Why this exists: the positions of a live game are engine-evaluated
+    move by move while it is being played (``/live/move`` runs a 200 ms
+    ``evaluate_position`` on both the pre-move and post-move FEN of
+    every player move), and then the ``/game/finish`` accuracy recompute
+    re-evaluated every one of them again in a single synchronous batch —
+    (plies + 1) × 200 ms, i.e. the 10-20 s the post-game summary sheet
+    used to hang before appearing.  Serving the finish sweep from the
+    evaluations the live path already paid for collapses that batch to
+    the handful of positions live play never saw (typically just the
+    final position when the opponent moved last).
+
+    Trust boundary: values enter the cache exclusively from local engine
+    output — the same trust level as a fresh ``analyse`` call.  Redis
+    round-trips are validated on read (type/value shape and bounds), so
+    a corrupted or poisoned entry degrades to a cache miss and a fresh
+    engine evaluation, never to a served fake score.
+
+    Key semantics: entries are keyed on the position's EPD (piece
+    placement, side to move, castling rights, and the *legal* en-passant
+    square) plus the exact ``movetime_ms`` and the engine-config
+    fingerprint.  EPD rather than the raw FEN because the same position
+    reaches the pool spelled differently — the Android client's FEN
+    (live play) and python-chess's PGN-replay FEN (finish recompute) can
+    disagree on move counters and on cosmetic (non-capturable)
+    en-passant fields, and keying on them would only manufacture
+    misses.  Dropping the counters is a deliberate, bounded imprecision:
+    an eval cached under one halfmove clock can be served under another,
+    which matters only in 50-move-rule-adjacent endgames — noise well
+    inside the 50 cp classification granularity every consumer uses.
+    ``movetime_ms`` stays in the key — unlike the move cache's movetime
+    equivalence class — because the analysis budget IS the eval's
+    quality level (the 200 ms /game/finish budget was a deliberate
+    depth fix; a 150 ms chat eval must not satisfy it).
+    """
+
+    def __init__(  # pylint: disable=redefined-outer-name
+        self,
+        *,
+        redis_url: str | None,
+        ttl_seconds: int = _EVAL_TTL_SECONDS,
+        namespace: str = _EVAL_DEFAULT_NAMESPACE,
+        max_memory_items: int = _EVAL_MAX_MEMORY_ITEMS,
+        engine_config_fingerprint: str = "",
+    ):
+        # ``engine_config_fingerprint`` shadows the module-level function
+        # of the same name for the same call-site-symmetry reason
+        # documented on ``FenMoveCache.__init__`` — callers pass the
+        # fingerprint VALUE.
+        self._ttl_seconds = ttl_seconds
+        self._namespace = namespace
+        self._engine_config_fingerprint = engine_config_fingerprint
+        self._max_memory_items = max(1, max_memory_items)
+        self._memory_cache: OrderedDict[str, tuple[dict, float]] = OrderedDict()
+        self._lock = threading.Lock()
+        self._redis = None
+
+        if redis_url and redis is not None:
+            try:
+                client = redis.Redis.from_url(redis_url)
+                client.ping()
+                self._redis = client
+            except Exception:
+                self._redis = None
+
+    def _cache_key(self, *, position_key: str, movetime_ms: int) -> str:
+        digest = hashlib.sha256(
+            (f"{position_key}|mt:{movetime_ms}|{self._engine_config_fingerprint}").encode("utf-8")
+        ).hexdigest()
+        return f"{self._namespace}:{digest}"
+
+    @staticmethod
+    def _validated(evaluation: object) -> dict | None:
+        """Return a normalised copy iff *evaluation* is a plausible engine
+        score — ``{"type": "cp" | "mate", "value": int-within-bounds}``.
+        Anything else (poisoned Redis entry, schema drift) returns None so
+        the caller treats it as a miss.  The copy also insulates the L1
+        store from callers that mutate the returned dict.
+        """
+        if not isinstance(evaluation, dict):
+            return None
+        eval_type = evaluation.get("type")
+        value = evaluation.get("value")
+        # bool is an int subclass — exclude it explicitly.
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        if eval_type == "cp":
+            if abs(value) > _EVAL_MAX_ABS_CP:
+                return None
+        elif eval_type == "mate":
+            if abs(value) > _EVAL_MAX_ABS_MATE:
+                return None
+        else:
+            return None
+        return {"type": eval_type, "value": value}
+
+    def get(self, *, board: chess.Board, movetime_ms: int) -> dict | None:
+        key = self._cache_key(position_key=board.epd(), movetime_ms=movetime_ms)
+
+        if self._redis is not None:
+            try:
+                # Same sync-client ``cast`` rationale as FenMoveCache.get.
+                cached = cast("bytes | None", self._redis.get(key))
+                if cached:
+                    validated = self._validated(json.loads(cached))
+                    if validated is not None:
+                        return validated
+            except Exception:
+                pass
+
+        now = time.time()
+        with self._lock:
+            entry = self._memory_cache.get(key)
+            if not entry:
+                return None
+            value, expires_at = entry
+            if expires_at < now:
+                self._memory_cache.pop(key, None)
+                return None
+            self._memory_cache.move_to_end(key)
+        # Validate outside the lock; L1 entries were validated on write,
+        # so this is belt-and-braces plus the mutation-insulating copy.
+        return self._validated(value)
+
+    def set(self, *, board: chess.Board, movetime_ms: int, evaluation: dict) -> None:
+        validated = self._validated(evaluation)
+        if validated is None:
+            # Never persist a shape we would refuse to serve.
+            return
+        key = self._cache_key(position_key=board.epd(), movetime_ms=movetime_ms)
+
+        if self._redis is not None:
+            try:
+                self._redis.set(key, json.dumps(validated), ex=self._ttl_seconds)
+                return
+            except Exception:
+                pass
+
+        with self._lock:
+            self._memory_cache[key] = (validated, time.time() + self._ttl_seconds)
+            self._memory_cache.move_to_end(key)
+            while len(self._memory_cache) > self._max_memory_items:
+                self._memory_cache.popitem(last=False)
+
+
 class StockfishEnginePool:
     #: Consecutive failed operations after which a process-alive engine is
     #: evicted anyway (audit 2026-07-14, P2 #6).  The transport probe in
@@ -271,8 +452,17 @@ class StockfishEnginePool:
     #: long a wedged engine can poison its slot.
     MAX_CONSECUTIVE_ENGINE_FAILURES = 3
 
-    def __init__(self, settings: EnginePoolSettings):
+    def __init__(
+        self,
+        settings: EnginePoolSettings,
+        *,
+        eval_cache: FenEvalCache | None = None,
+    ):
         self.settings = settings
+        #: Optional read-through cache for ``evaluate_position`` — see
+        #: :class:`FenEvalCache`.  None (tests, ad-hoc pools) preserves
+        #: the uncached behaviour: every call runs a fresh ``analyse``.
+        self.eval_cache = eval_cache
         self._engines: queue.Queue[chess.engine.SimpleEngine] = queue.Queue(
             maxsize=settings.pool_size
         )
@@ -579,21 +769,41 @@ class StockfishEnginePool:
         are drawn from the closed vocabulary in
         ``llm.rag.engine_signal.flag_vocabulary``.
 
-        Caller is the Mode-1 ``/live/move`` route, which uses the result
-        to give the LLM real tactical context (band, side, mate flag)
+        Callers: the Mode-1 ``/live/move`` route (which uses the result
+        to give the LLM real tactical context — band, side, mate flag —
         instead of the FEN-only heuristic ``extract_engine_signal``
-        derives when ``stockfish_json`` is empty.  See PR #87.
+        derives when ``stockfish_json`` is empty; see PR #87), the /chat
+        eval, the /game/finish accuracy recompute, and the imported-game
+        review pipeline.
+
+        When the pool carries a :class:`FenEvalCache`, the score is
+        served from it whenever this position was already evaluated at
+        the same ``movetime_ms`` under the same engine config — the
+        board-derived flag lists are recomputed either way (they are
+        deterministic and engine-free).  This is what lets the
+        /game/finish recompute ride on the evaluations /live/move
+        already ran during the game instead of re-paying ~40 × 200 ms
+        at the moment the user is waiting for the post-game summary.
         """
         if not self._started:
             raise RuntimeError("Engine pool not started")
 
         board = chess.Board(fen)
         # Computed eagerly so the flag list is identical on the
-        # zero-score defence path below (engine returned no score) and
-        # the happy paths — the LLM should see the same board features
-        # regardless of whether Stockfish produced a numeric score.
+        # zero-score defence path below (engine returned no score), the
+        # cache-hit path, and the happy paths — the LLM should see the
+        # same board features regardless of where the score came from.
         tactical_flags = compute_tactical_flags(board)
         position_flags = compute_position_flags(board)
+
+        if self.eval_cache is not None:
+            cached = self.eval_cache.get(board=board, movetime_ms=movetime_ms)
+            if cached is not None:
+                return {
+                    "evaluation": cached,
+                    "tactical_flags": tactical_flags,
+                    "position_flags": position_flags,
+                }
 
         timeout_ms = queue_timeout_ms
         if timeout_ms is None:
@@ -622,7 +832,9 @@ class StockfishEnginePool:
             # Engine returned no score (shouldn't happen with a finite limit,
             # but defend against it).  Return a neutral cp eval so the caller
             # gets a usable shape; extract_engine_signal will tag this as
-            # band="equal".
+            # band="equal".  Deliberately NOT cached: this is a degraded
+            # answer, and pinning it for hours would keep serving cp=0 for
+            # a position the engine can genuinely score on the next call.
             return {
                 "evaluation": {"type": "cp", "value": 0},
                 "tactical_flags": tactical_flags,
@@ -631,16 +843,15 @@ class StockfishEnginePool:
 
         white_score = score.white()
         if white_score.is_mate():
-            mate_in = white_score.mate()
-            return {
-                "evaluation": {"type": "mate", "value": int(mate_in or 0)},
-                "tactical_flags": tactical_flags,
-                "position_flags": position_flags,
-            }
+            evaluation: dict = {"type": "mate", "value": int(white_score.mate() or 0)}
+        else:
+            cp = white_score.score(mate_score=10000)
+            evaluation = {"type": "cp", "value": int(cp or 0)}
 
-        cp = white_score.score(mate_score=10000)
+        if self.eval_cache is not None:
+            self.eval_cache.set(board=board, movetime_ms=movetime_ms, evaluation=evaluation)
         return {
-            "evaluation": {"type": "cp", "value": int(cp or 0)},
+            "evaluation": evaluation,
             "tactical_flags": tactical_flags,
             "position_flags": position_flags,
         }
