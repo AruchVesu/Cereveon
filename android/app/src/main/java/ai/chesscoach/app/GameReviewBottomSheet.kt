@@ -236,6 +236,27 @@ class GameReviewBottomSheet : BottomSheetDialogFragment() {
         }
     }
 
+    /**
+     * Clamp the sheet to its content (same recipe as the history sheet):
+     * the M3 dialog's default 'auto' peek is ~16:9 of the width, so the
+     * short Wave-1 state ("Analyzing the game…") trailed a dead void
+     * until the taller waves filled it.  peekHeight = what COLLAPSED
+     * shows; maxHeight = cap in every state.  Recomputed on every poll
+     * render, so the sheet grows as waves land.
+     */
+    private fun resizeSheetToContent() {
+        val root = view ?: return
+        root.post {
+            val dlg = dialog as? com.google.android.material.bottomsheet.BottomSheetDialog
+                ?: return@post
+            val scrollRegion = (txtMeta.parent as? View)?.parent as? View ?: return@post
+            val contentBottom = scrollRegion.bottom + root.paddingBottom
+            if (contentBottom <= 0) return@post
+            dlg.behavior.maxHeight = contentBottom
+            dlg.behavior.peekHeight = contentBottom
+        }
+    }
+
     private fun render(review: GameReviewResponse) {
         txtStatus.text = statusLine(review)
 
@@ -258,6 +279,7 @@ class GameReviewBottomSheet : BottomSheetDialogFragment() {
         renderMoments(review)
         renderVerdict(review)
         renderQuotaAndAction(review)
+        resizeSheetToContent()
     }
 
     private fun renderMoments(review: GameReviewResponse) {

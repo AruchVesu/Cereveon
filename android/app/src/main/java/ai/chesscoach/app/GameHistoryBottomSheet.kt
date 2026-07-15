@@ -158,6 +158,46 @@ class GameHistoryBottomSheet : BottomSheetDialogFragment() {
                     txtHistoryEmpty.visibility = View.VISIBLE
                 }
             }
+            resizeSheetToContent()
+        }
+    }
+
+    /**
+     * Re-measure the bottom-sheet frame against the CURRENT content.
+     *
+     * Material's bottom sheet grows with its content but does not shrink
+     * on its own: switching from a long tab (ALL, 20 rows) to a short one
+     * (IN-APP, 2 rows) swapped the rows but left the frame at its old
+     * height — a dead void under the list (on-device report, 2026-07-15).
+     * Re-pin the frame's height to wrap_content and request layout after
+     * every render so the sheet hugs whatever the tab now shows.
+     */
+    private fun resizeSheetToContent() {
+        val root = view ?: return
+        root.post {
+            val dlg = dialog as? com.google.android.material.bottomsheet.BottomSheetDialog
+                ?: return@post
+            // The M3 dialog machinery keeps the sheet frame (and the
+            // fragment root inside it) at full window height regardless
+            // of layout params (measured on-device, 2026-07-15), and the
+            // default 'auto' peek is ~16:9 of the width (~1928px here) —
+            // so a short tab showed the sheet background as a dead void
+            // under the rows.  Instead of fighting the frame, clamp the
+            // BEHAVIOR to the content: the scroll region (or the empty-
+            // state text) is the last visual element, so its bottom edge
+            // + the root's bottom padding IS the content height.
+            // peekHeight = what COLLAPSED shows; maxHeight = hard cap in
+            // every state, so dragging up can't expose the void either.
+            // Both recomputed after every render, so switching back to a
+            // taller tab grows the sheet again.
+            val scrollRegion = historyList.parent as? View ?: return@post
+            val contentBottom = (
+                if (txtHistoryEmpty.visibility == View.VISIBLE) txtHistoryEmpty.bottom
+                else scrollRegion.bottom
+            ) + root.paddingBottom
+            if (contentBottom <= 0) return@post
+            dlg.behavior.maxHeight = contentBottom
+            dlg.behavior.peekHeight = contentBottom
         }
     }
 
