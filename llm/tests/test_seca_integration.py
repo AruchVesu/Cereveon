@@ -314,7 +314,13 @@ class TestSkillUpdaterAction:
         event.weaknesses_json = json.dumps({"opening": 0.9, "tactics": 0.1})
 
         db = MagicMock()
-        db.query.return_value.filter_by.return_value.first.return_value = player
+        # The player fetch chain mirrors production:
+        # query(Player).filter_by(id=...).with_for_update().first()
+        # — with_for_update added by the P2 #7 rating-race fix (row
+        # lock; see SEC_SKILL_UPDATER_ROW_LOCK).  A MagicMock db must
+        # wire the SAME chain or .first() returns a fresh MagicMock
+        # whose .rating breaks the Elo arithmetic.
+        db.query.return_value.filter_by.return_value.with_for_update.return_value.first.return_value = player
         # PR #174: SkillUpdater also queries
         # ``db.query(GameEvent).filter(...).count()`` to drive
         # K-factor banding (new players K=40, established K=20).
