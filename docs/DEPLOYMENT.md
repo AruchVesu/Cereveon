@@ -6,30 +6,34 @@ ChessCoach-AI — production deployment checklist and operational reference.
 
 ## 0. Production Topology
 
-Production runs in two tiers, both built and signed by the same CI pipeline:
+Production runs a single tier, built and signed by the CI pipeline:
 
 | Tier | Image | Source | Port | Role |
 |---|---|---|---|---|
-| **Fly.io edge** | `cereveon` | root [`Dockerfile`](../Dockerfile) → [`llm/server.js`](../llm/server.js) (Node + Express) | 3000 | Public entry point, security middleware, regionally distributed for global scalability |
-| **Hetzner backend** | `cereveon-llm-api` | [`llm/Dockerfile.api`](../llm/Dockerfile.api) (Python + Stockfish + full SECA pipeline) | 8000 | Heavy compute: engine pool, RAG, validators, auth, Postgres + Redis stack from [`docker-compose.prod.yml`](../docker-compose.prod.yml). LLM coaching via DeepSeek API. |
+| **Hetzner backend** | `cereveon-llm-api` | [`llm/Dockerfile.api`](../llm/Dockerfile.api) (Python + Stockfish + full SECA pipeline) | 8000 | Everything: public ingress at `cereveon.com` behind Caddy, engine pool, RAG, validators, auth, Postgres + Redis stack from [`docker-compose.prod.yml`](../docker-compose.prod.yml). LLM coaching via DeepSeek API. |
 
-**Both tiers are auto-deployed by [`.github/workflows/fly-deploy.yml`](../.github/workflows/fly-deploy.yml)** on push to `main`:
+**Auto-deployed by [`.github/workflows/fly-deploy.yml`](../.github/workflows/fly-deploy.yml)** on push to `main`:
 
 - The `deploy` job SSHes to Hetzner and runs the zero-downtime rolling swap (scale=2, health-gate, drain-or-rollback).
-- The `fly-deploy` job runs after Hetzner succeeds and `flyctl deploy --image <ghcr-digest>` updates the Fly app.
 
-The workflow filename is historical (the file pre-dates the rename to a unified CI/CD pipeline). The workflow's `name:` field is `CI/CD`, which is authoritative.
+The workflow filename is historical (it pre-dates both the rename to a unified CI/CD pipeline and the removal of the Fly edge). The workflow's `name:` field is `CI/CD`, which is authoritative.
 
-### Why two tiers
-
-Fly.io provides regional distribution + low-latency public ingress; the Node edge is small enough to deploy globally without paying for the heavy Stockfish + Postgres footprint everywhere. Hetzner hosts the single heavy backend that the edge talks to. The split is intentional and load-bearing.
+> **Removed 2026-07-15 — the Fly.io edge.** A second tier once existed on
+> Fly.io (`chesscoach` app, root `Dockerfile` → `llm/server.js`, a Node +
+> Express **Ollama prototype**). It was documented here as a "load-bearing
+> public entry point," but it never was: `cereveon.com` has always
+> resolved to Hetzner's Caddy directly, and the Fly app's only routes were
+> an unauthenticated, validator-bypassing `/coach`·`/explain` that 502'd on
+> a non-existent Ollama upstream. The edge image, `fly-deploy` job, Node
+> dependency audit, and `FLY_API_TOKEN` were removed. **To finish tearing
+> it down**, destroy the still-running Fly app once: `flyctl apps destroy
+> chesscoach`.
 
 ### Manual updates
 
-Both tiers can be deployed manually from a workstation:
+Deploy manually from a workstation:
 
 - Hetzner: `gh workflow run "Production Deploy" -f api_digest=sha256:...` (the [`production-deploy.yml`](../.github/workflows/production-deploy.yml) workflow shares the same `hetzner-production` concurrency group as the auto deploy, so the two cannot race).
-- Fly.io: `flyctl deploy --image ghcr.io/<owner>/cereveon@sha256:... --app chesscoach` from a checkout of `main`.
 
 ---
 
@@ -154,7 +158,6 @@ run. Go to **Settings → Secrets and variables → Actions**.
 |-------------|------------|---------------|
 | `HETZNER_HOST` | SSH deploy step — target address | IP or hostname of your Hetzner VPS |
 | `HETZNER_SSH_KEY` | SSH deploy step — private key | Generate with `ssh-keygen -t ed25519`; add the public key to `/home/deploy/.ssh/authorized_keys` on the server (user `deploy`) |
-| `FLY_API_TOKEN` | Fly.io edge deploy — `flyctl` auth | `flyctl tokens create deploy --app chesscoach` (recommended: scoped deploy token, not a personal access token).  When unset, the `fly-deploy` job logs a warning and skips — the Hetzner deploy still runs. |
 | `COACH_API_KEY` | Android release APK build — baked in as `X-Api-Key` | Any non-empty string; **must match `SECA_API_KEY` in `.env.prod` on the server** |
 | `KEYSTORE_BASE64` | Android release APK signing | Base64-encode your `.jks` file: `base64 -w 0 release.jks` (Linux/macOS) or `[Convert]::ToBase64String([IO.File]::ReadAllBytes("release.jks"))` (PowerShell) |
 | `KEY_ALIAS` | Android release APK signing | The alias chosen when running `keytool -genkey` |
@@ -165,8 +168,6 @@ run. Go to **Settings → Secrets and variables → Actions**.
 | `FEEDBACK_DIGEST_TO` | Weekly feedback digest — recipient | The operator address the digest is mailed to |
 | `FEEDBACK_SMTP_HOST` | Weekly feedback digest — optional | SMTP server; defaults to `smtp.gmail.com` when unset |
 | `FEEDBACK_SMTP_PORT` | Weekly feedback digest — optional | SMTP port; defaults to `465` (implicit TLS) when unset |
-
-> **Fly.io edge — one-time GHCR auth.** The `fly-deploy` job tells Fly to pull `ghcr.io/<owner>/cereveon@sha256:...`.  Fly's machines need to be able to pull that image.  Either make the GHCR package public (Settings → Packages → cereveon → Change visibility), or run `flyctl auth docker` once on a workstation that has a GHCR PAT in `~/.docker/config.json` so Fly captures the credentials.  The Hetzner deploy is unaffected — it pulls via the workflow's own `GITHUB_TOKEN`.
 
 > `GITHUB_TOKEN` is auto-provisioned by Actions. It is used for GHCR push,
 > image attestation, and Trivy scanning. No configuration required.

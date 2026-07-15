@@ -472,26 +472,25 @@ need most often.
 
 ## Production deployment
 
-Production runs in **two tiers**, both built and signed by the same CI
-pipeline. Full runbook: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+Production runs a **single tier**, built and signed by the CI pipeline.
+Full runbook: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 | Tier | Image | Source | Port | Role |
 |---|---|---|---|---|
-| **Fly.io edge** | `cereveon` | root [`Dockerfile`](Dockerfile) → [`llm/server.js`](llm/server.js) (Node + Express) | 3000 | Public ingress, regional distribution, security middleware |
-| **Hetzner backend** | `cereveon-llm-api` | [`llm/Dockerfile.api`](llm/Dockerfile.api) (Python + Stockfish + full SECA stack) | 8000 | Heavy compute: engine pool, RAG, validators, auth, Postgres + Redis. LLM coaching via DeepSeek API. |
+| **Hetzner backend** | `cereveon-llm-api` | [`llm/Dockerfile.api`](llm/Dockerfile.api) (Python + Stockfish + full SECA stack) | 8000 | Everything: public ingress at `cereveon.com` behind Caddy, engine pool, RAG, validators, auth, Postgres + Redis. LLM coaching via DeepSeek API. |
 
-Both tiers auto-deploy from
+Auto-deploys from
 [`.github/workflows/fly-deploy.yml`](.github/workflows/fly-deploy.yml) on
 push to `main`: the `deploy` job runs the zero-downtime rolling swap on
-Hetzner (scale=2, health-gate, drain-or-rollback), then `fly-deploy`
-runs `flyctl deploy --image <ghcr-digest>` to update the edge. The
-filename is historical; the workflow's `name:` field is `CI/CD`, which
-is authoritative.
+Hetzner (scale=2, health-gate, drain-or-rollback). The filename is
+historical; the workflow's `name:` field is `CI/CD`, which is
+authoritative.
 
-The split is intentional and load-bearing: Fly provides regional
-distribution and low-latency public ingress for a small Node edge that
-is cheap to deploy globally; Hetzner hosts the single heavy backend that
-the edge proxies to.
+> A former Fly.io Node edge (`llm/server.js`, an Ollama prototype) was
+> removed 2026-07-15 — it never fronted `cereveon.com` (that resolves to
+> Hetzner's Caddy directly) and served only an unauthenticated,
+> validator-bypassing `/coach`·`/explain`. See the runbook for the
+> `flyctl apps destroy chesscoach` teardown step.
 
 ### Container hardening
 
@@ -731,7 +730,7 @@ machine-actionable form for AI assistants working in the tree.
 | [`docs/API_CONTRACTS.md`](docs/API_CONTRACTS.md) | Authoritative endpoint schemas |
 | [`docs/TESTING.md`](docs/TESTING.md) | Test categories, validator coverage matrix, quality gates |
 | [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) | Adversaries, threats, mitigations, accepted residuals |
-| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Production runbook, two-tier topology, container hardening |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Production runbook, topology, container hardening |
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Runtime monitoring, telemetry, incident response |
 | [`docs/OPERATIONS_RETRIES.md`](docs/OPERATIONS_RETRIES.md) | Bounded retry policy and telemetry interpretation |
 | [`docs/RELEASE.md`](docs/RELEASE.md) | Mandatory release procedure and invariants |

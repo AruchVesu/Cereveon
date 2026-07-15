@@ -1,20 +1,22 @@
 # CI/CD pipeline for ChessCoach.
 #
-# Despite the historical filename, this workflow deploys to TWO production
-# tiers built from this monorepo:
+# Deploys the single production tier built from this monorepo:
 #
-#   1. Hetzner heavy backend  — `cereveon-llm-api` image (Python
-#      FastAPI + Stockfish + full SECA pipeline, port 8000).  Updated by
-#      the `deploy` job below via SSH + docker compose.
-#   2. Fly.io edge            — `cereveon` image (Node.js Express
-#      front, port 3000, global regional distribution).  Updated by the
-#      `fly-deploy` job below via flyctl, sequenced after Hetzner so the
-#      backend's new contract is live before the edge calls it.
+#   Hetzner heavy backend — `cereveon-llm-api` image (Python FastAPI +
+#   Stockfish + full SECA pipeline, port 8000), served at cereveon.com
+#   behind Caddy.  Updated by the `deploy` job below via SSH + docker
+#   compose.
 #
-# See docs/DEPLOYMENT.md for the topology + how each tier gets its
-# secrets.  The workflow's filename is preserved for URL stability across
-# external bookmarks; the workflow's `name:` field (CI/CD) is the
-# authoritative description.
+# The former Fly.io edge (a Node/Express `cereveon` image running the
+# vestigial llm/server.js Ollama prototype) was removed 2026-07-15: it
+# never fronted cereveon.com (that has always resolved to Hetzner's
+# Caddy directly) and its only endpoints were an unauthenticated,
+# validator-bypassing /coach·/explain that 502'd on a non-existent
+# Ollama upstream.  See docs/DEPLOYMENT.md.
+#
+# The workflow's filename is preserved for URL stability across external
+# bookmarks; the workflow's `name:` field (CI/CD) is the authoritative
+# description.
 name: CI/CD
 
 on:
@@ -30,7 +32,6 @@ permissions:
   contents: read
 
 env:
-  APP_IMAGE_NAME: cereveon
   API_IMAGE_NAME: cereveon-llm-api
 
 concurrency:
@@ -231,31 +232,6 @@ jobs:
         # runtime via ``-r requirements.txt``, which is past the 1.0.1 fix.
         run: python -m pip_audit -r llm/requirements-ci.txt --strict --ignore-vuln PYSEC-2025-183 --progress-spinner off
 
-  node-security:
-    name: Node dependency audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "20"
-
-      - name: Generate package lock for audit
-        working-directory: llm
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-
-      - name: Audit Node dependencies
-        working-directory: llm
-        run: npm audit --omit=dev --audit-level=high
-
   android-build:
     name: Android build and unit tests
     runs-on: ubuntu-latest
@@ -414,7 +390,6 @@ jobs:
       - python-tests
       - python-quality
       - dependency-security
-      - node-security
       - android-build
       - compose-validate
     permissions:
@@ -424,7 +399,6 @@ jobs:
       attestations: write
     outputs:
       image_owner: ${{ steps.prep.outputs.owner }}
-      app_digest: ${{ steps.build-app.outputs.digest }}
       api_digest: ${{ steps.build-api.outputs.digest }}
     steps:
       - name: Checkout repository
@@ -448,19 +422,6 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker metadata for app image
-        id: meta-app
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/${{ steps.prep.outputs.owner }}/${{ env.APP_IMAGE_NAME }}
-          tags: |
-            type=sha,format=short,prefix=sha-
-            type=ref,event=branch
-            type=ref,event=pr,prefix=pr-
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=true
-
       - name: Docker metadata for llm API image
         id: meta-api
         uses: docker/metadata-action@v6
@@ -473,21 +434,6 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=true
-
-      - name: Build app image
-        id: build-app
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./Dockerfile
-          push: ${{ github.event_name == 'push' }}
-          tags: ${{ steps.meta-app.outputs.tags }}
-          labels: ${{ steps.meta-app.outputs.labels }}
-          cache-from: type=gha,scope=app-image
-          cache-to: type=gha,mode=max,scope=app-image
-          provenance: false
-          sbom: false
-          build-args: BUILDDATE=${{ github.run_id }}
 
       - name: Build llm API image
         id: build-api
@@ -504,14 +450,6 @@ jobs:
           sbom: false
           build-args: BUILDDATE=${{ github.run_id }}
 
-      - name: Attest app image provenance
-        if: github.event_name == 'push'
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-name: ghcr.io/${{ steps.prep.outputs.owner }}/${{ env.APP_IMAGE_NAME }}
-          subject-digest: ${{ steps.build-app.outputs.digest }}
-          push-to-registry: true
-
       - name: Attest llm API image provenance
         if: github.event_name == 'push'
         uses: actions/attest-build-provenance@v4
@@ -524,11 +462,10 @@ jobs:
         if: github.event_name == 'push'
         uses: sigstore/cosign-installer@v3
 
-      - name: Sign published images
+      - name: Sign published image
         if: github.event_name == 'push'
         shell: bash
         run: |
-          cosign sign --yes "ghcr.io/${{ steps.prep.outputs.owner }}/${{ env.APP_IMAGE_NAME }}@${{ steps.build-app.outputs.digest }}"
           cosign sign --yes "ghcr.io/${{ steps.prep.outputs.owner }}/${{ env.API_IMAGE_NAME }}@${{ steps.build-api.outputs.digest }}"
 
   image-security:
@@ -561,58 +498,6 @@ jobs:
           path: ${{ runner.temp }}/trivy
           key: trivy-db-${{ runner.os }}-${{ github.run_id }}
           restore-keys: trivy-db-${{ runner.os }}-
-
-      - name: Scan published app image
-        id: trivy-app-image
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: image
-          image-ref: ghcr.io/${{ needs.docker-images.outputs.image_owner }}/${{ env.APP_IMAGE_NAME }}@${{ needs.docker-images.outputs.app_digest }}
-          format: table
-          scanners: vuln
-          vuln-type: library
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: "0"
-          trivy-config: trivy.yaml
-          trivyignores: .trivyignore
-          ignore-policy: trivy-ignore-policy.rego
-        env:
-          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy
-          TRIVY_TIMEOUT: "15m"
-          TRIVY_USERNAME: ${{ github.repository_owner }}
-          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Generate app image SARIF
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: image
-          image-ref: ghcr.io/${{ needs.docker-images.outputs.image_owner }}/${{ env.APP_IMAGE_NAME }}@${{ needs.docker-images.outputs.app_digest }}
-          format: sarif
-          output: trivy-app-image.sarif
-          scanners: vuln
-          vuln-type: library
-          severity: HIGH,CRITICAL
-          ignore-unfixed: false
-          exit-code: "0"
-          trivy-config: trivy.yaml
-          trivyignores: .trivyignore
-          ignore-policy: trivy-ignore-policy.rego
-        env:
-          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy
-          TRIVY_SKIP_DB_UPDATE: "true"
-          TRIVY_TIMEOUT: "15m"
-          TRIVY_USERNAME: ${{ github.repository_owner }}
-          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload app image scan results
-        if: hashFiles('trivy-app-image.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: trivy-app-image.sarif
-          category: trivy-app-image
 
       - name: Scan published llm API image
         id: trivy-api-image
@@ -676,7 +561,6 @@ jobs:
       - python-tests
       - python-quality
       - dependency-security
-      - node-security
       - docker-images
       - image-security
       - compose-validate
@@ -863,68 +747,6 @@ jobs:
             fi
             exit 1
 
-  fly-deploy:
-    name: Deploy Fly edge
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs:
-      - docker-images
-      - image-security
-      - deploy
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-    environment:
-      name: production
-    # Distinct from `hetzner-production` — Hetzner and Fly each get their own
-    # concurrency group so the Fly deploy is not serialised against the
-    # Hetzner deploy of an unrelated push.  Within Fly, deploys still
-    # serialise (cancel-in-progress: false).
-    concurrency:
-      group: fly-production
-      cancel-in-progress: false
-    steps:
-      - name: Check Fly secret availability
-        id: fly-check
-        shell: bash
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: |
-          if [ -z "${FLY_API_TOKEN}" ]; then
-            echo "::warning::FLY_API_TOKEN not configured. Skipping Fly deploy."
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Checkout repository
-        if: steps.fly-check.outputs.available == 'true'
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - name: Set up flyctl
-        if: steps.fly-check.outputs.available == 'true'
-        uses: superfly/flyctl-actions/setup-flyctl@1.6
-
-      # Deploy the digest-pinned edge image built and signed earlier in the
-      # pipeline.  flyctl reads fly.toml from the working directory for app
-      # config (vm size, region, http_service); --image overrides the
-      # registry reference so we never re-build on a Fly remote builder.
-      #
-      # The image lives in GHCR — Fly machines must be able to pull it.
-      # Either make ghcr.io/${owner}/cereveon public, or run
-      # `flyctl auth docker` on the Fly side once with a GHCR PAT.  See
-      # docs/DEPLOYMENT.md §"Fly.io edge" for the one-time setup.
-      - name: Deploy edge image to Fly.io
-        if: steps.fly-check.outputs.available == 'true'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          DEPLOY_IMAGE: ghcr.io/${{ needs.docker-images.outputs.image_owner }}/${{ env.APP_IMAGE_NAME }}@${{ needs.docker-images.outputs.app_digest }}
-        run: |
-          echo "Deploying $DEPLOY_IMAGE to fly.io app 'chesscoach'"
-          flyctl deploy --image "$DEPLOY_IMAGE" --app chesscoach
-
   llm-regression:
     name: LLM regression and smoke tests (DeepSeek)
     runs-on: ubuntu-latest
@@ -993,7 +815,6 @@ jobs:
       - python-tests
       - python-quality
       - dependency-security
-      - node-security
       - docker-images
       - image-security
       - compose-validate
@@ -1012,6 +833,5 @@ jobs:
         with:
           generate_release_notes: true
           body: |
-            Container images published for this release:
-            - `ghcr.io/${{ steps.prep.outputs.owner }}/${{ env.APP_IMAGE_NAME }}:${{ github.ref_name }}`
+            Container image published for this release:
             - `ghcr.io/${{ steps.prep.outputs.owner }}/${{ env.API_IMAGE_NAME }}:${{ github.ref_name }}`
