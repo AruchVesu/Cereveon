@@ -91,10 +91,12 @@ class MistakeReplayBottomSheet : BottomSheetDialogFragment() {
         board = view.findViewById(R.id.mistakeReplayBoard)
         statusView = view.findViewById(R.id.mistakeReplayStatus)
 
-        // Seed the board to the mistake position.  ``setFEN`` resets
-        // last-move highlights and the selection state so the sheet
-        // opens to a clean "your turn" presentation.
-        board.setFEN(fen)
+        // Seed the board to the mistake position.  ``loadPosition`` is
+        // the full re-seed: highlights/selection clear AND stale state
+        // can't leak between attempts — a wrong try that stalemates
+        // would otherwise latch the board's game-over flag and freeze
+        // every retry (bare ``setFEN`` keeps that latch).
+        board.loadPosition(fen)
         board.isInteractive = true
 
         board.onMovePlayed = { fr, fc, tr, tc ->
@@ -131,7 +133,7 @@ class MistakeReplayBottomSheet : BottomSheetDialogFragment() {
 
         val client = gameApiClient ?: run {
             setStatus("Couldn't reach the engine.", ATRIUM_AMBER_COLOR_RES)
-            board.setFEN(fen)
+            board.loadPosition(fen)
             board.isInteractive = true
             return
         }
@@ -143,7 +145,7 @@ class MistakeReplayBottomSheet : BottomSheetDialogFragment() {
                         creditXpAndDismiss(client)
                     } else {
                         setStatus("Not quite, try again.", ATRIUM_AMBER_COLOR_RES)
-                        board.setFEN(fen)
+                        board.loadPosition(fen)
                         board.isInteractive = true
                     }
                 }
@@ -153,12 +155,12 @@ class MistakeReplayBottomSheet : BottomSheetDialogFragment() {
                         else "Move couldn't be verified.",
                         ATRIUM_AMBER_COLOR_RES,
                     )
-                    board.setFEN(fen)
+                    board.loadPosition(fen)
                     board.isInteractive = true
                 }
                 is ApiResult.NetworkError, ApiResult.Timeout -> {
                     setStatus("Offline. Try again later.", ATRIUM_AMBER_COLOR_RES)
-                    board.setFEN(fen)
+                    board.loadPosition(fen)
                     board.isInteractive = true
                 }
             }
@@ -197,7 +199,7 @@ class MistakeReplayBottomSheet : BottomSheetDialogFragment() {
                 // XP.  Show a soft message + leave the sheet open
                 // so they don't lose the "I solved it" moment.
                 setStatus("Solved, but couldn't save. Try again.", ATRIUM_AMBER_COLOR_RES)
-                board.setFEN(fen)
+                board.loadPosition(fen)
                 board.isInteractive = true
             }
         }

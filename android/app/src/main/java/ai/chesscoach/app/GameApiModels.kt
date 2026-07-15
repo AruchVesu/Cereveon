@@ -667,6 +667,14 @@ data class PuzzleNextDto(
     /** The solver's position; side to move = the side the user plays. */
     val fen: String = "",
     @SerialName("expected_move_uci") val expectedMoveUci: String = "",
+    /** Full solution walk in UCI: SOLVER moves at even indices, opponent
+     *  replies at odd ones, ending on a solver move.  The trainer walks
+     *  multi-move puzzles step by step — each solver move still judged
+     *  by the local engine via ``/training/verify-replay``; the replies
+     *  auto-play.  Single-decision puzzles carry one move; empty only
+     *  when decoding a server response predating the field (the sheet
+     *  then runs the single-move flow). */
+    @SerialName("solution_line_uci") val solutionLineUci: List<String> = emptyList(),
     /** Corpus theme tag for library picks; ``"mix"`` for Lichess picks. */
     val theme: String = "mix",
     /** ``beginner`` / ``intermediate`` / ``advanced``. */

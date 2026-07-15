@@ -22,22 +22,44 @@ import kotlinx.coroutines.launch
  * server-side fallback to the curated corpus (one wire shape either
  * way; [PuzzleNextDto.source] carries the attribution).
  *
+ * Single-move vs multi-move puzzles
+ * ---------------------------------
+ * [PuzzleNextDto.solutionLineUci] carries the full solution walk
+ * (SOLVER moves at even indices, opponent replies at odd ones).  With a
+ * walkable line (>= 3 plies) the sheet drills the WHOLE combination —
+ * after each verified-correct solver move that follows the line, the
+ * opponent's scripted reply auto-plays and the user must find the next
+ * move.  A single-decision line (or an empty one from a legacy server)
+ * runs the original one-move flow.  Shares the walk state machine with
+ * [TodaysDrillBottomSheet] (``nextDrillStep`` and friends).
+ *
  * Flow per puzzle
  * ---------------
- *  1.  [fetchNextPuzzle] loads a position; the board flips when Black
- *      is to move so the solver's colour sits at the bottom, and the
- *      status row announces the side ("White to move").
- *  2.  A move attempt round-trips ``POST /training/verify-replay`` —
- *      the LOCAL engine judges it; the Lichess solution move is never
- *      the oracle (same trust anchor as the drill sheets).
- *  3a. Correct → ``POST /training/solve`` with
- *      ``source_type="standard_puzzle"`` and
- *      ``source_ref=<puzzle_id>`` credits +10 XP (deduped per puzzle
- *      by the server's unique triple), the XP cache refreshes so Home
+ *  1.  [fetchNextPuzzle] loads a position via [ChessBoardView.loadPosition]
+ *      — the full state re-seed, NOT bare ``setFEN``: this board is
+ *      reused across many unrelated positions, and stale state from a
+ *      previous puzzle (a latched game-over after a solved mate,
+ *      spent castling flags, a leftover en-passant target) used to
+ *      freeze the board or reject legal solutions.  The board flips
+ *      when Black is to move so the solver's colour sits at the bottom.
+ *  2.  A move attempt round-trips ``POST /training/verify-replay``
+ *      against the CURRENT decision point (mid-walk, the position after
+ *      the auto-played replies) — the LOCAL engine judges it; the
+ *      Lichess solution line is never the oracle (same trust anchor as
+ *      the drill sheets).
+ *  3a. Correct and the move follows the line with more solver moves to
+ *      come → the scripted reply auto-plays and the status ticks the
+ *      walk progress.
+ *  3b. Correct on the line's last move, on a single-decision puzzle, or
+ *      as an engine-approved DEVIATION from the line → ``POST
+ *      /training/solve`` with ``source_type="standard_puzzle"`` and
+ *      ``source_ref=<puzzle_id>`` credits +10 XP (deduped per puzzle by
+ *      the server's unique triple), the XP cache refreshes so Home
  *      re-renders, and the board locks on the solved position until
  *      "Next puzzle" advances.
- *  3b. Wrong → "Not quite, try again." — position resets, no penalty,
- *      unlimited retries (matches [TodaysDrillBottomSheet]).
+ *  3c. Wrong → "Not quite, try again." — the CURRENT step's position
+ *      resets (mid-walk progress is kept), no penalty, unlimited
+ *      retries (matches [TodaysDrillBottomSheet]).
  *
  * "Next puzzle" doubles as a skip: tapping it before a solve just
  * fetches a fresh position (no XP, no penalty).
@@ -53,6 +75,14 @@ class PuzzleTrainerBottomSheet : BottomSheetDialogFragment() {
     private lateinit var nextButton: Button
 
     private var puzzle: PuzzleNextDto? = null
+
+    // Multi-move walk state — same shape as TodaysDrillBottomSheet.
+    // ``lineIndex`` points at the solver move the user must find next;
+    // ``currentFen`` is the decision point the board shows (verify calls
+    // and wrong-move resets use it so mid-walk progress survives).
+    private var solutionLine: List<String> = emptyList()
+    private var lineIndex: Int = 0
+    private var currentFen: String = ""
 
     /** True while a /puzzles/next fetch is in flight — debounces the
      *  Next button so a double-tap can't burn two fetches. */
@@ -112,13 +142,19 @@ class PuzzleTrainerBottomSheet : BottomSheetDialogFragment() {
                 return@launch
             }
             puzzle = next
+            solutionLine = next.solutionLineUci
+            lineIndex = 0
+            currentFen = next.fen
             kickerView.text = formatKicker(next)
-            board.setFEN(next.fen)
+            // Full re-seed — the board carries state from the previous
+            // puzzle otherwise (see the class doc; this was the "board
+            // freezes after a few puzzles" bug).
+            board.loadPosition(next.fen)
             // Solver's colour at the bottom — a random puzzle can put
             // the user on either side.
             board.flipped = isBlackToMove(next.fen)
             board.isInteractive = true
-            setStatus(sideToMoveLabel(next.fen), ATRIUM_DIM_COLOR_RES)
+            setStatus(formatIntroStatus(next.fen, solutionLine), ATRIUM_DIM_COLOR_RES)
         }
     }
 
@@ -143,18 +179,30 @@ class PuzzleTrainerBottomSheet : BottomSheetDialogFragment() {
 
         val client = gameApiClient ?: run {
             setStatus("Couldn't reach the engine.", ATRIUM_AMBER_COLOR_RES)
-            resetPosition(current)
+            resetPosition()
             return
         }
 
         lifecycleScope.launch {
-            when (val verify = client.verifyReplayMove(current.fen, moveUci)) {
+            // Verify against the CURRENT decision point — mid-walk, that's
+            // the position after the auto-played replies, not the
+            // puzzle-start FEN.
+            when (val verify = client.verifyReplayMove(currentFen, moveUci)) {
                 is ApiResult.Success -> {
                     if (verify.data.isCorrect) {
-                        creditXp(client, current)
+                        when (
+                            val step = TodaysDrillBottomSheet.nextDrillStep(
+                                solutionLine, lineIndex, moveUci,
+                            )
+                        ) {
+                            is TodaysDrillBottomSheet.DrillStepOutcome.Continue ->
+                                advanceWalk(step, client, current)
+                            TodaysDrillBottomSheet.DrillStepOutcome.Solved ->
+                                creditXp(client, current)
+                        }
                     } else {
                         setStatus("Not quite, try again.", ATRIUM_AMBER_COLOR_RES)
-                        resetPosition(current)
+                        resetPosition()
                     }
                 }
                 is ApiResult.HttpError -> {
@@ -163,14 +211,52 @@ class PuzzleTrainerBottomSheet : BottomSheetDialogFragment() {
                         else "Move couldn't be verified.",
                         ATRIUM_AMBER_COLOR_RES,
                     )
-                    resetPosition(current)
+                    resetPosition()
                 }
                 is ApiResult.NetworkError, ApiResult.Timeout -> {
                     setStatus("Offline. Try again later.", ATRIUM_AMBER_COLOR_RES)
-                    resetPosition(current)
+                    resetPosition()
                 }
             }
         }
+    }
+
+    /**
+     * Mid-line continuation: the user's (already applied) move followed
+     * the line and more solver moves remain.  Auto-play the scripted
+     * opponent reply, advance the walk state, and unlock the board at
+     * the new decision point.  A reply the board rejects (detected by
+     * the position NOT changing — ``applyAIMove``'s return can't
+     * distinguish a rejection from a quiet move) degrades to "solved":
+     * the engine already approved the user's move.
+     */
+    private suspend fun advanceWalk(
+        step: TodaysDrillBottomSheet.DrillStepOutcome.Continue,
+        client: GameApiClient,
+        current: PuzzleNextDto,
+    ) {
+        val coords = TodaysDrillBottomSheet.uciToCoords(step.opponentReplyUci)
+        val before = board.exportFEN()
+        if (coords != null) {
+            board.applyAIMove(
+                coords[0], coords[1], coords[2], coords[3],
+                promo = TodaysDrillBottomSheet.uciPromotionChar(step.opponentReplyUci),
+            )
+        }
+        if (coords == null || board.exportFEN() == before) {
+            creditXp(client, current)
+            return
+        }
+        lineIndex = step.nextLineIndex
+        currentFen = board.exportFEN()
+        setStatus(
+            TodaysDrillBottomSheet.formatWalkStatus(
+                found = lineIndex / 2,
+                total = TodaysDrillBottomSheet.solverMoveCount(solutionLine),
+            ),
+            ATRIUM_CYAN_COLOR_RES,
+        )
+        board.isInteractive = true
     }
 
     private suspend fun creditXp(client: GameApiClient, current: PuzzleNextDto) {
@@ -204,14 +290,18 @@ class PuzzleTrainerBottomSheet : BottomSheetDialogFragment() {
                 // leave the puzzle live so the user doesn't lose the
                 // "I solved it" moment; replaying the move retries.
                 setStatus("Solved, but couldn't save. Try again.", ATRIUM_AMBER_COLOR_RES)
-                resetPosition(current)
+                resetPosition()
             }
         }
     }
 
-    /** Reset the board to the puzzle position and re-enable input. */
-    private fun resetPosition(current: PuzzleNextDto) {
-        board.setFEN(current.fen)
+    /** Reset the board to the CURRENT decision point (the puzzle start,
+     *  or mid-walk the position after the auto-played replies) and
+     *  re-enable input.  Full re-seed — a wrong try can latch the
+     *  board's game-over flag (e.g. a stalemating blunder), which bare
+     *  ``setFEN`` would carry over and freeze every later attempt. */
+    private fun resetPosition() {
+        board.loadPosition(currentFen)
         board.isInteractive = true
     }
 
@@ -272,5 +362,17 @@ class PuzzleTrainerBottomSheet : BottomSheetDialogFragment() {
         /** "White to move" / "Black to move" status line.  Pure function. */
         fun sideToMoveLabel(fen: String): String =
             if (isBlackToMove(fen)) "Black to move" else "White to move"
+
+        /**
+         * Opening status for a fresh puzzle: the side to move, plus the
+         * walk depth when the line runs deeper than one decision —
+         * "White to move · 3 moves to find".  Pure function.
+         */
+        fun formatIntroStatus(fen: String, line: List<String>): String {
+            val side = sideToMoveLabel(fen)
+            if (!TodaysDrillBottomSheet.isWalkable(line)) return side
+            val total = TodaysDrillBottomSheet.solverMoveCount(line)
+            return "$side · $total moves to find"
+        }
     }
 }

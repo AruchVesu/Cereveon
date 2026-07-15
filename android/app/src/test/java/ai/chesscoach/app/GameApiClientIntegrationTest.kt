@@ -696,6 +696,7 @@ class GameApiClientIntegrationTest {
   "puzzle_id": "lichess_AbCd1",
   "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
   "expected_move_uci": "g1f3",
+  "solution_line_uci": ["g1f3", "b8c6", "f1c4"],
   "theme": "mix",
   "difficulty": "intermediate",
   "source": "lichess",
@@ -728,11 +729,34 @@ class GameApiClientIntegrationTest {
         val data = (result as ApiResult.Success<*>).data as PuzzleNextDto
         assertEquals("lichess_AbCd1", data.puzzleId)
         assertEquals("g1f3", data.expectedMoveUci)
+        assertEquals(listOf("g1f3", "b8c6", "f1c4"), data.solutionLineUci)
         assertEquals("mix", data.theme)
         assertEquals("intermediate", data.difficulty)
         assertEquals("lichess", data.source)
         assertEquals(1400, data.rating)
     }
+
+    @Test
+    fun `INT_PUZZLE_NEXT_LINE_ABSENT - legacy response defaults to an empty walk`() =
+        runBlocking {
+            // A server predating solution_line_uci must decode to an empty
+            // list — the trainer then runs the single-move flow.
+            val legacy = """
+{
+  "puzzle_id": "lichess_Old01",
+  "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+  "expected_move_uci": "g1f3",
+  "theme": "mix",
+  "difficulty": "normal",
+  "source": "lichess",
+  "rating": 1200
+}"""
+            server.enqueue(MockResponse().setResponseCode(200).setBody(legacy))
+            val result = client(token = "tok").getNextPuzzle()
+            assertTrue(result is ApiResult.Success<*>)
+            val data = (result as ApiResult.Success<*>).data as PuzzleNextDto
+            assertTrue(data.solutionLineUci.isEmpty())
+        }
 
     @Test
     fun `INT_PUZZLE_NEXT_LIBRARY_NULL_RATING - corpus pick with null rating parses`() =

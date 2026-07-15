@@ -2060,6 +2060,7 @@ client's allowlists by `llm/tests/test_puzzles_next.py`).
   "puzzle_id":         <string>,
   "fen":               <string>,
   "expected_move_uci": <string>,
+  "solution_line_uci": [<string>, ...],
   "theme":             <string>,
   "difficulty":        <string>,
   "source":            <string>,
@@ -2072,6 +2073,7 @@ client's allowlists by `llm/tests/test_puzzles_next.py`).
 | `puzzle_id` | `string` | Stable identifier — pass back to `POST /training/solve` (§32) as `source_ref` so each puzzle is credit-once.  Lichess picks are namespaced `lichess_<id>`; corpus picks use the YAML id (never colliding by construction). |
 | `fen` | `string` | The solver's position (side to move = the side the user plays). |
 | `expected_move_uci` | `string` | The source's solution move.  Display / short-circuit hint ONLY — solving is judged by the LOCAL engine via `POST /training/verify-replay` (§33), never by this field. |
+| `solution_line_uci` | `string[]` | Full solution walk in UCI: SOLVER moves at even indices, opponent replies at odd ones, ending on a solver move — the trainer walks multi-move puzzles step by step (each solver move judged by the LOCAL engine via `POST /training/verify-replay` at the then-current position; the odd-index replies auto-play; an engine-approved deviation from the line counts as solved).  Single-decision puzzles carry just their one move — the list is never empty, and `solution_line_uci[0]` always equals `expected_move_uci`.  Same hint-only trust posture.  Added 2026-07-16; older clients ignore the field (single-move behaviour unchanged). |
 | `theme` | `string` | Corpus theme tag (`THEME_VOCABULARY`) for library picks; `"mix"` for Lichess picks (the trainer serves un-themed practice). |
 | `difficulty` | `string` | `beginner` / `intermediate` / `advanced` — the corpus band for library picks, derived from the Lichess puzzle rating otherwise. |
 | `source` | `string` | `"lichess"` (live fetch) or `"library"` (curated corpus fallback). |

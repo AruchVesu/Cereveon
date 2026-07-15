@@ -27,6 +27,11 @@ PN_08  Missing Lichess rating (0) → difficulty falls back to the
 PN_09  Corpus pick is skill-banded when the band has entries.
 PN_10  /puzzles/next is registered on the server app.
 PN_11  Corpus responses carry rating=None.
+PN_12  Lichess path carries the FULL solution walk on the wire
+       (solution_line_uci), first move == expected_move_uci.
+PN_13  Corpus path carries its line when the entry has one, and falls
+       back to the single expected move for single-decision entries —
+       solution_line_uci is never empty.
 """
 
 from __future__ import annotations
@@ -94,6 +99,7 @@ _LICHESS_PUZZLE = LichessPuzzle(
     solver_fen="rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
     solver_move_uci="g1f3",
     side=chess.WHITE,
+    solution_line_uci=("g1f3", "b8c6", "f1c4"),
 )
 
 
@@ -106,6 +112,7 @@ _CORPUS = {
             fen="rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
             expected_move_uci="g1f3",
             description="test fork puzzle",
+            solution_line_uci=("g1f3", "b8c6", "f1c4"),
         ),
     ],
     "endgame_technique": [
@@ -115,7 +122,7 @@ _CORPUS = {
             difficulty="advanced",
             fen="8/8/8/8/8/4k3/4p3/4K3 b - - 0 1",
             expected_move_uci="e3d3",
-            description="test endgame puzzle",
+            description="test endgame puzzle (single-decision, no line)",
         ),
     ],
 }
@@ -209,6 +216,32 @@ class TestLichessPath:
         assert resp.difficulty == "advanced"
         assert resp.rating is None
 
+    def test_pn12_lichess_path_carries_solution_line(self, monkeypatch, lichess_on):
+        """PN_12 — the trainer walks multi-move puzzles: the full Lichess
+        line rides the wire and starts with the expected move."""
+        _patch_fetch(monkeypatch, result=_LICHESS_PUZZLE)
+        resp = _call(_FakePlayer(rating=1500.0))
+        assert resp.solution_line_uci == ["g1f3", "b8c6", "f1c4"]
+        assert resp.solution_line_uci[0] == resp.expected_move_uci
+
+    def test_pn12b_lichess_missing_line_falls_back_to_single_move(
+        self, monkeypatch, lichess_on
+    ):
+        """PN_12 (degraded) — a LichessPuzzle without a captured line
+        (defensive; the client always fills it) still serves a non-empty
+        single-move walk."""
+        bare = LichessPuzzle(
+            id="NoLine",
+            rating=1400,
+            themes=(),
+            solver_fen=_LICHESS_PUZZLE.solver_fen,
+            solver_move_uci="g1f3",
+            side=chess.WHITE,
+        )
+        _patch_fetch(monkeypatch, result=bare)
+        resp = _call(_FakePlayer(rating=1500.0))
+        assert resp.solution_line_uci == ["g1f3"]
+
 
 # ---------------------------------------------------------------------------
 # Corpus fallback
@@ -252,6 +285,21 @@ class TestCorpusFallback:
     def test_pn11_corpus_response_has_no_rating(self, monkeypatch, lichess_off):
         resp = _call(_FakePlayer(rating=800.0))
         assert resp.rating is None
+
+    def test_pn13_corpus_line_on_wire_with_single_move_fallback(
+        self, monkeypatch, lichess_off
+    ):
+        """PN_13 — a corpus entry WITH a line serves it; a single-decision
+        entry serves its one expected move.  solution_line_uci is never
+        empty on this endpoint."""
+        # Beginner band → fork_001 (has a 3-ply line).
+        resp = _call(_FakePlayer(rating=800.0))
+        assert resp.puzzle_id == "fork_001"
+        assert resp.solution_line_uci == ["g1f3", "b8c6", "f1c4"]
+        # Advanced band → endgame_001 (no line → single-move walk).
+        resp2 = _call(_FakePlayer(rating=2100.0))
+        assert resp2.puzzle_id == "endgame_001"
+        assert resp2.solution_line_uci == ["e3d3"]
 
 
 # ---------------------------------------------------------------------------
