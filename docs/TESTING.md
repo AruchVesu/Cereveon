@@ -576,7 +576,7 @@ Production deployment is permitted
 
 Android Instrumented Tests
 
-Host-JVM unit tests cover most of the Android client (`./gradlew :app:testDebugUnitTest`). A separate **instrumented** suite under `android/app/src/androidTest/` runs on a real Android runtime — primarily the Atrium layout-inflation smoke suite, which catches AAPT2 link errors / theme-attribute mismatches / drawable-not-found bugs that host-JVM tests can't see.
+Host-JVM unit tests cover most of the Android client (`./gradlew :app:testDebugUnitTest`). A separate **instrumented** suite under `android/app/src/androidTest/` runs on a real Android runtime — the Atrium layout-inflation smoke suite (AAPT2 link errors / theme-attribute mismatches / drawable-not-found bugs host-JVM tests can't see), the JNI engine smoke test, `ChessBoardView` position-state re-seeding (`loadPosition` — the puzzle-board freeze regression: game-over latch, castling flags, en-passant target), and the study-plan drill's multi-move walk on a live fragment (`TodaysDrillWalkInstrumentedTest`, FragmentScenario + fake `GameApiClient`).
 
 To run the instrumented suite end-to-end:
 

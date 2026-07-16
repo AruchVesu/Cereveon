@@ -166,4 +166,19 @@ dependencies {
     testImplementation("org.json:json:20260522")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
+    // FragmentScenario for the instrumented drill-walk test.  Pinned to the
+    // RESOLVED transitive androidx.fragment version (1.5.4, via appcompat /
+    // material) so it lifts nothing app-wide.  Pre-1.6 fragment has no
+    // -manifest split artifact, so this is debugImplementation by design
+    // (the documented pattern: it contributes only its test activity to the
+    // debug manifest; release builds are untouched).
+    debugImplementation("androidx.fragment:fragment-testing:1.5.4")
+    // fragment-testing 1.5.4 transitively drags androidx.test:core/monitor
+    // 1.4.0 into the DEBUG app APK; the test APK's AndroidJUnitRunner (via
+    // ext:junit 1.3.0) needs monitor >= 1.5 (FileTestStorage) and the build
+    // dedupes shared classes toward the app APK — the instrumentation
+    // process then dies at bind with NoClassDefFoundError before any test
+    // runs.  Force the app-side test core up to the same generation the
+    // test stack uses.  Debug-only; release untouched.
+    debugImplementation("androidx.test:core:1.7.0")
 }
