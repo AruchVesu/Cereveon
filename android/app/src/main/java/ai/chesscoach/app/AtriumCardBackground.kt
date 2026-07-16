@@ -2,13 +2,13 @@ package ai.chesscoach.app
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import android.util.TypedValue
+import androidx.core.content.ContextCompat
 
 /**
  * Atrium card background.
@@ -31,8 +31,10 @@ import android.util.TypedValue
  */
 class AtriumCardBackground(
     context: Context,
-    private val borderColor: Int = Color.parseColor("#1FFFFFFF"), // atrium_hairline_strong
-    private val tickColor: Int = Color.parseColor("#4FD9E5"),     // atrium_accent_cyan
+    // Token reads (not literals) so the card chrome follows the active
+    // palette — bright mode flips these via values-notnight/colors.xml.
+    private val borderColor: Int = ContextCompat.getColor(context, R.color.atrium_hairline_strong),
+    private val tickColor: Int = ContextCompat.getColor(context, R.color.atrium_accent_cyan),
     private val showTicks: Boolean = true,
     tickLengthDp: Float = 12f,
     borderWidthDp: Float = 1f,

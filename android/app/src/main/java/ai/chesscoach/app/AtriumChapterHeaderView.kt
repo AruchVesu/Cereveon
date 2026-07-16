@@ -2,7 +2,6 @@ package ai.chesscoach.app
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.util.AttributeSet
 import android.util.TypedValue
@@ -10,6 +9,7 @@ import android.view.Gravity
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 
 /**
  * Atrium chapter header — the top band on every Atrium screen.
@@ -87,14 +87,16 @@ class AtriumChapterHeaderView @JvmOverloads constructor(
      * dedicated drawable resource per density.
      */
     private class OrnamentRule(context: Context) : FrameLayout(context) {
+        // Token reads so the rule follows the active palette (bright
+        // mode flips both via values-notnight/colors.xml).
         private val hairline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = HAIRLINE
+            color = ContextCompat.getColor(context, R.color.atrium_hairline_strong)
             strokeWidth = TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP, 1f, context.resources.displayMetrics,
             )
         }
         private val ornamentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = ORNAMENT
+            color = ContextCompat.getColor(context, R.color.atrium_muted)
             textAlign = Paint.Align.CENTER
             textSize = TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_SP, 12f, context.resources.displayMetrics,
@@ -122,12 +124,6 @@ class AtriumChapterHeaderView @JvmOverloads constructor(
             // Vertical bias so the ornament glyph sits visually centred
             // — text baselines render below their numeric y position.
             canvas.drawText(glyph, centerX, centerY - (ornamentPaint.descent() + ornamentPaint.ascent()) / 2f, ornamentPaint)
-        }
-
-        companion object {
-            // atrium_hairline_strong + ornament glyph in muted ink.
-            private val HAIRLINE = Color.parseColor("#1FFFFFFF")
-            private val ORNAMENT = Color.parseColor("#9AA0B4")
         }
     }
 }

@@ -1,7 +1,6 @@
 package ai.chesscoach.app
 
 import android.content.Context
-import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -355,11 +354,13 @@ class ProgressDashboardBottomSheet : BottomSheetDialogFragment() {
     private fun buildRecommendationRow(rec: ProgressRecommendation): View {
         // Atrium two-tone signal — mirrors WeaknessBarChartView.priorityColor
         // so high-severity recommendations read amber (warning role) and
-        // low-severity read cyan (improving / player-side).
+        // low-severity read cyan (improving / player-side).  Token reads
+        // so bright mode flips them via values-notnight/colors.xml.
+        val ctx = requireContext()
         val priorityColor = when (rec.priority) {
-            "high"   -> Color.parseColor("#FFC069") // atrium_accent_amber
-            "medium" -> Color.parseColor("#CCFFC069") // amber @ 80%
-            else     -> Color.parseColor("#4FD9E5") // atrium_accent_cyan
+            "high"   -> androidx.core.content.ContextCompat.getColor(ctx, R.color.atrium_accent_amber)
+            "medium" -> androidx.core.content.ContextCompat.getColor(ctx, R.color.atrium_accent_amber_cc)
+            else     -> androidx.core.content.ContextCompat.getColor(ctx, R.color.atrium_accent_cyan)
         }
 
         val categoryLabel = rec.category
@@ -373,7 +374,6 @@ class ProgressDashboardBottomSheet : BottomSheetDialogFragment() {
         // and rationale stay mono here for compact-list density —
         // promoting them to Cormorant italic would inflate row
         // height and crowd the small-screen bottom sheet.
-        val ctx = requireContext()
         return LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 10, 0, 10)
