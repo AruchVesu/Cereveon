@@ -2,15 +2,15 @@
 <resources>
 
     <!--
-        Cereveon · Atrium colour tokens — BRIGHT (opt-in) palette.
+        Cereveon · Atrium colour tokens — BRIGHT palette (notnight
+        qualifier).
 
-        Selected only when the user enables Settings › Appearance ›
-        Bright mode: CereveonApplication maps the preference to
-        AppCompatDelegate.MODE_NIGHT_NO, which activates this -notnight
-        qualifier.  With the default MODE_NIGHT_YES the base values/
-        palette applies unchanged, so existing (dark) installs render
-        pixel-identically.  The SYSTEM light/dark setting never picks
-        this file — the delegate mode is always forced from the pref.
+        Active whenever the resolved uiMode is notnight: with the
+        default Appearance = "System" that is a phone in light mode
+        (AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM), and with an
+        explicit "Bright" choice it is forced (MODE_NIGHT_NO).  A phone
+        in dark mode — or an explicit "Dark" choice — resolves to the
+        base values/ palette instead.
 
         Design intent: "the same manuscript, read in daylight".  Warm
         paper surfaces, warm near-black ink, hairlines flipped to black

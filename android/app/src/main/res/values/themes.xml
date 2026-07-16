@@ -1,16 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Cereveon · Atrium theme — DARK (default) variant.
+    Cereveon · Atrium theme — DARK variant (night / default qualifier).
 
     Atrium shipped dark-only (handoff README "Out of scope: Light mode").
-    That stance was amended by the owner: an opt-in BRIGHT variant now
-    lives in values-notnight/themes.xml, selected exclusively by the
-    Settings › Appearance › Bright mode switch.  CereveonApplication
-    forces AppCompatDelegate.MODE_NIGHT_YES unless that pref is on, so
-    the original guarantee still holds where it matters: the SYSTEM
-    light-mode toggle never reverts the app to a Material default
-    light palette — only the in-app switch selects the palette.  We
-    keep the non-DayNight Dark parent here for the same reason.
+    The stance was amended twice by the owner: a BRIGHT variant lives in
+    values-notnight/themes.xml (2026-07-16, PR #407), and since the
+    Appearance setting gained a "System" default the palette FOLLOWS THE
+    PHONE's colour mode unless the user explicitly picks Dark or Bright
+    (Settings › Appearance).  CereveonApplication maps the persisted
+    choice onto AppCompatDelegate (FOLLOW_SYSTEM / YES / NO), so
+    selection happens via uiMode — the non-DayNight Dark parent here
+    only anchors the Material defaults for the night configuration
+    (this file also serves as the fallback when no qualifier matches).
 
     Keep the item block in sync with values-notnight/themes.xml when
     adding attributes.

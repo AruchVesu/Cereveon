@@ -2,11 +2,11 @@
 <!--
     Cereveon · Atrium theme — BRIGHT (notnight) variant.
 
-    Activated only by Settings › Appearance › Bright mode
-    (AppCompatDelegate.MODE_NIGHT_NO forced from the persisted pref in
-    CereveonApplication).  The default remains the dark variant in
-    values/themes.xml under the forced MODE_NIGHT_YES, so the system
-    light/dark toggle still never selects the palette.
+    Active whenever the resolved uiMode is notnight: a light-mode phone
+    under the default Appearance = "System"
+    (AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM), or an explicit
+    "Bright" choice (forced MODE_NIGHT_NO).  Dark-mode phones and an
+    explicit "Dark" choice resolve to values/themes.xml instead.
 
     Re-parented on Theme.Material3.Light.NoActionBar so Material
     widget internals (ripples, elevation overlays, default component

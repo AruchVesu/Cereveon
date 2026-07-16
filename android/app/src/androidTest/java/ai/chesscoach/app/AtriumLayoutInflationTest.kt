@@ -126,8 +126,10 @@ class AtriumLayoutInflationTest {
         val v = inflate(R.layout.bottom_sheet_settings)
         assertNotNull(v.findViewById<View>(R.id.voiceFormalDot))
         assertNotNull(v.findViewById<View>(R.id.boardFlatDot))
-        assertNotNull(v.findViewById<View>(R.id.rowBrightMode))
-        assertNotNull(v.findViewById<View>(R.id.switchBrightMode))
+        assertNotNull(v.findViewById<View>(R.id.rowAppearanceSystem))
+        assertNotNull(v.findViewById<View>(R.id.appearanceSystemDot))
+        assertNotNull(v.findViewById<View>(R.id.rowAppearanceDark))
+        assertNotNull(v.findViewById<View>(R.id.rowAppearanceBright))
         assertNotNull(v.findViewById<View>(R.id.switchSound))
         assertNotNull(v.findViewById<View>(R.id.switchNotifications))
         assertNotNull(v.findViewById<View>(R.id.rowEditRating))
@@ -266,15 +268,15 @@ class AtriumLayoutInflationTest {
     @Test
     fun bottom_sheet_settings_inflates_in_bright_mode() {
         val v = inflateIn(Configuration.UI_MODE_NIGHT_NO, R.layout.bottom_sheet_settings)
-        assertNotNull(v.findViewById<View>(R.id.rowBrightMode))
-        assertNotNull(v.findViewById<View>(R.id.switchBrightMode))
+        assertNotNull(v.findViewById<View>(R.id.rowAppearanceSystem))
+        assertNotNull(v.findViewById<View>(R.id.rowAppearanceBright))
     }
 
     @Test
     fun bottom_sheet_settings_inflates_in_dark_mode() {
         val v = inflateIn(Configuration.UI_MODE_NIGHT_YES, R.layout.bottom_sheet_settings)
-        assertNotNull(v.findViewById<View>(R.id.rowBrightMode))
-        assertNotNull(v.findViewById<View>(R.id.switchBrightMode))
+        assertNotNull(v.findViewById<View>(R.id.rowAppearanceSystem))
+        assertNotNull(v.findViewById<View>(R.id.rowAppearanceDark))
     }
 
     @Test
