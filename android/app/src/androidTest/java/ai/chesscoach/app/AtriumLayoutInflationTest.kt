@@ -1,5 +1,6 @@
 package ai.chesscoach.app
 
+import android.content.res.Configuration
 import android.view.LayoutInflater
 import android.view.View
 import androidx.appcompat.view.ContextThemeWrapper
@@ -125,6 +126,8 @@ class AtriumLayoutInflationTest {
         val v = inflate(R.layout.bottom_sheet_settings)
         assertNotNull(v.findViewById<View>(R.id.voiceFormalDot))
         assertNotNull(v.findViewById<View>(R.id.boardFlatDot))
+        assertNotNull(v.findViewById<View>(R.id.rowBrightMode))
+        assertNotNull(v.findViewById<View>(R.id.switchBrightMode))
         assertNotNull(v.findViewById<View>(R.id.switchSound))
         assertNotNull(v.findViewById<View>(R.id.switchNotifications))
         assertNotNull(v.findViewById<View>(R.id.rowEditRating))
@@ -232,5 +235,60 @@ class AtriumLayoutInflationTest {
         assertNotNull(v.findViewById<View>(R.id.onboardingCompleteConfidence))
         assertNotNull(v.findViewById<View>(R.id.onboardingCompleteOpponent))
         assertNotNull(v.findViewById<View>(R.id.btnOnboardingCompleteStart))
+    }
+
+    // ── Bright mode (values-notnight) ────────────────────────────────
+    //
+    // Bright mode re-parents Theme.Cereveon.Atrium on Material3.Light
+    // and swaps the token palette via values-notnight/colors.xml
+    // (Settings › Appearance › Bright mode → MODE_NIGHT_NO).  Inflate
+    // the heaviest screens under BOTH uiMode configurations so a
+    // resource that resolves in one qualifier but not the other
+    // (missing notnight parent attr, dangling @color) fails here
+    // rather than on the first user toggle.  The device's own uiMode
+    // makes the suite above cover one config; these pin both
+    // explicitly.
+
+    private fun themedContext(nightModeFlag: Int): ContextThemeWrapper {
+        val base = InstrumentationRegistry.getInstrumentation().targetContext
+        val config = Configuration(base.resources.configuration)
+        config.uiMode =
+            nightModeFlag or (config.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv())
+        return ContextThemeWrapper(
+            base.createConfigurationContext(config),
+            R.style.Theme_Cereveon_Atrium,
+        )
+    }
+
+    private fun inflateIn(nightModeFlag: Int, layoutId: Int): View =
+        LayoutInflater.from(themedContext(nightModeFlag)).inflate(layoutId, null)
+
+    @Test
+    fun bottom_sheet_settings_inflates_in_bright_mode() {
+        val v = inflateIn(Configuration.UI_MODE_NIGHT_NO, R.layout.bottom_sheet_settings)
+        assertNotNull(v.findViewById<View>(R.id.rowBrightMode))
+        assertNotNull(v.findViewById<View>(R.id.switchBrightMode))
+    }
+
+    @Test
+    fun bottom_sheet_settings_inflates_in_dark_mode() {
+        val v = inflateIn(Configuration.UI_MODE_NIGHT_YES, R.layout.bottom_sheet_settings)
+        assertNotNull(v.findViewById<View>(R.id.rowBrightMode))
+        assertNotNull(v.findViewById<View>(R.id.switchBrightMode))
+    }
+
+    @Test
+    fun activity_home_inflates_in_bright_mode() {
+        assertNotNull(inflateIn(Configuration.UI_MODE_NIGHT_NO, R.layout.activity_home))
+    }
+
+    @Test
+    fun activity_main_inflates_in_bright_mode() {
+        assertNotNull(inflateIn(Configuration.UI_MODE_NIGHT_NO, R.layout.activity_main))
+    }
+
+    @Test
+    fun activity_main_inflates_in_dark_mode() {
+        assertNotNull(inflateIn(Configuration.UI_MODE_NIGHT_YES, R.layout.activity_main))
     }
 }

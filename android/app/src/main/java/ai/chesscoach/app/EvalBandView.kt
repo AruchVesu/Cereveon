@@ -10,6 +10,7 @@ import android.graphics.Shader
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.View
+import androidx.core.content.ContextCompat
 
 /**
  * Atrium eval band — the only allowed visual representation of the
@@ -47,12 +48,19 @@ class EvalBandView @JvmOverloads constructor(
     private val dotRadius = dp(6f)
     private val dotGlowRadius = dp(12f)
 
+    // Token reads so the band chrome follows the active palette
+    // (bright mode flips these via values-notnight/colors.xml).
+    // NEUTRAL_GREY stays a literal: it has no Atrium token and the
+    // mid-grey reads on both the dark and paper surfaces.
+    private val accentCyan = ContextCompat.getColor(context, R.color.atrium_accent_cyan)
+    private val accentAmber = ContextCompat.getColor(context, R.color.atrium_accent_amber)
+
     private val trackBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = HAIRLINE
+        color = ContextCompat.getColor(context, R.color.atrium_hairline)
         style = Paint.Style.FILL
     }
     private val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = HAIRLINE_STRONG
+        color = ContextCompat.getColor(context, R.color.atrium_hairline_strong)
         style = Paint.Style.FILL
     }
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -128,7 +136,7 @@ class EvalBandView @JvmOverloads constructor(
         }
 
         val signalColor = if (band == Band.WINNING || band == Band.BETTER) {
-            if (side == Side.WHITE) ACCENT_CYAN else ACCENT_AMBER
+            if (side == Side.WHITE) accentCyan else accentAmber
         } else NEUTRAL_GREY
 
         // Filled portion — left edge to indicator, gradient transparent → signal.
@@ -157,10 +165,6 @@ class EvalBandView @JvmOverloads constructor(
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, resources.displayMetrics)
 
     companion object {
-        private val HAIRLINE        = Color.parseColor("#14FFFFFF")
-        private val HAIRLINE_STRONG = Color.parseColor("#1FFFFFFF")
-        private val ACCENT_CYAN     = Color.parseColor("#4FD9E5")
-        private val ACCENT_AMBER    = Color.parseColor("#FFC069")
-        private val NEUTRAL_GREY    = Color.parseColor("#7A8094")
+        private val NEUTRAL_GREY = Color.parseColor("#7A8094")
     }
 }

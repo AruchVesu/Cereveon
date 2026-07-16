@@ -7,9 +7,12 @@
       2.  Board style — radio (flat / engraved / wireframe).  Choice
           persists today; ChessBoardView consumes it once variant
           support lands (TODO marked in SettingsBottomSheet).
-      3.  Sound — switch.  Persists; no audio system to consume yet.
-      4.  Notifications — switch.  Persists; no notifier to consume yet.
-      5.  Account — chevron row that opens the existing change-password
+      3.  Appearance — Bright mode switch.  Applies immediately via
+          AppCompatDelegate (SettingsBottomSheet dismisses first, then
+          the hosts recreate into the notnight palette).
+      4.  Sound — switch.  Persists; no audio system to consume yet.
+      5.  Notifications — switch.  Persists; no notifier to consume yet.
+      6.  Account — chevron row that opens the existing change-password
           flow already wired in MainActivity drawer.
 
     Each row is 44dp tall with italic Cormorant title left, value or
@@ -190,6 +193,39 @@
             <TextView
                 style="@style/Atrium.SettingsRow.Sub"
                 android:text="Cyan grid only" />
+
+        </LinearLayout>
+
+        <View
+            style="@style/Atrium.SettingsDivider" />
+
+        <!-- ── Appearance ───────────────────────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/Atrium.Kicker"
+            android:text="Appearance"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingTop="@dimen/atrium_space_16"
+            android:paddingBottom="@dimen/atrium_space_8" />
+
+        <LinearLayout
+            android:id="@+id/rowBrightMode"
+            style="@style/Atrium.SettingsRow.Trailing">
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:text="Bright mode" />
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switchBrightMode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:thumbTint="@color/atrium_accent_cyan"
+                android:trackTint="@color/atrium_hairline_strong" />
 
         </LinearLayout>
 

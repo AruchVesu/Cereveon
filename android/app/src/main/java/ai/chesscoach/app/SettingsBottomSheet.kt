@@ -11,6 +11,7 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -25,11 +26,12 @@ import kotlinx.coroutines.launch
  * Sections (each separated by an Atrium hairline rule):
  *   1.  Coach voice  — radio (formal / conversational / terse)
  *   2.  Board style  — radio (flat / engraved / wireframe)
- *   3.  Sound        — switch
- *   4.  Notifications — switch
- *   5.  Profile      — chevron row: Skill rating (opens edit dialog)
- *   6.  Premium      — chevron row: Upgrade
- *   7.  Account      — chevron rows: Change password, Sign out
+ *   3.  Appearance   — Bright mode switch
+ *   4.  Sound        — switch
+ *   5.  Notifications — switch
+ *   6.  Profile      — chevron row: Skill rating (opens edit dialog)
+ *   7.  Premium      — chevron row: Upgrade
+ *   8.  Account      — chevron rows: Change password, Sign out
  *
  * Persistence: [PREFS_NAME] SharedPreferences (the same store
  * MainActivity uses for the rating cache and curriculum chip).
@@ -41,6 +43,11 @@ import kotlinx.coroutines.launch
  *   - Board style — persisted and read by [MainActivity.onCreate] /
  *     [MainActivity.onResume]; assigns [ChessBoardView.boardStyle] which
  *     branches the per-square render in `onDraw`.
+ *   - Bright mode — persisted and applied immediately via
+ *     [androidx.appcompat.app.AppCompatDelegate]; re-applied at every
+ *     cold start by [CereveonApplication.onCreate] through
+ *     [readBrightModeEnabled] + [nightModeFor], so the palette is
+ *     app-controlled and the system light/dark setting has no effect.
  *   - Sound / notifications persist, but no audio system or
  *     notification channel exists yet to consume them.
  *
@@ -101,6 +108,21 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
         bindRow(view, R.id.boardFlat,      boardDots, PREF_BOARD_STYLE)
         bindRow(view, R.id.boardEngraved,  boardDots, PREF_BOARD_STYLE)
         bindRow(view, R.id.boardWireframe, boardDots, PREF_BOARD_STYLE)
+
+        // ── Bright mode switch ───────────────────────────────────────
+        val bright = view.findViewById<SwitchCompat>(R.id.switchBrightMode)
+        bright.isChecked = prefs.getBoolean(PREF_BRIGHT_MODE, false)
+        bright.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean(PREF_BRIGHT_MODE, checked).apply()
+            // Dismiss BEFORE flipping the night mode: the mode change
+            // recreates the host activity, and a framework-restored
+            // sheet would come back with null Account callbacks (the
+            // hosts wire them at show-time, not at restore-time) —
+            // same reason the chevron rows use dismiss-then-launch.
+            dismiss()
+            AppCompatDelegate.setDefaultNightMode(nightModeFor(checked))
+        }
+        view.findViewById<View>(R.id.rowBrightMode).setOnClickListener { bright.toggle() }
 
         // ── Sound switch ─────────────────────────────────────────────
         val sound = view.findViewById<SwitchCompat>(R.id.switchSound)
@@ -317,6 +339,12 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
         const val PREF_SOUND_ENABLED = "setting_sound_enabled"
         const val PREF_NOTIFICATIONS_ENABLED = "setting_notifications_enabled"
 
+        // Bright (light) mode is opt-in; absent key = dark, the Atrium
+        // default posture.  The palette is selected ONLY by this pref
+        // (via forced AppCompatDelegate modes) — never by the system
+        // light/dark setting.
+        const val PREF_BRIGHT_MODE = "setting_bright_mode"
+
         // Slider bounds for the rating-edit dialog.  Match the
         // OnboardingActivity slider so a re-edit feels like the
         // same affordance the user saw at calibration.
@@ -356,5 +384,24 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
         fun readNotificationsEnabled(ctx: Context): Boolean =
             ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getBoolean(PREF_NOTIFICATIONS_ENABLED, true)
+
+        fun readBrightModeEnabled(ctx: Context): Boolean =
+            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(PREF_BRIGHT_MODE, false)
+
+        /**
+         * Map the bright-mode preference onto a FORCED AppCompat night
+         * mode.  Never returns MODE_NIGHT_FOLLOW_SYSTEM: Atrium's
+         * palette is app-controlled by design, so dark stays the
+         * default posture and the system toggle has no effect.
+         * [CereveonApplication.onCreate] applies this at process start;
+         * the settings switch applies it live.
+         */
+        fun nightModeFor(brightEnabled: Boolean): Int =
+            if (brightEnabled) {
+                AppCompatDelegate.MODE_NIGHT_NO
+            } else {
+                AppCompatDelegate.MODE_NIGHT_YES
+            }
     }
 }
