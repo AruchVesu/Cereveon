@@ -2,17 +2,17 @@
 <resources>
 
     <!--
-        Cereveon · Atrium colour tokens — DARK (default) palette.
+        Cereveon · Atrium colour tokens — DARK palette (night / default
+        qualifier).
 
         Source: design_handoff_cereveon_atrium/README.md (handoff bundle).
-        Atrium shipped dark-only; an opt-in bright counterpart now lives
-        in values-notnight/colors.xml (Settings › Appearance › Bright
-        mode).  Dark stays the default: CereveonApplication forces
-        MODE_NIGHT_YES unless the user enables the toggle, so the
-        SYSTEM light/dark setting never selects the palette — only the
-        in-app switch does.  This file remains the token source of
-        truth; values-notnight overrides only what differs (the board
-        object keeps this palette in both modes).
+        Atrium shipped dark-only; the bright counterpart lives in
+        values-notnight/colors.xml.  Which palette renders is decided by
+        Settings › Appearance via AppCompatDelegate: "System" (default)
+        follows the phone's colour mode, "Dark"/"Bright" are forced.
+        This file remains the token source of truth; values-notnight
+        overrides only what differs (the board object keeps this
+        palette in both modes).
 
         Naming mirrors the design tokens.  Existing legacy names (bg,
         board_light, board_dark, neon, select) are preserved at the

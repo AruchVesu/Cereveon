@@ -4,17 +4,20 @@ import androidx.appcompat.app.AppCompatDelegate
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.w3c.dom.Element
 
 /**
- * Bright mode contract — pins the three legs the feature stands on:
+ * Appearance contract — pins the three legs the feature stands on:
  *
- *  1.  The pref → AppCompatDelegate mapping is always a FORCED mode
- *      (never FOLLOW_SYSTEM): Atrium's palette is app-controlled by
- *      design, dark by default, bright only via the Settings switch.
+ *  1.  The pref → AppCompatDelegate mapping: "system" (the DEFAULT
+ *      since 2026-07-16, owner-directed) follows the phone's colour
+ *      mode via MODE_NIGHT_FOLLOW_SYSTEM; explicit "dark"/"bright"
+ *      choices stay FORCED so they hold regardless of the phone
+ *      setting; unknown persisted strings resolve to the default.
+ *      Legacy migration: the retired Bright-mode switch boolean maps
+ *      true → "bright", false/absent → the "system" default.
  *  2.  The bright palette in values-notnight/ stays structurally in
  *      sync with the base (dark) palette: no orphan overrides, every
  *      surface/ink/hairline/accent token actually flipped, and the
@@ -22,9 +25,10 @@ import org.w3c.dom.Element
  *      board keeps its dark warm-wood palette in both modes —
  *      ChessBoardView renders it from matching literals).
  *  3.  The wiring: CereveonApplication applies the persisted mode
- *      before any activity inflates, and the settings switch persists
- *      then dismisses BEFORE flipping the mode (a framework-restored
- *      sheet would lose its show-time-wired Account callbacks).
+ *      before any activity inflates, and an Appearance radio row
+ *      persists then dismisses BEFORE flipping the mode (a
+ *      framework-restored sheet would lose its show-time-wired
+ *      Account callbacks), and only flips on a CHANGED selection.
  *
  * Source-pin style follows GamePanelActionsSourcePinTest: host tests
  * read main-source files relative to the module dir.
@@ -42,42 +46,74 @@ class BrightModeSettingTest {
     // ── 1 · pref → night-mode mapping ────────────────────────────────
 
     @Test
-    fun `bright OFF maps to forced MODE_NIGHT_YES - dark stays the default posture`() {
+    fun `system mode maps to FOLLOW_SYSTEM - the palette tracks the phone`() {
+        assertEquals(
+            AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM,
+            SettingsBottomSheet.nightModeFor(SettingsBottomSheet.APPEARANCE_SYSTEM),
+        )
+    }
+
+    @Test
+    fun `dark mode maps to forced MODE_NIGHT_YES - holds regardless of the phone`() {
         assertEquals(
             AppCompatDelegate.MODE_NIGHT_YES,
-            SettingsBottomSheet.nightModeFor(brightEnabled = false),
+            SettingsBottomSheet.nightModeFor(SettingsBottomSheet.APPEARANCE_DARK),
         )
     }
 
     @Test
-    fun `bright ON maps to forced MODE_NIGHT_NO - notnight resources selected`() {
+    fun `bright mode maps to forced MODE_NIGHT_NO - holds regardless of the phone`() {
         assertEquals(
             AppCompatDelegate.MODE_NIGHT_NO,
-            SettingsBottomSheet.nightModeFor(brightEnabled = true),
+            SettingsBottomSheet.nightModeFor(SettingsBottomSheet.APPEARANCE_BRIGHT),
         )
     }
 
     @Test
-    fun `mapping never yields FOLLOW_SYSTEM - the system toggle must not select the palette`() {
-        for (bright in listOf(false, true)) {
-            assertNotEquals(
-                "nightModeFor($bright) must force a mode; FOLLOW_SYSTEM would let the " +
-                    "system light/dark setting pick the palette, which Atrium forbids.",
+    fun `unknown persisted mode falls back to FOLLOW_SYSTEM - a bad write cannot wedge the palette`() {
+        for (junk in listOf("", "midnight", "BRIGHT", "0")) {
+            assertEquals(
+                "nightModeFor(\"$junk\") must resolve to the system default, " +
+                    "matching readAppearanceMode's unknown-value fallback.",
                 AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM,
-                SettingsBottomSheet.nightModeFor(bright),
+                SettingsBottomSheet.nightModeFor(junk),
             )
         }
     }
 
     @Test
-    fun `bright mode pref defaults OFF and key is stable`() {
+    fun `appearance defaults to system and the pref keys are stable`() {
+        assertEquals("setting_appearance_mode", SettingsBottomSheet.PREF_APPEARANCE_MODE)
+        assertEquals("system", SettingsBottomSheet.APPEARANCE_SYSTEM)
+        assertEquals("dark", SettingsBottomSheet.APPEARANCE_DARK)
+        assertEquals("bright", SettingsBottomSheet.APPEARANCE_BRIGHT)
+        assertEquals(
+            "The default appearance is System — the app follows the phone's " +
+                "colour mode unless the user explicitly picks Dark or Bright.",
+            SettingsBottomSheet.APPEARANCE_SYSTEM,
+            SettingsBottomSheet.DEFAULT_APPEARANCE_MODE,
+        )
+        // Legacy key must keep its historical spelling — it is read as a
+        // migration fallback from installs of the one switch-based release.
         assertEquals("setting_bright_mode", SettingsBottomSheet.PREF_BRIGHT_MODE)
-        // The reader must default to false (dark) when the key is absent —
-        // existing installs must keep rendering exactly as before.
+    }
+
+    @Test
+    fun `reader migrates the legacy bright switch and only bright=true survives`() {
         val kt = File(settingsSheetPath).readText()
+        val reader = sourceBetween(kt, "fun readAppearanceMode", "fun nightModeFor")
         assertTrue(
-            "readBrightModeEnabled must default the pref to false (dark).",
-            Regex("""getBoolean\(PREF_BRIGHT_MODE,\s*false\)""").containsMatchIn(kt),
+            "readAppearanceMode must consult the new key first (null default so " +
+                "absence falls through to migration).",
+            Regex("""getString\(PREF_APPEARANCE_MODE,\s*null\)""").containsMatchIn(reader),
+        )
+        assertTrue(
+            "readAppearanceMode must map legacy bright=true → APPEARANCE_BRIGHT; " +
+                "legacy false/absent gets DEFAULT_APPEARANCE_MODE (system), NOT dark — " +
+                "false was the untouched default of the switch release.",
+            Regex("""getBoolean\(PREF_BRIGHT_MODE,\s*false\)""").containsMatchIn(reader) &&
+                reader.contains("APPEARANCE_BRIGHT") &&
+                reader.contains("DEFAULT_APPEARANCE_MODE"),
         )
     }
 
@@ -232,11 +268,41 @@ class BrightModeSettingTest {
     private fun countIdDeclarations(xml: String, viewId: String): Int =
         Regex("""android:id\s*=\s*"@\+id/$viewId"""").findAll(xml).count()
 
+    /**
+     * The source between the first occurrence of [fromAnchor] and the
+     * next occurrence of [toAnchor] — scopes assertions to one block.
+     * Fails loudly if either anchor is gone (that is drift too).
+     */
+    private fun sourceBetween(source: String, fromAnchor: String, toAnchor: String): String {
+        val start = source.indexOf(fromAnchor)
+        assertTrue("anchor not found: $fromAnchor", start >= 0)
+        val end = source.indexOf(toAnchor, start)
+        assertTrue("anchor not found after $fromAnchor: $toAnchor", end > start)
+        return source.substring(start, end)
+    }
+
     @Test
-    fun `settings layout declares the bright mode row and switch exactly once`() {
+    fun `settings layout declares the three appearance rows and dots exactly once`() {
         val xml = File(settingsLayoutPath).readText()
-        assertEquals(1, countIdDeclarations(xml, "rowBrightMode"))
-        assertEquals(1, countIdDeclarations(xml, "switchBrightMode"))
+        for (
+            id in listOf(
+                "rowAppearanceSystem", "appearanceSystemDot",
+                "rowAppearanceDark", "appearanceDarkDot",
+                "rowAppearanceBright", "appearanceBrightDot",
+            )
+        ) {
+            assertEquals("expected exactly one @+id/$id", 1, countIdDeclarations(xml, id))
+        }
+        // Row tags are the persisted values — bindAppearanceRow reads
+        // row.tag, so a tag typo would silently persist a junk mode
+        // (harmless thanks to the unknown-value fallback, but the
+        // user's pick would not stick).
+        for (tag in listOf("system", "dark", "bright")) {
+            assertTrue(
+                "appearance row android:tag=\"$tag\" missing",
+                xml.contains("android:tag=\"$tag\""),
+            )
+        }
     }
 
     @Test
@@ -244,9 +310,9 @@ class BrightModeSettingTest {
         val kt = File(applicationPath).readText()
         assertTrue(
             "CereveonApplication must map the pref through SettingsBottomSheet.nightModeFor " +
-                "(the single mapping the tests above pin).",
+                "over SettingsBottomSheet.readAppearanceMode (the mapping the tests above pin).",
             kt.contains("SettingsBottomSheet.nightModeFor") &&
-                kt.contains("SettingsBottomSheet.readBrightModeEnabled"),
+                kt.contains("SettingsBottomSheet.readAppearanceMode"),
         )
         val apply = kt.indexOf("applyPersistedAppearance()")
         val prewarm = kt.indexOf("prewarmEncryptedTokenStorage()")
@@ -258,24 +324,39 @@ class BrightModeSettingTest {
     }
 
     @Test
-    fun `settings switch persists then dismisses BEFORE flipping the night mode`() {
+    fun `appearance row persists then dismisses BEFORE flipping the night mode`() {
         val kt = File(settingsSheetPath).readText()
-        val listenerStart = kt.indexOf("bright.setOnCheckedChangeListener")
-        assertTrue(
-            "SettingsBottomSheet must wire switchBrightMode's checked-change listener.",
-            listenerStart >= 0,
-        )
-        val block = kt.substring(listenerStart, kt.indexOf("switchSound", listenerStart))
-        val persist = block.indexOf("putBoolean(PREF_BRIGHT_MODE")
+        val block = sourceBetween(kt, "private fun bindAppearanceRow", "/** Set the dot drawable")
+        val persist = block.indexOf("putString(PREF_APPEARANCE_MODE")
         val dismiss = block.indexOf("dismiss()")
         val applyMode = block.indexOf("AppCompatDelegate.setDefaultNightMode")
         assertTrue(
-            "The listener must persist the pref, then dismiss(), then flip the mode — " +
-                "in that order.  Flipping first recreates the host while the sheet is " +
-                "showing; the framework-restored sheet has null Account callbacks " +
-                "(they are wired at show-time).  Found offsets: persist=$persist, " +
-                "dismiss=$dismiss, setDefaultNightMode=$applyMode.",
+            "The row handler must persist the pref, then dismiss(), then flip the " +
+                "mode — in that order.  Flipping first recreates the host while the " +
+                "sheet is showing; the framework-restored sheet has null Account " +
+                "callbacks (they are wired at show-time).  Found offsets: " +
+                "persist=$persist, dismiss=$dismiss, setDefaultNightMode=$applyMode.",
             persist in 0 until dismiss && dismiss < applyMode,
+        )
+    }
+
+    @Test
+    fun `re-selecting the current appearance is a no-op - no pointless host recreate`() {
+        val kt = File(settingsSheetPath).readText()
+        val block = sourceBetween(kt, "private fun bindAppearanceRow", "/** Set the dot drawable")
+        assertTrue(
+            "bindAppearanceRow must guard dismiss+apply behind a changed-selection " +
+                "check (compare against readAppearanceMode BEFORE persisting) — " +
+                "re-tapping the already-selected row must not recreate every activity.",
+            Regex("""val\s+previous\s*=\s*readAppearanceMode""").containsMatchIn(block) &&
+                block.contains("if (value != previous)"),
+        )
+        val previousRead = block.indexOf("readAppearanceMode")
+        val persist = block.indexOf("putString(PREF_APPEARANCE_MODE")
+        assertTrue(
+            "previous must be captured before the new value is persisted, or the " +
+                "comparison is always true==stored and the guard never fires.",
+            previousRead in 0 until persist,
         )
     }
 }

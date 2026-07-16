@@ -26,7 +26,7 @@ import kotlinx.coroutines.launch
  * Sections (each separated by an Atrium hairline rule):
  *   1.  Coach voice  — radio (formal / conversational / terse)
  *   2.  Board style  — radio (flat / engraved / wireframe)
- *   3.  Appearance   — Bright mode switch
+ *   3.  Appearance   — radio (system / dark / bright)
  *   4.  Sound        — switch
  *   5.  Notifications — switch
  *   6.  Profile      — chevron row: Skill rating (opens edit dialog)
@@ -43,11 +43,11 @@ import kotlinx.coroutines.launch
  *   - Board style — persisted and read by [MainActivity.onCreate] /
  *     [MainActivity.onResume]; assigns [ChessBoardView.boardStyle] which
  *     branches the per-square render in `onDraw`.
- *   - Bright mode — persisted and applied immediately via
+ *   - Appearance — persisted and applied immediately via
  *     [androidx.appcompat.app.AppCompatDelegate]; re-applied at every
  *     cold start by [CereveonApplication.onCreate] through
- *     [readBrightModeEnabled] + [nightModeFor], so the palette is
- *     app-controlled and the system light/dark setting has no effect.
+ *     [readAppearanceMode] + [nightModeFor].  Default "system" follows
+ *     the phone's colour mode; explicit Dark/Bright stay forced.
  *   - Sound / notifications persist, but no audio system or
  *     notification channel exists yet to consume them.
  *
@@ -78,6 +78,7 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
 
     private val voiceDots = mutableMapOf<String, View>()
     private val boardDots = mutableMapOf<String, View>()
+    private val appearanceDots = mutableMapOf<String, View>()
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -109,20 +110,23 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
         bindRow(view, R.id.boardEngraved,  boardDots, PREF_BOARD_STYLE)
         bindRow(view, R.id.boardWireframe, boardDots, PREF_BOARD_STYLE)
 
-        // ── Bright mode switch ───────────────────────────────────────
-        val bright = view.findViewById<SwitchCompat>(R.id.switchBrightMode)
-        bright.isChecked = prefs.getBoolean(PREF_BRIGHT_MODE, false)
-        bright.setOnCheckedChangeListener { _, checked ->
-            prefs.edit().putBoolean(PREF_BRIGHT_MODE, checked).apply()
-            // Dismiss BEFORE flipping the night mode: the mode change
-            // recreates the host activity, and a framework-restored
-            // sheet would come back with null Account callbacks (the
-            // hosts wire them at show-time, not at restore-time) —
-            // same reason the chevron rows use dismiss-then-launch.
-            dismiss()
-            AppCompatDelegate.setDefaultNightMode(nightModeFor(checked))
-        }
-        view.findViewById<View>(R.id.rowBrightMode).setOnClickListener { bright.toggle() }
+        // ── Appearance radio ─────────────────────────────────────────
+        // System (default, follows the phone's colour mode) / Dark /
+        // Bright.  Unlike the other radio groups this one changes the
+        // live UI, so selection routes through applyAppearanceMode
+        // rather than bindRow: persist, dismiss FIRST (the mode change
+        // recreates the host activity, and a framework-restored sheet
+        // would come back with null Account callbacks — the hosts wire
+        // them at show-time, not at restore-time), then flip the mode.
+        val currentAppearance = readAppearanceMode(requireContext())
+        appearanceDots[APPEARANCE_SYSTEM] = view.findViewById(R.id.appearanceSystemDot)
+        appearanceDots[APPEARANCE_DARK]   = view.findViewById(R.id.appearanceDarkDot)
+        appearanceDots[APPEARANCE_BRIGHT] = view.findViewById(R.id.appearanceBrightDot)
+        applyRadioState(appearanceDots, currentAppearance)
+
+        bindAppearanceRow(view, R.id.rowAppearanceSystem)
+        bindAppearanceRow(view, R.id.rowAppearanceDark)
+        bindAppearanceRow(view, R.id.rowAppearanceBright)
 
         // ── Sound switch ─────────────────────────────────────────────
         val sound = view.findViewById<SwitchCompat>(R.id.switchSound)
@@ -314,6 +318,31 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
         }
     }
 
+    /**
+     * Wire an Appearance radio-row click.  Unlike [bindRow] the
+     * selection has an immediate visible effect (the palette), so on a
+     * CHANGED selection: persist, dismiss FIRST, then flip the night
+     * mode (the flip recreates the hosts; see the Appearance block in
+     * onViewCreated for why dismissal must come first).  Re-tapping
+     * the already-selected row is a no-op beyond the dot state — no
+     * pointless activity recreate.
+     */
+    private fun bindAppearanceRow(root: View, rowId: Int) {
+        val row = root.findViewById<LinearLayout>(rowId)
+        val value = row.tag as String
+        row.setOnClickListener {
+            val ctx = requireContext()
+            val previous = readAppearanceMode(ctx)
+            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putString(PREF_APPEARANCE_MODE, value).apply()
+            applyRadioState(appearanceDots, value)
+            if (value != previous) {
+                dismiss()
+                AppCompatDelegate.setDefaultNightMode(nightModeFor(value))
+            }
+        }
+    }
+
     /** Set the dot drawable for each entry in [dots]: filled if its key matches [selected]. */
     private fun applyRadioState(dots: Map<String, View>, selected: String) {
         val ctx = requireContext()
@@ -339,10 +368,21 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
         const val PREF_SOUND_ENABLED = "setting_sound_enabled"
         const val PREF_NOTIFICATIONS_ENABLED = "setting_notifications_enabled"
 
-        // Bright (light) mode is opt-in; absent key = dark, the Atrium
-        // default posture.  The palette is selected ONLY by this pref
-        // (via forced AppCompatDelegate modes) — never by the system
-        // light/dark setting.
+        // Appearance mode: "system" (default — the palette follows the
+        // phone's current colour mode), "dark" (always Atrium dark) or
+        // "bright" (always warm paper).  Explicit choices map to FORCED
+        // AppCompatDelegate modes; "system" maps to FOLLOW_SYSTEM.
+        const val PREF_APPEARANCE_MODE = "setting_appearance_mode"
+        const val APPEARANCE_SYSTEM = "system"
+        const val APPEARANCE_DARK = "dark"
+        const val APPEARANCE_BRIGHT = "bright"
+        const val DEFAULT_APPEARANCE_MODE = APPEARANCE_SYSTEM
+
+        // Legacy boolean from the original Bright-mode switch (one
+        // release, 2026-07-16).  Read only as a migration fallback by
+        // readAppearanceMode: true → "bright".  false is NOT migrated
+        // to "dark" — it was the untouched default, so those installs
+        // get the new "system" default.  Never written anymore.
         const val PREF_BRIGHT_MODE = "setting_bright_mode"
 
         // Slider bounds for the rating-edit dialog.  Match the
@@ -385,23 +425,45 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
             ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getBoolean(PREF_NOTIFICATIONS_ENABLED, true)
 
-        fun readBrightModeEnabled(ctx: Context): Boolean =
-            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getBoolean(PREF_BRIGHT_MODE, false)
+        /**
+         * The persisted appearance mode, with legacy migration: an
+         * absent [PREF_APPEARANCE_MODE] falls back to the retired
+         * Bright-mode switch value ([PREF_BRIGHT_MODE] true →
+         * [APPEARANCE_BRIGHT]) and finally to [DEFAULT_APPEARANCE_MODE]
+         * ("system").  Unknown persisted strings also resolve to the
+         * default so a bad write can never wedge the palette.
+         */
+        fun readAppearanceMode(ctx: Context): String {
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val stored = prefs.getString(PREF_APPEARANCE_MODE, null)
+                ?: if (prefs.getBoolean(PREF_BRIGHT_MODE, false)) {
+                    APPEARANCE_BRIGHT
+                } else {
+                    DEFAULT_APPEARANCE_MODE
+                }
+            return if (
+                stored == APPEARANCE_SYSTEM ||
+                stored == APPEARANCE_DARK ||
+                stored == APPEARANCE_BRIGHT
+            ) {
+                stored
+            } else {
+                DEFAULT_APPEARANCE_MODE
+            }
+        }
 
         /**
-         * Map the bright-mode preference onto a FORCED AppCompat night
-         * mode.  Never returns MODE_NIGHT_FOLLOW_SYSTEM: Atrium's
-         * palette is app-controlled by design, so dark stays the
-         * default posture and the system toggle has no effect.
-         * [CereveonApplication.onCreate] applies this at process start;
-         * the settings switch applies it live.
+         * Map an appearance mode onto an AppCompat night mode.
+         * "system" follows the phone's colour mode (the default since
+         * 2026-07-16); the explicit choices stay FORCED so a user who
+         * picked Dark or Bright keeps it regardless of the phone
+         * setting.  [CereveonApplication.onCreate] applies this at
+         * process start; the settings radio applies it live.
          */
-        fun nightModeFor(brightEnabled: Boolean): Int =
-            if (brightEnabled) {
-                AppCompatDelegate.MODE_NIGHT_NO
-            } else {
-                AppCompatDelegate.MODE_NIGHT_YES
-            }
+        fun nightModeFor(mode: String): Int = when (mode) {
+            APPEARANCE_BRIGHT -> AppCompatDelegate.MODE_NIGHT_NO
+            APPEARANCE_DARK -> AppCompatDelegate.MODE_NIGHT_YES
+            else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+        }
     }
 }

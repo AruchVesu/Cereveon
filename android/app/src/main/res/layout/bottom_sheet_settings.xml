@@ -7,9 +7,11 @@
       2.  Board style — radio (flat / engraved / wireframe).  Choice
           persists today; ChessBoardView consumes it once variant
           support lands (TODO marked in SettingsBottomSheet).
-      3.  Appearance — Bright mode switch.  Applies immediately via
+      3.  Appearance — radio (system / dark / bright).  System (the
+          default) follows the phone's colour mode; Dark/Bright stay
+          forced.  A changed selection applies immediately via
           AppCompatDelegate (SettingsBottomSheet dismisses first, then
-          the hosts recreate into the notnight palette).
+          the hosts recreate into the selected palette).
       4.  Sound — switch.  Persists; no audio system to consume yet.
       5.  Notifications — switch.  Persists; no notifier to consume yet.
       6.  Account — chevron row that opens the existing change-password
@@ -211,21 +213,62 @@
             android:paddingBottom="@dimen/atrium_space_8" />
 
         <LinearLayout
-            android:id="@+id/rowBrightMode"
-            style="@style/Atrium.SettingsRow.Trailing">
+            android:id="@+id/rowAppearanceSystem"
+            style="@style/Atrium.SettingsRow"
+            android:tag="system">
+
+            <View
+                android:id="@+id/appearanceSystemDot"
+                style="@style/Atrium.SettingsRow.Dot"
+                android:background="@drawable/atrium_radio_selected" />
 
             <TextView
                 style="@style/Atrium.SettingsRow.Title"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:text="Bright mode" />
+                android:text="System" />
 
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switchBrightMode"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:thumbTint="@color/atrium_accent_cyan"
-                android:trackTint="@color/atrium_hairline_strong" />
+            <TextView
+                style="@style/Atrium.SettingsRow.Sub"
+                android:text="Match this phone" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/rowAppearanceDark"
+            style="@style/Atrium.SettingsRow"
+            android:tag="dark">
+
+            <View
+                android:id="@+id/appearanceDarkDot"
+                style="@style/Atrium.SettingsRow.Dot"
+                android:background="@drawable/atrium_radio_unselected" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:text="Dark" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Sub"
+                android:text="Always dark" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/rowAppearanceBright"
+            style="@style/Atrium.SettingsRow"
+            android:tag="bright">
+
+            <View
+                android:id="@+id/appearanceBrightDot"
+                style="@style/Atrium.SettingsRow.Dot"
+                android:background="@drawable/atrium_radio_unselected" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:text="Bright" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Sub"
+                android:text="Always bright" />
 
         </LinearLayout>
 
