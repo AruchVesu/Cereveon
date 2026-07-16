@@ -2,6 +2,8 @@ package ai.chesscoach.app
 
 import android.os.SystemClock
 import android.widget.TextView
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.FragmentFactory
 import androidx.fragment.app.testing.FragmentScenario
 import androidx.fragment.app.testing.launchFragment
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -93,10 +95,18 @@ class TodaysDrillWalkInstrumentedTest {
     private fun launchDrill(
         fake: FakeClient,
         solutionLine: List<String>,
-    ): FragmentScenario<TodaysDrillBottomSheet> = launchFragment(
-        themeResId = R.style.Theme_Cereveon_Atrium,
-    ) {
-        TodaysDrillBottomSheet.newInstance(
+    ): FragmentScenario<TodaysDrillBottomSheet> {
+        // Build the argument bundle through the production factory (keeps
+        // the private ARG_* keys in one place), then hand it to
+        // FragmentScenario as `fragmentArgs` so the harness OWNS the
+        // arguments and re-applies them on any re-instantiation — the
+        // instance-lambda form lost them intermittently under emulator
+        // load (a null requireArguments() at onViewCreated).  The fake is
+        // injected via a FragmentFactory installed on the FragmentManager,
+        // so it survives re-creation too; the factory builds a fresh
+        // fragment via the default no-arg constructor and only wires the
+        // client (arguments come from `fragmentArgs`).
+        val args = TodaysDrillBottomSheet.newInstance(
             planId = "p-test",
             dayOffset = 3,
             totalDays = 3,
@@ -105,7 +115,21 @@ class TodaysDrillWalkInstrumentedTest {
             fen = startposFen,
             expectedMoveUci = "e2e4",
             solutionLineUci = solutionLine,
-        ).apply { gameApiClient = fake }
+        ).requireArguments()
+
+        val factory = object : FragmentFactory() {
+            override fun instantiate(classLoader: ClassLoader, className: String): Fragment {
+                val fragment = super.instantiate(classLoader, className)
+                if (fragment is TodaysDrillBottomSheet) fragment.gameApiClient = fake
+                return fragment
+            }
+        }
+
+        return launchFragment<TodaysDrillBottomSheet>(
+            fragmentArgs = args,
+            themeResId = R.style.Theme_Cereveon_Atrium,
+            factory = factory,
+        )
     }
 
     /** Poll (main-thread reads via onFragment) until [condition] or timeout. */
