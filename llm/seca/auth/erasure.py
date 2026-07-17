@@ -121,6 +121,16 @@ ERASED_TABLES: tuple[str, ...] = tuple(
 )
 
 
+def player_data_plan(player_id: str) -> list[tuple[type[Base], Any]]:
+    """The ``(model, criterion)`` scope shared by BOTH data-subject-rights
+    consumers: ``purge_player_data`` (Art. 17) deletes it and
+    ``export.export_player_data`` (Art. 15/20) serialises it.  One
+    authority — so the metadata-discovery tripwire that keeps erasure
+    complete keeps the export complete in the same breath.
+    """
+    return _erasure_plan(player_id)
+
+
 def player_linked_tables(metadata: MetaData) -> frozenset[str]:
     """Discover every table that can hold rows belonging to a player.
 

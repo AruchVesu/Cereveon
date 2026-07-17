@@ -178,6 +178,12 @@ TEST_TARGETS = [
     # Lichess-account path, the ondelete=CASCADE model pin, and the
     # Postgres FK retrofit's SQLite no-op + DDL shape.
     "llm/tests/test_auth_account_deletion.py",
+    # GET /auth/me/export data export (GDPR Art. 15/20, EX_01..09):
+    # scope parity with the erasure plan (shared player_data_plan
+    # authority), secrets policy incl. the secret-pattern guard over
+    # the player-linked closure, cross-player isolation, end-to-end
+    # JSON-serialisability, and the route handler's document shape.
+    "llm/tests/test_auth_data_export.py",
     # "Sign in with Lichess" (OAuth PKCE, POST /auth/lichess): client-layer
     # exchange/account/revoke error taxonomy + hostile-input rejection
     # (OA_01..08) and router/service find-or-create, auto-link, and
@@ -383,7 +389,9 @@ COVERAGE_TARGETS = [
     # more than once per process" pre-load hazard that keeps
     # chat_pipeline excluded above.  test_auth_account_deletion.py
     # (TEST_TARGETS) exercises every branch, including the plan-vs-
-    # metadata discovery tripwire.
+    # metadata discovery tripwire.  llm.seca.auth.export is excluded
+    # for the same reason (it imports erasure, and with it the same
+    # model graph); test_auth_data_export.py exercises every branch.
     "llm.seca.analytics.router",
     "llm.seca.curriculum.reward",
     "llm.seca.curriculum.spacing",
