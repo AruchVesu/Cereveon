@@ -56,6 +56,9 @@ RT_03  POST /lichess/link 409 on cross-player conflict.
 RT_04  GET /lichess/status mirrors service output.
 RT_05  POST /lichess/import returns counts.
 RT_06  Service-layer errors map to documented HTTP codes.
+
+DC_01..DC_08  Disconnect detection + reconnect resolution — see the
+       section comment above ``TestDisconnectReconnect``.
 """
 
 from __future__ import annotations
@@ -83,6 +86,7 @@ import llm.seca.events.models  # noqa: F401
 import llm.seca.brain.models  # noqa: F401
 import llm.seca.analytics.models  # noqa: F401
 import llm.seca.lichess.models  # noqa: F401
+import llm.seca.notifications.models  # noqa: F401
 
 from llm.seca.auth.models import Base, Player
 from llm.seca.events.models import GameEvent
@@ -554,9 +558,7 @@ class TestLinkAccount:
         db_session.commit()
 
         _stub_profile(monkeypatch, profile={"id": "alice", "perfs": {}})
-        import_service.link_account(
-            db_session, player, "alice", claim_from_other_player=True
-        )
+        import_service.link_account(db_session, player, "alice", claim_from_other_player=True)
 
         rows = db_session.query(LinkedAccount).filter_by(external_username="alice").all()
         assert len(rows) == 1
@@ -1227,9 +1229,7 @@ class TestImportJobLifecycle:
     def test_start_import_job_creates_queued_row(
         self, db_session, linked_player, cleared_player_locks
     ):
-        job = import_service.start_import_job(
-            db_session, linked_player, max_games=42
-        )
+        job = import_service.start_import_job(db_session, linked_player, max_games=42)
         assert job.id  # UUID assigned
         assert job.status == JOB_STATUS_QUEUED
         assert job.target_max_games == 42
@@ -1246,14 +1246,10 @@ class TestImportJobLifecycle:
         self, db_session, linked_player, cleared_player_locks
     ):
         with pytest.raises(ValueError):
-            import_service.start_import_job(
-                db_session, linked_player, max_games=0
-            )
+            import_service.start_import_job(db_session, linked_player, max_games=0)
 
     # IJ_03
-    def test_start_import_job_raises_when_unlinked(
-        self, db_session, player, cleared_player_locks
-    ):
+    def test_start_import_job_raises_when_unlinked(self, db_session, player, cleared_player_locks):
         with pytest.raises(LichessNotLinkedError):
             import_service.start_import_job(db_session, player, max_games=10)
 
@@ -1273,9 +1269,7 @@ class TestImportJobLifecycle:
                 _game_dict(external_id="g2", white="alice", black="bob", winner="black"),
             ],
         )
-        job = import_service.start_import_job(
-            db_session, linked_player, max_games=50
-        )
+        job = import_service.start_import_job(db_session, linked_player, max_games=50)
         # Worker runs synchronously from the test thread.
         import_service.run_import_job(job.id, max_games=50, rated=True)
 
@@ -1307,9 +1301,7 @@ class TestImportJobLifecycle:
 
         monkeypatch.setattr(import_service.lichess_client, "fetch_user_games", _raising_iter)
 
-        job = import_service.start_import_job(
-            db_session, linked_player, max_games=50
-        )
+        job = import_service.start_import_job(db_session, linked_player, max_games=50)
         import_service.run_import_job(job.id, max_games=50, rated=True)
 
         db_session.refresh(job)
@@ -1353,9 +1345,7 @@ class TestImportJobLifecycle:
 
     # IJ_10
     def test_serialize_job_shape_stable(self, db_session, linked_player, cleared_player_locks):
-        job = import_service.start_import_job(
-            db_session, linked_player, max_games=25
-        )
+        job = import_service.start_import_job(db_session, linked_player, max_games=25)
         payload = import_service.serialize_job(job)
         assert set(payload.keys()) == {
             "job_id",
@@ -1436,9 +1426,7 @@ class TestCoalesce:
                 with SessionFactory() as db:
                     p = db.get(Player, player_id)
                     barrier.wait(timeout=5)
-                    job = import_service.start_import_job(
-                        db, p, max_games=25
-                    )
+                    job = import_service.start_import_job(db, p, max_games=25)
                     results.append(job.id)
             except BaseException as exc:  # pylint: disable=broad-except
                 errors.append(exc)
@@ -1473,9 +1461,7 @@ class TestUnlinkTerminatesRunning:
         return player
 
     # IJ_07
-    def test_unlink_marks_active_jobs_failed(
-        self, db_session, linked_player, cleared_player_locks
-    ):
+    def test_unlink_marks_active_jobs_failed(self, db_session, linked_player, cleared_player_locks):
         running = LichessImportJob(
             player_id=linked_player.id,
             status=JOB_STATUS_RUNNING,
@@ -1509,10 +1495,7 @@ class TestUnlinkTerminatesRunning:
         assert succeeded.status == JOB_STATUS_SUCCEEDED
         assert succeeded.error_message is None
         # And the link row itself is gone.
-        assert (
-            db_session.query(LinkedAccount).filter_by(player_id=linked_player.id).first()
-            is None
-        )
+        assert db_session.query(LinkedAccount).filter_by(player_id=linked_player.id).first() is None
 
     # IJ_08
     def test_run_import_stream_aborts_on_external_status_flip(
@@ -1561,13 +1544,9 @@ class TestUnlinkTerminatesRunning:
                     db_session.commit()
                 yield g
 
-        monkeypatch.setattr(
-            import_service.lichess_client, "fetch_user_games", _cancelling_iter
-        )
+        monkeypatch.setattr(import_service.lichess_client, "fetch_user_games", _cancelling_iter)
 
-        link_row = (
-            db_session.query(LinkedAccount).filter_by(player_id=linked_player.id).one()
-        )
+        link_row = db_session.query(LinkedAccount).filter_by(player_id=linked_player.id).one()
         import_service._run_import_stream(
             db_session,
             link_row,
@@ -1699,9 +1678,7 @@ class TestV1LegacyPathRegression:
         assert "status" not in result
         assert result["inserted"] == 1
 
-    def test_explicit_v1_header_returns_v1_shape(
-        self, db_session, linked_player, monkeypatch
-    ):
+    def test_explicit_v1_header_returns_v1_shape(self, db_session, linked_player, monkeypatch):
         _stub_games(
             monkeypatch,
             games=[_game_dict(external_id="g1", white="alice", black="bob", winner="white")],
@@ -1784,9 +1761,7 @@ class TestGetImportJobRoute:
     ):
         from llm.seca.lichess.router import get_import_job
 
-        job = import_service.start_import_job(
-            db_session, linked_player, max_games=10
-        )
+        job = import_service.start_import_job(db_session, linked_player, max_games=10)
         with _limiter_disabled():
             payload = get_import_job(
                 request=_fake_request(),
@@ -1819,9 +1794,7 @@ class TestGetImportJobRoute:
         from llm.seca.lichess.router import get_import_job
 
         # Job owned by linked_player; other_player must not be able to read it.
-        job = import_service.start_import_job(
-            db_session, linked_player, max_games=10
-        )
+        job = import_service.start_import_job(db_session, linked_player, max_games=10)
         with _limiter_disabled(), pytest.raises(HTTPException) as excinfo:
             get_import_job(
                 request=_fake_request(),
@@ -1830,3 +1803,232 @@ class TestGetImportJobRoute:
                 db=db_session,
             )
         assert excinfo.value.status_code == 404
+
+
+# ===========================================================================
+# Disconnect detection + reconnect resolution (communication & access
+# spec §2.6, adapted — see LinkedAccount.disconnected_at)
+# ===========================================================================
+#
+# DC_01  Worker 404 → link marked disconnected + reconnect system_alert
+#        raised + job failed; no game_analyzed row for a failed job.
+# DC_02  Repeat 404 keeps ONE live alert (dedup) and the ORIGINAL
+#        disconnected_at stamp.
+# DC_03  Clean import afterwards clears the flag and dismisses the alert.
+# DC_04  Job success with analyzed>0 raises the game_analyzed feed entry
+#        (batched copy comes from the producer's own tests).
+# DC_05  unlink_account dismisses the live alert.
+# DC_06  Re-linking dismisses the live alert; fresh link reads connected.
+# DC_07  get_status exposes disconnected / disconnected_at.
+# DC_08  Sync v1 import_user_games 404 also marks + alerts, then
+#        re-raises for the router's existing 404 translation.
+
+
+from llm.seca.notifications.models import (
+    ACTION_LICHESS_RECONNECT,
+    Notification,
+    PRIORITY_HIGH,
+    TYPE_GAME_ANALYZED,
+    TYPE_SYSTEM_ALERT,
+)
+
+
+def _stub_games_user_not_found(monkeypatch):
+    """fetch_user_games stand-in whose stream 404s on first pull."""
+
+    def _gen(username, **kwargs):
+        raise lichess_client.LichessUserNotFound("user not found")
+        yield  # pylint: disable=unreachable  # generator shape, like the real client
+
+    monkeypatch.setattr(import_service.lichess_client, "fetch_user_games", _gen)
+
+
+def _live_reconnect_alerts(db_session, player_id):
+    return (
+        db_session.query(Notification)
+        .filter(
+            Notification.player_id == player_id,
+            Notification.type == TYPE_SYSTEM_ALERT,
+            Notification.action == ACTION_LICHESS_RECONNECT,
+            Notification.dismissed_at.is_(None),
+        )
+        .all()
+    )
+
+
+class TestDisconnectReconnect:
+    @pytest.fixture()
+    def linked_player(self, db_session, player, monkeypatch):
+        _stub_profile(monkeypatch, profile={"id": "alice", "perfs": {}})
+        import_service.link_account(db_session, player, "alice")
+        return player
+
+    def _fail_one_job(self, db_session, linked_player, monkeypatch):
+        _stub_games_user_not_found(monkeypatch)
+        job = import_service.start_import_job(db_session, linked_player, max_games=50)
+        import_service.run_import_job(job.id, max_games=50, rated=True)
+        db_session.expire_all()
+        return job
+
+    # DC_01
+    def test_worker_404_marks_disconnected_and_alerts(
+        self, db_session, linked_player, monkeypatch, cleared_player_locks, worker_session_factory
+    ):
+        job = self._fail_one_job(db_session, linked_player, monkeypatch)
+        assert job.status == JOB_STATUS_FAILED
+
+        link_row = (
+            db_session.query(LinkedAccount)
+            .filter(LinkedAccount.player_id == linked_player.id)
+            .one()
+        )
+        assert link_row.disconnected_at is not None
+
+        alerts = _live_reconnect_alerts(db_session, linked_player.id)
+        assert len(alerts) == 1
+        assert alerts[0].priority == PRIORITY_HIGH
+        assert alerts[0].expires_at is None  # "until resolved"
+        assert alerts[0].action_label == "Reconnect"
+        assert "alice" in alerts[0].body
+
+        # A failed job must not leave a "games reviewed" entry behind.
+        analyzed_rows = (
+            db_session.query(Notification)
+            .filter(
+                Notification.player_id == linked_player.id,
+                Notification.type == TYPE_GAME_ANALYZED,
+            )
+            .all()
+        )
+        assert analyzed_rows == []
+
+    # DC_02
+    def test_repeat_404_keeps_single_alert_and_first_stamp(
+        self, db_session, linked_player, monkeypatch, cleared_player_locks, worker_session_factory
+    ):
+        self._fail_one_job(db_session, linked_player, monkeypatch)
+        link_row = (
+            db_session.query(LinkedAccount)
+            .filter(LinkedAccount.player_id == linked_player.id)
+            .one()
+        )
+        first_stamp = link_row.disconnected_at
+
+        self._fail_one_job(db_session, linked_player, monkeypatch)
+        db_session.refresh(link_row)
+        assert link_row.disconnected_at == first_stamp
+        assert len(_live_reconnect_alerts(db_session, linked_player.id)) == 1
+
+    # DC_03
+    def test_clean_import_clears_flag_and_dismisses_alert(
+        self, db_session, linked_player, monkeypatch, cleared_player_locks, worker_session_factory
+    ):
+        self._fail_one_job(db_session, linked_player, monkeypatch)
+
+        _stub_games(
+            monkeypatch,
+            games=[_game_dict(external_id="g9", white="alice", black="bob", winner="white")],
+        )
+        job = import_service.start_import_job(db_session, linked_player, max_games=50)
+        import_service.run_import_job(job.id, max_games=50, rated=True)
+        db_session.expire_all()
+
+        link_row = (
+            db_session.query(LinkedAccount)
+            .filter(LinkedAccount.player_id == linked_player.id)
+            .one()
+        )
+        assert link_row.disconnected_at is None
+        assert _live_reconnect_alerts(db_session, linked_player.id) == []
+
+    # DC_04
+    def test_success_with_analyzed_games_raises_feed_entry(
+        self, db_session, linked_player, monkeypatch, cleared_player_locks, worker_session_factory
+    ):
+        from llm.seca.lichess import analysis_service
+
+        _stub_games(
+            monkeypatch,
+            games=[
+                _game_dict(external_id="a1", white="alice", black="bob", winner="white"),
+                _game_dict(external_id="a2", white="alice", black="bob", winner="black"),
+            ],
+        )
+
+        def _fake_analyze(db, player, pool, job=None):
+            job.analyzed = 2
+            db.commit()
+
+        monkeypatch.setattr(analysis_service, "analyze_unscored_games", _fake_analyze)
+
+        job = import_service.start_import_job(db_session, linked_player, max_games=50)
+        import_service.run_import_job(job.id, max_games=50, rated=True, engine_pool=object())
+        db_session.expire_all()
+
+        rows = (
+            db_session.query(Notification)
+            .filter(
+                Notification.player_id == linked_player.id,
+                Notification.type == TYPE_GAME_ANALYZED,
+            )
+            .all()
+        )
+        assert len(rows) == 1
+        assert json.loads(rows[0].metadata_json) == {"games_analyzed": 2}
+        assert rows[0].title == "2 games reviewed"
+
+    # DC_05
+    def test_unlink_dismisses_alert(
+        self, db_session, linked_player, monkeypatch, cleared_player_locks, worker_session_factory
+    ):
+        self._fail_one_job(db_session, linked_player, monkeypatch)
+        assert len(_live_reconnect_alerts(db_session, linked_player.id)) == 1
+
+        assert import_service.unlink_account(db_session, linked_player) is True
+        assert _live_reconnect_alerts(db_session, linked_player.id) == []
+
+    # DC_06
+    def test_relink_dismisses_alert_and_reads_connected(
+        self, db_session, linked_player, monkeypatch, cleared_player_locks, worker_session_factory
+    ):
+        self._fail_one_job(db_session, linked_player, monkeypatch)
+
+        _stub_profile(monkeypatch, profile={"id": "alice2", "perfs": {}})
+        import_service.link_account(db_session, linked_player, "alice2")
+
+        assert _live_reconnect_alerts(db_session, linked_player.id) == []
+        link_row = (
+            db_session.query(LinkedAccount)
+            .filter(LinkedAccount.player_id == linked_player.id)
+            .one()
+        )
+        assert link_row.disconnected_at is None
+
+    # DC_07
+    def test_get_status_exposes_disconnected_fields(
+        self, db_session, linked_player, monkeypatch, cleared_player_locks, worker_session_factory
+    ):
+        fresh = import_service.get_status(db_session, linked_player)
+        assert fresh["disconnected"] is False
+        assert fresh["disconnected_at"] is None
+
+        self._fail_one_job(db_session, linked_player, monkeypatch)
+        broken = import_service.get_status(db_session, linked_player)
+        assert broken["disconnected"] is True
+        assert isinstance(broken["disconnected_at"], str)
+
+    # DC_08
+    def test_sync_import_404_marks_and_reraises(
+        self, db_session, linked_player, monkeypatch, cleared_player_locks
+    ):
+        _stub_games_user_not_found(monkeypatch)
+        with pytest.raises(lichess_client.LichessUserNotFound):
+            import_service.import_user_games(db_session, linked_player, max_games=10)
+
+        link_row = (
+            db_session.query(LinkedAccount)
+            .filter(LinkedAccount.player_id == linked_player.id)
+            .one()
+        )
+        assert link_row.disconnected_at is not None
+        assert len(_live_reconnect_alerts(db_session, linked_player.id)) == 1

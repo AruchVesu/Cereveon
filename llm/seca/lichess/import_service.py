@@ -1,3 +1,10 @@
+# This module hosts link/unlink/status, both import entrypoints (sync +
+# worker), the shared stream driver, and now the disconnect-detection
+# glue, so it runs just past the 1000-line soft cap.  It is a split
+# candidate (the stream driver is the obvious extract), but carving it
+# up is a dedicated refactor out of scope for a feature change — same
+# disposition as auth/router.py and events/router.py.
+# pylint: disable=too-many-lines
 """Link / unlink / import / status operations for the Lichess adapter.
 
 This module is the only place that:
@@ -60,6 +67,7 @@ from llm.seca.lichess.models import (
     LichessImportJob,
     LinkedAccount,
 )
+from llm.seca.notifications import service as notifications_service
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +256,13 @@ def link_account(
     db.refresh(player)
     db.refresh(link)
 
+    # Linking (or re-linking) IS the reconnect action: any outstanding
+    # "Lichess connection lost" alert has been answered, and spec §5.8
+    # forbids continuing to show it.  The fresh row above starts with
+    # ``disconnected_at`` NULL, so link state and alert state stay in
+    # step.
+    notifications_service.resolve_lichess_disconnected(db, str(player.id))
+
     return {
         "platform": PLATFORM_LICHESS,
         "external_username": canonical_id,
@@ -294,6 +309,11 @@ def unlink_account(db: DBSession, player: Player) -> bool:
     )
     db.delete(link)
     db.commit()
+
+    # A deliberate unlink answers the "reconnect" ask just as surely as
+    # reconnecting does — dropping the alert here keeps a detached
+    # player's feed from nagging about an account they chose to remove.
+    notifications_service.resolve_lichess_disconnected(db, str(player.id))
     return True
 
 
@@ -348,6 +368,12 @@ def get_status(db: DBSession, player: Player) -> dict:
         "last_imported_at": (link.last_imported_at.isoformat() if link.last_imported_at else None),
         "imported_game_count": int(imported_count),
         "active_import_job_id": active_job_id,
+        # Reconnect flow: True once an import 404'd on the account
+        # (closed/renamed) and no clean stream has been seen since.
+        # The client renders the reconnect state from this.  Additive
+        # field — the deployed Android client ignores unknown keys.
+        "disconnected": link.disconnected_at is not None,
+        "disconnected_at": (link.disconnected_at.isoformat() if link.disconnected_at else None),
     }
 
 
@@ -419,6 +445,41 @@ def cleanup_stale_import_jobs_on_startup() -> int:
 # ---------------------------------------------------------------------------
 
 
+def _mark_link_disconnected(db: DBSession, player_id: str) -> None:
+    """Persist the lost-access state + raise the reconnect alert.
+
+    Called when an import stream 404s on the linked account — the only
+    signal this architecture has for "Lichess access is gone" (there is
+    no stored OAuth token whose refresh could fail; see the model
+    comment on ``disconnected_at``).  First 404 stamps the time; repeat
+    404s keep the original stamp.  The alert producer is duplicate-
+    suppressed on its side, so this function is safe to call on every
+    failing retry.
+
+    Refetches the link itself (callers arrive here after a rollback,
+    holding possibly-expired instances): a concurrent ``unlink_account``
+    may have removed the row, in which case there is nothing to mark
+    and no one to alert.
+    """
+    link = (
+        db.query(LinkedAccount)
+        .filter(
+            LinkedAccount.player_id == player_id,
+            LinkedAccount.platform == PLATFORM_LICHESS,
+        )
+        .first()
+    )
+    if link is None:
+        return
+    if link.disconnected_at is None:
+        link.disconnected_at = datetime.utcnow()
+        db.add(link)
+        db.commit()
+    notifications_service.notify_lichess_disconnected(
+        db, str(link.player_id), link.external_username
+    )
+
+
 def import_user_games(
     db: DBSession,
     player: Player,
@@ -460,14 +521,23 @@ def import_user_games(
     if link is None:
         raise LichessNotLinkedError("player has no Lichess account linked")
 
-    return _run_import_stream(
-        db,
-        link,
-        player,
-        max_games=max_games,
-        rated=rated,
-        perf_types=perf_types,
-    )
+    try:
+        return _run_import_stream(
+            db,
+            link,
+            player,
+            max_games=max_games,
+            rated=rated,
+            perf_types=perf_types,
+        )
+    except lichess_client.LichessUserNotFound:
+        # The linked account is gone (closed/renamed).  Record the
+        # broken link + raise the reconnect alert, then let the router
+        # translate the exception to its existing 404 — the sync caller
+        # still sees the failure it always saw.
+        db.rollback()
+        _mark_link_disconnected(db, str(player.id))
+        raise
 
 
 def start_import_job(
@@ -621,6 +691,13 @@ def run_import_job(
                 job_refetch.status = JOB_STATUS_FAILED
                 job_refetch.error_message = str(exc)[:500]
                 db.commit()
+            if isinstance(exc, lichess_client.LichessUserNotFound):
+                # The linked account is gone (closed/renamed) — the
+                # reconnect-flow trigger, not a transient upstream
+                # error.  The helper refetches the link post-rollback;
+                # a concurrent unlink leaves nothing to mark and no one
+                # to alert.
+                _mark_link_disconnected(db, str(job.player_id))
             logger.warning("Lichess import job %s failed: %s", job_id, exc)
             return
 
@@ -653,6 +730,25 @@ def run_import_job(
         if job.status == JOB_STATUS_RUNNING:
             job.status = JOB_STATUS_SUCCEEDED
             db.commit()
+            # Feed entry for the async paths (sign-in auto-import,
+            # backfill, v2 sheet import): "N games reviewed", batched
+            # per spec §5.4 by the producer.  Only on a job that this
+            # worker promoted — a cancelled job's partial work never
+            # notifies.  The v1 sync path deliberately has no feed
+            # entry: its caller blocks on the response and renders the
+            # summary directly.
+            analyzed_count = int(job.analyzed or 0)
+            if analyzed_count > 0:
+                try:
+                    notifications_service.notify_games_analyzed(
+                        db, str(job.player_id), analyzed_count
+                    )
+                except Exception:  # pylint: disable=broad-exception-caught
+                    # The feed is enrichment — its failure must not
+                    # flip an import whose games already landed back
+                    # to failed (same stance as the analysis pass).
+                    db.rollback()
+                    logger.exception("games-analyzed notification failed for job %s", job_id)
     finally:
         db.close()
 
@@ -822,6 +918,18 @@ def _run_import_stream(
         link.last_imported_at = _ms_to_naive_utc(newest_created_at_ms)
         db.add(link)
         db.commit()
+
+    # A clean stream — even an empty one — proves the account is
+    # reachable again: clear any recorded disconnection and retire the
+    # reconnect alert (spec §5.8).  Shared by the sync + worker paths,
+    # same as the watermark logic above.  The mid-stream cancellation
+    # return deliberately skips this: a cancelled job proves nothing
+    # either way, so the recorded state stands.
+    if link.disconnected_at is not None:
+        link.disconnected_at = None
+        db.add(link)
+        db.commit()
+        notifications_service.resolve_lichess_disconnected(db, str(link.player_id))
 
     return {
         "inserted": inserted,

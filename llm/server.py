@@ -45,6 +45,7 @@ from llm.seca.entitlements import service as entitlements
 from llm.seca.billing.router import router as billing_router
 from llm.seca.feedback.router import router as feedback_router
 from llm.seca.review.router import router as review_router
+from llm.seca.notifications.router import router as notifications_router
 
 # register SECA models
 import llm.seca.events.models
@@ -53,6 +54,7 @@ import llm.seca.training.models  # noqa: F401  # ensure TrainingCompletion is on
 import llm.seca.coach.study_plan.models  # noqa: F401  # ensure MistakeStudyPlan/Puzzle on Base before init_schema
 import llm.seca.feedback.models  # noqa: F401  # ensure FeedbackMessage is on Base before init_schema
 import llm.seca.review.models  # noqa: F401  # ensure GameReview is on Base before init_schema
+import llm.seca.notifications.models  # noqa: F401  # ensure Notification is on Base before init_schema
 
 from llm.seca.engines.stockfish.pool import (
     EnginePoolSettings,
@@ -382,6 +384,7 @@ async def lifespan(app: FastAPI):
         from llm.seca.mistakes.router import (  # noqa: PLC0415
             set_engine_pool as _set_mistakes_pool,
         )
+
         _set_mistakes_pool(engine_pool)
         scheduler = CurriculumScheduler()
 
@@ -444,6 +447,7 @@ async def lifespan(app: FastAPI):
             from llm.seca.mistakes.router import (  # noqa: PLC0415
                 set_engine_pool as _set_mistakes_pool,
             )
+
             _set_mistakes_pool(None)
         except Exception:  # noqa: BLE001 — never mask the original error
             pass
@@ -878,6 +882,7 @@ app.include_router(puzzles_router)
 app.include_router(billing_router)
 app.include_router(feedback_router)
 app.include_router(review_router)
+app.include_router(notifications_router)
 app.include_router(
     inference_router,
     prefix="/seca",
@@ -1301,9 +1306,7 @@ async def live_move(
     # so the coach won't blame a good move for a position that was already
     # difficult.  Injected into the signal; extract_engine_signal reads it.
     if stockfish_json is not None and req.fen_before:
-        quality = await _live_move_quality(
-            req.fen_before, req.fen, req.uci, stockfish_json
-        )
+        quality = await _live_move_quality(req.fen_before, req.fen, req.uci, stockfish_json)
         if quality:
             stockfish_json.setdefault("errors", {})["last_move_quality"] = quality
 

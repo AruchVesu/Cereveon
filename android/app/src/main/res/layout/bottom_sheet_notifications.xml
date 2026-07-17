@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium · Notifications feed.
+
+    Opened from the Home header bell.  Communication & access spec §5.6
+    layout, in Atrium primitives:
+
+    Top → bottom:
+      1.  Drag handle.
+      2.  AtriumChapterHeaderView — "INBOX" / "Notifications".
+      3.  "Mark all read" action row (visible only when something is
+          unread).
+      4.  Scrollable feed — Unread / Read section labels + rows built
+          programmatically by NotificationsBottomSheet.buildRow.
+      5.  Empty / error state (txtNotificationsEmpty).
+
+    NestedScrollView (not ScrollView) for the same BottomSheetBehavior
+    drag-coordination reason as the history sheet (PR #399).
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_atrium_gradient"
+    android:paddingBottom="@dimen/atrium_space_24">
+
+    <!-- Drag handle. -->
+    <View
+        android:layout_width="40dp"
+        android:layout_height="3dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="@dimen/atrium_space_8"
+        android:layout_marginBottom="@dimen/atrium_space_8"
+        android:background="@color/atrium_hairline_strong" />
+
+    <!-- Chapter header. -->
+    <ai.chesscoach.app.AtriumChapterHeaderView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:atriumKicker="Inbox"
+        app:atriumTitle="Notifications" />
+
+    <!-- Mark-all-read action — right-aligned mono label, chip-less so
+         it reads as a quiet utility, not a CTA. -->
+    <TextView
+        android:id="@+id/btnMarkAllRead"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end"
+        android:layout_marginEnd="@dimen/atrium_space_24"
+        android:layout_marginTop="@dimen/atrium_space_4"
+        android:paddingStart="@dimen/atrium_space_12"
+        android:paddingEnd="@dimen/atrium_space_12"
+        android:paddingTop="@dimen/atrium_space_8"
+        android:paddingBottom="@dimen/atrium_space_8"
+        android:fontFamily="monospace"
+        android:textSize="11sp"
+        android:letterSpacing="0.08"
+        android:textColor="@color/atrium_accent_cyan"
+        android:background="?attr/selectableItemBackground"
+        android:text="@string/notifications_mark_all_read"
+        android:visibility="gone"
+        tools:visibility="visible" />
+
+    <!-- Scrollable feed list. -->
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <LinearLayout
+            android:id="@+id/notificationsList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/atrium_space_24"
+            android:paddingEnd="@dimen/atrium_space_24"
+            android:paddingTop="@dimen/atrium_space_8" />
+
+    </androidx.core.widget.NestedScrollView>
+
+    <!-- Empty / error state. -->
+    <TextView
+        android:id="@+id/txtNotificationsEmpty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="@style/Atrium.Body.Italic"
+        android:textColor="@color/atrium_dim"
+        android:text="@string/notifications_empty"
+        android:gravity="center"
+        android:paddingTop="@dimen/atrium_space_32"
+        android:paddingBottom="@dimen/atrium_space_32"
+        android:visibility="gone"
+        tools:visibility="visible" />
+
+</LinearLayout>
