@@ -248,12 +248,19 @@ def _request_json_bounded(
         raise LichessUpstreamError(f"{context}: request failed: {exc}") from exc
 
 
-def exchange_authorization_code(code: str, code_verifier: str) -> str:
+def exchange_authorization_code(
+    code: str, code_verifier: str, redirect_uri: str | None = None
+) -> str:
     """Exchange an OAuth authorization code for a Lichess access token.
 
     ``POST /api/token`` with the PKCE ``code_verifier`` (public client —
-    no secret).  ``redirect_uri`` and ``client_id`` are the pinned module
-    constants and must match the app's authorization request exactly.
+    no secret).  ``client_id`` is the pinned module constant; the
+    ``redirect_uri`` defaults to the app's custom-scheme constant but may
+    be overridden by callers running a DIFFERENT authorization flow (the
+    public web account-deletion page uses an ``https://`` callback URL —
+    see ``llm/seca/auth/web_deletion.py``).  Whatever value is passed
+    MUST byte-match the ``redirect_uri`` the matching authorization
+    request used, or Lichess rejects the exchange.
 
     The exchange happens server-side by design: the mobile app forwards
     ``code`` + ``code_verifier`` to ``POST /auth/lichess`` instead of
@@ -282,7 +289,7 @@ def exchange_authorization_code(code: str, code_verifier: str) -> str:
             "grant_type": "authorization_code",
             "code": code,
             "code_verifier": code_verifier,
-            "redirect_uri": LICHESS_OAUTH_REDIRECT_URI,
+            "redirect_uri": redirect_uri or LICHESS_OAUTH_REDIRECT_URI,
             "client_id": LICHESS_OAUTH_CLIENT_ID,
         },
         context="token exchange",

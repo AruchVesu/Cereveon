@@ -2495,6 +2495,57 @@ that the raw body round-trips unparsed.  iOS has no entry point yet
 
 ---
 
+## 43. `GET` / `POST /delete-account` (+ Lichess sub-routes)
+
+**Host:** `llm/seca/auth/web_deletion.py`
+**Auth:** none — this is the **public web** account-deletion surface
+Google Play's User Data policy requires *in addition to* the in-app
+path (§41): a page reachable WITHOUT the app, for users who have
+uninstalled.  Served top-level (no `/auth` prefix) so the URL is short
+enough for the Play Console Data safety form:
+`https://<host>/delete-account`.
+**Rate limit:** page 20/min; password submit 5/min; Lichess sub-routes
+10/min (all per-IP).
+
+Ownership is proven, then the account is erased on the spot via the
+same `erasure.purge_player_data` authority as §41 — never deleted from
+a typed-in email alone.
+
+Routes:
+
+- `GET /delete-account` — renders the self-contained HTML page (inline
+  CSS, no JS, no external assets; `noindex`). GET is never destructive.
+- `POST /delete-account` — password accounts. urlencoded body `email` +
+  `password` + `confirm=yes` (the checkbox). `AuthService.verify_credentials`
+  (timing-safe, issues **no** session) → purge. Returns the "deleted"
+  page on success; re-renders the form with a generic message on bad
+  credentials (`401`) or a missing field / unchecked box (`400`) — no
+  email enumeration, no reflected input (no XSS surface). Credential
+  verify + purge run in a threadpool (PBKDF2 is ~100 ms).
+- `GET /delete-account/lichess/start` — begins a Lichess authorization-
+  code + PKCE flow with an `https://<host>/delete-account/lichess/callback`
+  redirect_uri (distinct from the app's custom-scheme one; the exchange
+  reuses `exchange_authorization_code`'s new `redirect_uri` override).
+  The PKCE verifier + a CSRF `state` are stored in a signed
+  (HS256/`SECRET_KEY`), HttpOnly, Secure, SameSite=Lax cookie scoped to
+  `/delete-account`; `302` to `lichess.org/oauth`.
+- `GET /delete-account/lichess/callback?code=&state=` — verifies the
+  cookie + `state` (rejects missing/expired/mismatch with `400` before
+  any upstream call), exchanges the code, fetches the account, matches
+  `players.lichess_user_id`, purges, and revokes the Lichess token. `404`
+  when the proven Lichess identity has no linked Cereveon account; `502`
+  on a Lichess upstream failure.
+
+Config: `PUBLIC_BASE_URL` (default `https://cereveon.com`) builds the
+Lichess callback URL — an env var, not `request.base_url`, so a proxied
+`http` scheme can never leak into the OAuth `redirect_uri`.
+
+Lichess-only accounts (synthetic `email = "lichess:<id>"`, unusable
+password hash) can only be deleted through the Lichess sub-routes — the
+password form can never match them.
+
+---
+
 ## Error responses
 
 The API emits **two distinct error-body shapes** that any client (the

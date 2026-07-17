@@ -219,10 +219,12 @@ or **object to** processing based on legitimate interest, and **not be
 subject to** solely automated decisions with legal effect (we make
 none). Write to [privacy@cereveon.com] from your account email (or with
 your Lichess username for Lichess sign-ins) and we will respond within
-one month. Deleting your account removes your games, chat history,
-skill profile, feedback, and linked-account records immediately — the
+one month. You can delete your account yourself at any time — in the
+app (Settings › Account › Delete account) or, if you've uninstalled it,
+from **https://cereveon.com/delete-account** on the web. Either way the
 server erases every table your account touches in one transaction
-(implemented: contract §41; in-app button pending, Annex A.1).
+(games, chat history, skill profile, feedback, linked-account records),
+immediately and irreversibly.
 
 You also have the right to lodge a complaint with your local supervisory
 authority, or with our lead authority, [SUPERVISORY AUTHORITY OF THE
@@ -279,7 +281,7 @@ text is weakened to match reality.
 
 | # | Gap | GDPR hook | Reality in code | Required fix |
 |---|---|---|---|---|
-| A.1 | ~~No account-deletion path.~~ **CLOSED 2026-07-17** (server + Android): `DELETE /auth/me` erases the player row + every linked table via the explicit purge in `llm/seca/auth/erasure.py` (contract §41); the Android app exposes Settings › Account › **Delete account** behind an "Are you sure" confirmation (`AccountFlows.confirmAndDeleteAccount`, source-pinned). | Art. 17; Google Play account-deletion policy | Endpoint + in-app entry implemented; discovery-driven test pins plan completeness; source pins gate the confirmation. | Remaining: iOS Settings entry (Phase-0 parity gap) + Play Console deletion URL once the policy is hosted. |
+| A.1 | ~~No account-deletion path.~~ **CLOSED 2026-07-17** (server + Android + **public web URL**): `DELETE /auth/me` erases the player row + every linked table via the explicit purge in `llm/seca/auth/erasure.py` (contract §41); the Android app exposes Settings › Account › **Delete account** behind an "Are you sure" confirmation (`AccountFlows.confirmAndDeleteAccount`, source-pinned); and a public **`https://cereveon.com/delete-account`** page (no app required — the Google Play requirement) proves ownership via password or Sign-in-with-Lichess and erases on the spot (contract §43, `web_deletion.py`). | Art. 17; Google Play account-deletion policy | Endpoint + in-app entry + public web page implemented; discovery-driven test pins plan completeness; source pins gate the confirmations. | Remaining: iOS Settings entry (Phase-0 parity gap); register the `/delete-account` URL in the Play Console **Data safety** form once the store listing is set up. |
 | A.2 | ~~Erasure cascade not wired.~~ **CLOSED 2026-07-17**: every FK edge into the player graph now declares `ondelete="CASCADE"`; `init_schema` retrofits live Postgres constraints (`_ensure_fk_delete_cascade`); the erasure service performs explicit ordered deletes so SQLite (no FK pragma) and the three no-FK `player_id` tables are covered regardless. | Art. 17 | Model FKs + catalog-driven retrofit + `test_auth_account_deletion.py` (zero-rows + CASCADE pins). | None — keep the discovery tripwire green when adding models. |
 | A.3 | **DeepSeek transfer has no documented safeguard.** No DPA/SCCs referenced anywhere; no retention/opt-out flag set on API calls; DeepSeek-side prompt caching is relied on. | Art. 44–46, Ch. V; Schrems II TIA | Payload verified identifier-free (see Annex B) — strong minimisation, but minimisation ≠ transfer mechanism. | Execute DeepSeek DPA + SCCs, run a TIA; alternatively route via an EU-hosted OpenAI-compatible gateway (`COACH_DEEPSEEK_API_BASE` already supports it) or make AI coaching opt-in. |
 | A.4 | **"⏸ Tracking paused" UI copy is misleading.** SAFE_MODE pauses only the RL/adaptive-learning loop; deterministic profiling (rating, confidence, weakness vector, player embedding, bandit experience capture, analytics events) runs on every game finish. | Art. 5(1)(a) transparency; Art. 13(2)(f) | `SkillUpdater.update_from_event` unconditional at `llm/seca/events/router.py:605`. | Reword the UI copy (e.g. "Adaptive learning off"), and keep §3.3's profiling disclosure. |

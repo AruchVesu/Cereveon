@@ -74,6 +74,33 @@ class AuthService:
         return player
 
     # ---------------------------
+    # Verify credentials (no session) — public web account-deletion flow
+    # ---------------------------
+    def verify_credentials(self, email: str, password: str) -> Player:
+        """Verify email + password and return the Player — WITHOUT issuing
+        a session.
+
+        The public web account-deletion page
+        (``llm/seca/auth/web_deletion.py``) proves account ownership then
+        immediately erases everything, so it must never mint a token the
+        way ``login`` does.  Timing-safe against email enumeration by the
+        same dummy-verify trick as ``login``; raises ``ValueError`` on any
+        mismatch (generic message — no oracle).  Lichess-only accounts
+        carry an unusable random password hash, so they can never be
+        deleted through the password form; they use the Lichess OAuth
+        path instead.
+        """
+        if len(password) > 1000:
+            raise ValueError("Invalid credentials")
+        player = self.db.query(Player).filter(Player.email == email).first()
+        if player is None:
+            verify_password(password, _dummy_hash_for_timing_safety())
+            raise ValueError("Invalid credentials")
+        if not verify_password(password, player.password_hash):
+            raise ValueError("Invalid credentials")
+        return player
+
+    # ---------------------------
     # Login
     # ---------------------------
     def login(self, email: str, password: str, device_info: str | None = None):
