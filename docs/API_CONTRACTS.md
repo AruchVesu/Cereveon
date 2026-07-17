@@ -2546,6 +2546,28 @@ password form can never match them.
 
 ---
 
+## 44. `GET /privacy` (+ `/privacy-policy` alias)
+
+**Host:** `llm/seca/legal/router.py`
+**Auth:** none — the **public** privacy policy Google Play requires as a
+live URL in the store listing + Data safety form.
+**Rate limit:** none (static, cacheable — `Cache-Control: public,
+max-age=3600`).
+
+Serves the published privacy policy as a self-contained static HTML
+page (`llm/seca/legal/privacy_policy.html`, read once at import; no
+auth, no DB, no external assets).  `/privacy` is canonical;
+`/privacy-policy` is an alias so either works in a store listing.
+
+This is the PUBLISHED policy, distinct from the internal working draft
+in `docs/PRIVACY_POLICY.md` (which carries compliance-gap tracking + a
+claim→code evidence map that must never reach users).
+`test_privacy_policy_page.py`'s anti-leak guard structurally prevents
+publishing the draft — the served page must contain no placeholder /
+draft / annex markers.
+
+---
+
 ## Error responses
 
 The API emits **two distinct error-body shapes** that any client (the
