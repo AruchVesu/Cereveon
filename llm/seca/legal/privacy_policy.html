@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cereveon — Privacy Policy</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 20px 80px;
+    background: #f4f1ea; color: #23201b;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.62; font-size: 17px;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  .brand { font-size: .78rem; letter-spacing: .2em; text-transform: uppercase; color: #8a7f6d; margin: 0; }
+  h1 { font-size: 2rem; margin: 6px 0 4px; }
+  .meta { color: #6f6656; font-size: .92rem; margin: 0 0 32px; }
+  h2 { font-size: 1.28rem; margin: 40px 0 8px; padding-top: 8px; border-top: 1px solid #ddd6c8; }
+  h3 { font-size: 1.05rem; margin: 22px 0 4px; }
+  p, li { color: #35302a; }
+  a { color: #b5540d; }
+  ul { padding-left: 20px; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: .95rem; display: block; overflow-x: auto; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border: 1px solid #ddd6c8; }
+  th { background: #ece7db; font-weight: 600; }
+  code { background: #ece7db; padding: 1px 5px; border-radius: 4px; font-size: .9em; }
+  .tldr { background: #ece7db; border: 1px solid #ddd6c8; border-radius: 12px; padding: 8px 22px; margin: 24px 0; }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid #ddd6c8; color: #6f6656; font-size: .9rem; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #14120f; color: #e7e1d5; }
+    .brand, .meta, footer { color: #9b917e; }
+    h2 { border-top-color: #2f2a23; }
+    p, li { color: #d8d1c4; }
+    a { color: #e0965a; }
+    th, td { border-color: #2f2a23; }
+    th, .tldr, code { background: #1e1b16; }
+    .tldr { border-color: #2f2a23; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="brand">Cereveon</p>
+  <h1>Privacy Policy</h1>
+  <p class="meta">Effective 17 July 2026 · applies to the Cereveon apps for Android and iOS and the Cereveon service at cereveon.com</p>
+
+  <h2>1. Who we are</h2>
+  <p>Cereveon is a chess-coaching service operated by an independent
+  individual developer, who is the data controller for the personal data
+  described in this policy. You can reach us about privacy at
+  <a href="mailto:privacy@cereveon.com">privacy@cereveon.com</a>. We have
+  not appointed a Data Protection Officer, as the service is small-scale
+  and processes no special-category data.</p>
+
+  <div class="tldr">
+  <h3>The short version</h3>
+  <ul>
+    <li>You need an account (email + password, or a Lichess sign-in). We
+    never see your Lichess password, and we don't ask for your name,
+    phone number, address, or location.</li>
+    <li>Your games, puzzles, and coach conversations are stored in your
+    account so the coach can track your progress. Chess analysis runs on
+    our own servers with a local engine — no analysis service sees your
+    games.</li>
+    <li>Coach replies are written by an AI language model (DeepSeek). To
+    generate a reply we send the current board position, engine context,
+    your recent coach messages, and a rough skill sketch — never your
+    email, name, account ID, or IP address.</li>
+    <li>The apps contain no advertising, analytics, or tracking SDKs and
+    request a single permission (internet access). We do not sell or
+    share your data for advertising.</li>
+    <li>Payments are handled by Google Play. We never see your card
+    details.</li>
+    <li>You can download a copy of your data or delete your account at any
+    time — in the app, or on the web at
+    <a href="https://cereveon.com/delete-account">cereveon.com/delete-account</a>.</li>
+  </ul>
+  </div>
+
+  <h2>2. Data we collect and store</h2>
+
+  <h3>Account and sign-in</h3>
+  <table>
+    <tr><th>Data</th><th>Details</th></tr>
+    <tr><td>Email address</td><td>Your login identity. Not shown to other users (there are no public profiles).</td></tr>
+    <tr><td>Password</td><td>Stored only as a salted PBKDF2-SHA256 hash (600,000 iterations). We cannot read it.</td></tr>
+    <tr><td>Lichess identity</td><td>If you sign in with Lichess: your Lichess user ID and username, received through Lichess's OAuth consent screen. The temporary Lichess access token is used once to confirm who you are and is revoked immediately — we never store Lichess tokens, and a Lichess sign-in account has no email on file.</td></tr>
+    <tr><td>Sessions</td><td>A hash of your current login token, its expiry, and an app-supplied device label (e.g. app version/platform), so you can stay signed in and we can revoke stolen tokens.</td></tr>
+  </table>
+
+  <h3>Chess play and training</h3>
+  <p>Games you play or import (moves, results, board positions), computed
+  accuracy and mistake categories, post-game AI reviews, puzzle and drill
+  attempts, study plans, XP and level, and your opening repertoire. The
+  app also keeps a small in-app notification feed about your own account
+  (e.g. "your imported games were analysed"); notifications are generated
+  by our server from your existing data, never from third-party sources,
+  and are deleted with your account.</p>
+
+  <h3>Skill profile</h3>
+  <p>To coach you, we continuously derive a skill profile from your play:
+  a rating estimate, a confidence value, a per-phase weakness/strength
+  vector, a numeric player embedding, and per-game analytics records. This
+  profile is used only to personalise coaching content and difficulty (for
+  example, so the coach knows endgames are your weak spot) — see §5 on
+  automated decisions.</p>
+
+  <h3>Coach conversations</h3>
+  <p>Your messages to the coach and the coach's replies are stored in your
+  account, together with the board position each message referred to, so
+  your conversation survives reinstalls and device changes.</p>
+
+  <h3>Feedback</h3>
+  <p>If you send feedback, we store your message text (up to 2,000
+  characters) and app version. Feedback is read by the operator only; it
+  is never fed into the AI, never used for coaching, and its content is
+  kept out of server logs.</p>
+
+  <h3>Subscription</h3>
+  <p>Your plan tier (free / Pro). For Pro purchases, Google Play sends us
+  an opaque purchase token and product ID, which we verify with Google.
+  We never receive your payment details — Google processes the payment.</p>
+
+  <h3>Technical data</h3>
+  <p>Server request logs (timestamp, endpoint, status, latency, request
+  ID, and connection IP address) for security, rate limiting, and abuse
+  prevention. These logs are kept only within a rolling, size-capped
+  window on the server and are not retained long-term. We build no
+  advertising or cross-service profiles from this data.</p>
+
+  <h3>On your device</h3>
+  <p>The app stores your login token in encrypted storage (AES-256-GCM via
+  the platform keystore) and caches your current game locally in
+  app-private storage. App data is excluded from cloud backups and
+  device-to-device transfer. The apps use no cookies and no advertising
+  identifiers.</p>
+
+  <h3>What we do not collect</h3>
+  <p>No real name, no phone number, no postal address, no location, no
+  contacts, no photos, no camera or microphone access, no advertising ID,
+  and no third-party analytics or crash-reporting SDKs on either platform.
+  The Android app declares exactly one permission: internet access.</p>
+
+  <h2>3. Where your data lives</h2>
+  <p>Cereveon runs on a server rented from Hetzner (a German hosting
+  provider), located in the European Union, including the database that
+  holds all account data. Chess-engine analysis runs locally on that
+  server. A short-lived engine cache (Redis, on the same server) is keyed
+  by board position only and contains no personal data.</p>
+
+  <h2>4. Who we share data with</h2>
+  <p>We share personal data only with the processors and services below,
+  only for the purposes stated. We do not sell personal data and we share
+  nothing for advertising.</p>
+  <table>
+    <tr><th>Recipient</th><th>What they receive</th><th>Why</th></tr>
+    <tr><td>Hetzner (hosting, Germany / EU)</td><td>All service data, as our infrastructure provider</td><td>Running the service</td></tr>
+    <tr><td>DeepSeek (AI model API, China — see §6)</td><td>Board position, engine context, your recent coach messages, and a derived skill sketch. No identifiers (no email, account ID, token, or IP)</td><td>Generating coach replies</td></tr>
+    <tr><td>Lichess (lichess.org)</td><td>Your Lichess username (only if you link or import); OAuth exchange data during Lichess sign-in</td><td>Sign-in with Lichess, importing your public Lichess games, fetching practice puzzles</td></tr>
+    <tr><td>Google — Play Billing</td><td>Purchase verification: we send your purchase token; Google tells us the subscription state</td><td>Pro subscriptions</td></tr>
+    <tr><td>Google — email (SMTP)</td><td>A weekly operator digest of feedback texts, app version, and a truncated internal ID — no email addresses</td><td>Reviewing user feedback</td></tr>
+    <tr><td>Grafana Labs (only if operational monitoring is enabled)</td><td>Server logs and metrics, which may include pseudonymous internal IDs — never chat content or emails</td><td>Service monitoring</td></tr>
+  </table>
+  <p>Puzzle fetching from Lichess is done by our server on your behalf;
+  your identity is not attached to those requests.</p>
+
+  <h2>5. Why we process your data, and AI transparency</h2>
+  <p>We process account, play, training and coaching data to provide the
+  service you asked for (the legal basis is performance of our contract
+  with you, GDPR Art. 6(1)(b)). We process technical/log data and handle
+  feedback on the basis of our legitimate interest in keeping the service
+  secure, available, and improving (Art. 6(1)(f)), and we keep minimal
+  billing records to meet legal obligations (Art. 6(1)(c)). We rely on
+  consent for nothing today; if we ever add marketing or optional
+  analytics, we will ask first. An email or a Lichess identity is required
+  to create an account.</p>
+  <p>The Cereveon coach is an AI system: replies are generated by a large
+  language model and are clearly presented as coming from the app's coach.
+  Chess facts come from a local engine, and every AI reply passes
+  validation filters — including one that blocks personal-data patterns —
+  before you see it; if the AI is unavailable or fails validation, a
+  deterministic non-AI reply is served instead. We make no decisions about
+  you with legal or similarly significant effects based solely on
+  automated processing (Art. 22 GDPR): the skill profile only tunes
+  coaching, and free-tier limits are fixed quotas applied to everyone
+  equally.</p>
+
+  <h2>6. International transfers</h2>
+  <p>Our servers are in the European Union. Two flows send data outside
+  the EEA:</p>
+  <ul>
+    <li><strong>DeepSeek (People's Republic of China).</strong> Coach
+    replies are generated by DeepSeek's API, which is operated from China,
+    so generating a reply transfers the data listed in §4 outside the EEA.
+    That data is deliberately minimised: it contains no direct identifiers
+    (no email, name, account ID, token, or IP), and the board positions
+    and coaching text are not linkable to you by DeepSeek. We keep this
+    transfer to the minimum necessary to provide AI coaching.</li>
+    <li><strong>Google</strong> (purchase verification and the feedback
+    digest email) may process data outside the EU under its own certified
+    safeguards (EU–US Data Privacy Framework / Standard Contractual
+    Clauses).</li>
+  </ul>
+  <p>Lichess is operated from within the EU (France), so linking and
+  imports stay within the EEA.</p>
+
+  <h2>7. How long we keep it</h2>
+  <table>
+    <tr><th>Data</th><th>Kept</th></tr>
+    <tr><td>Account, games, chat, skill profile, training history, feedback, linked-account records</td><td>While your account exists. Deleted immediately when you delete your account.</td></tr>
+    <tr><td>Server request logs (including IP)</td><td>A rolling, size-capped window on the server; not retained long-term. If operational monitoring is enabled, up to 14 days at Grafana Cloud.</td></tr>
+    <tr><td>Sessions</td><td>Until expiry or logout; stale sessions are pruned at your next login (max 10 per account).</td></tr>
+    <tr><td>Engine cache</td><td>Up to 6 hours, keyed by board position, no personal data, never written to disk.</td></tr>
+  </table>
+
+  <h2>8. Your rights</h2>
+  <p>Under the GDPR you can ask us to <strong>access</strong> your data and
+  receive a copy in a portable, machine-readable format,
+  <strong>rectify</strong> it, <strong>erase</strong> it,
+  <strong>restrict</strong> or <strong>object to</strong> processing based
+  on legitimate interest, and <strong>not be subject to</strong> solely
+  automated decisions with legal effect (we make none).</p>
+  <ul>
+    <li><strong>Download your data</strong> yourself in the app: Settings ›
+    Account › Download my data.</li>
+    <li><strong>Delete your account</strong> and all of its data yourself
+    — in the app (Settings › Account › Delete account) or, if you've
+    uninstalled it, on the web at
+    <a href="https://cereveon.com/delete-account">cereveon.com/delete-account</a>.
+    Either way our server erases everything tied to your account (games,
+    chat history, skill profile, feedback, linked-account records) in one
+    transaction, immediately and irreversibly.</li>
+    <li>For anything else, email
+    <a href="mailto:privacy@cereveon.com">privacy@cereveon.com</a> from
+    your account email (or with your Lichess username for Lichess
+    sign-ins) and we will respond within one month.</li>
+  </ul>
+  <p>You also have the right to lodge a complaint with your local data
+  protection supervisory authority.</p>
+
+  <h2>9. Security</h2>
+  <ul>
+    <li>All traffic is TLS-encrypted (HTTPS-only with HSTS); both apps
+    additionally pin our server's certificate keys, so they refuse to talk
+    to an impostor server even if a device's trust store is compromised.</li>
+    <li>Passwords are stored as salted PBKDF2-SHA256 (600,000 iterations).
+    Login tokens are signed, expire after 24 hours, rotate on every
+    request, and are revocable server-side; changing your password signs
+    out all sessions.</li>
+    <li>On-device: tokens are held in hardware-backed encrypted storage,
+    and app data is excluded from cloud backups.</li>
+    <li>AI boundary: model output is validated before display (including a
+    filter for personal-data patterns), and user input is sanitised
+    against prompt injection.</li>
+    <li>Server: analysis is local (no third-party analysis service),
+    requests are rate-limited, services are containerised, and structured
+    logs exclude chat content, emails, and passwords.</li>
+    <li>If a breach is likely to risk your rights, we will notify the
+    supervisory authority within 72 hours (Art. 33) and affected users
+    where required (Art. 34).</li>
+  </ul>
+
+  <h2>10. Children</h2>
+  <p>The service is not directed at anyone under 16, and we do not
+  knowingly collect data from children under 16. If you believe a child
+  has created an account, contact us and we will delete it.</p>
+
+  <h2>11. Changes to this policy</h2>
+  <p>We will announce material changes in the app before they take effect
+  and update the date at the top. The current version always lives at this
+  address.</p>
+
+  <h2>12. Contact</h2>
+  <p>The individual developer who operates Cereveon ·
+  <a href="mailto:privacy@cereveon.com">privacy@cereveon.com</a></p>
+
+  <footer>Cereveon — chess coaching. This policy covers the Android and iOS
+  apps and the service at cereveon.com.</footer>
+</main>
+</body>
+</html>

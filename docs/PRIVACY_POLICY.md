@@ -1,12 +1,16 @@
 # Cereveon Privacy Policy
 
-> **DRAFT / MOCK — v0.1, 2026-07-17. Not published, not legal advice.**
-> Working draft for internal review. Every statement about system behaviour
-> below was verified against the code in this repository on 2026-07-17
-> (evidence map in Annex B). Before publication: fill every
-> `[BRACKETED PLACEHOLDER]`, resolve or formally accept every item in
-> Annex A, have counsel review the legal-basis choices in §6, and
-> **delete Annexes A and B** — they are internal engineering material.
+> **INTERNAL working document — not the published policy.**
+> The version users see is served live at **https://cereveon.com/privacy**
+> (source of truth: `llm/seca/legal/privacy_policy.html`, pinned against
+> draft/placeholder/annex leakage by `test_privacy_policy_page.py`).
+> **For user-facing wording changes, edit that HTML, not this file.**
+> This document stays internal: it carries the compliance-gap tracker
+> (Annex A) and the claim→code evidence map (Annex B) that must never
+> reach users. The §§ below are the pre-publication draft (with legal
+> placeholders) kept for review history; the published HTML resolved
+> them (individual/sole-developer controller, factual DeepSeek transfer,
+> annexes stripped) — verified against code on 2026-07-17.
 
 **Effective date:** [DATE — set at publication]
 **Applies to:** the Cereveon apps for Android and iOS and the Cereveon API
@@ -287,7 +291,7 @@ text is weakened to match reality.
 | A.4 | **"⏸ Tracking paused" UI copy is misleading.** SAFE_MODE pauses only the RL/adaptive-learning loop; deterministic profiling (rating, confidence, weakness vector, player embedding, bandit experience capture, analytics events) runs on every game finish. | Art. 5(1)(a) transparency; Art. 13(2)(f) | `SkillUpdater.update_from_event` unconditional at `llm/seca/events/router.py:605`. | Reword the UI copy (e.g. "Adaptive learning off"), and keep §3.3's profiling disclosure. |
 | A.5 | **No retention/purge automation.** No TTL, cron, or scheduled deletion for any content table; rows persist indefinitely. | Art. 5(1)(e) | Startup janitors only flip stale job status. | Pick the §9 numbers, implement purge jobs, then publish the numbers. |
 | A.6 | **Log retention undefined; IP handling nuance.** Request-end log line includes `client_ip`; behind Caddy this is the proxy IP unless `TRUSTED_PROXIES` is set (currently warned-unset in prod), while the limiter's real-IP use is in-memory only. Docker rotation ≈50 MB×5 is the only bound; Loki shipping optional. | Art. 5(1)(e); 6(1)(f) balancing | `llm/server.py:744-754`; `llm/seca/shared_limiter.py`. | Decide and document a log-retention window; confirm whether real client IPs actually reach logs in the prod proxy setup and align §3.7. |
-| A.7 | **No in-app privacy-policy link** on either platform (none in Android strings/settings; iOS has no `PrivacyInfo.xcprivacy`). | Art. 12/13 delivery; Play & App Store requirements | Verified absent. | Host the final policy at `https://cereveon.com/privacy`, link it from Settings + both store listings; add iOS privacy manifest. |
+| A.7 | ~~No hosted privacy policy.~~ **HOSTING CLOSED 2026-07-17**: the published policy is served live at **`https://cereveon.com/privacy`** (`llm/seca/legal/privacy_policy.html`, contract §44); anti-leak test pins that no draft/placeholder/annex markers reach it. | Art. 12/13 delivery; Play & App Store requirements | Route + page implemented + prod-verified. | Remaining: put the `/privacy` URL in the Play Console store listing + Data safety form; add an in-app "Privacy policy" link in Settings; add iOS `PrivacyInfo.xcprivacy`. |
 | A.8 | **Grafana Cloud shipping state must be pinned down.** Policy §5 says "only if enabled" — confirm whether the `monitoring` compose profile is live in prod and disclose accordingly. | Art. 13(1)(e) | Opt-in `alloy` sidecar in `docker-compose.prod.yml`. | Check the Hetzner box; if enabled, keep the row and sign Grafana's DPA; if not, keep the conditional wording. |
 | A.9 | **Backup regime undocumented.** If Postgres backups/snapshots exist, erasure must cover or time-bound them. | Art. 17(1) | `pg_data` volume only; no backup config in repo. | Document backups (or their absence) and their retention; fold into §9. |
 | A.10 | **Hetzner datacentre location not stated in repo** — "EU/Germany" hosting claim needs confirmation (Hetzner also operates in the US/SG). | §4/§8 accuracy | Only "Hetzner VPS" + CI secret `HETZNER_HOST`. | Confirm the region; then fix §4/§8 wording. |

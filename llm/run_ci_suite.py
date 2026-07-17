@@ -192,6 +192,11 @@ TEST_TARGETS = [
     # reused exchange redirect_uri override and verify_credentials-issues-
     # no-session pins.
     "llm/tests/test_web_account_deletion.py",
+    # Public privacy policy (GET /privacy) — the live URL Google Play
+    # requires (PP_01..04).  Load-bearing: the anti-leak guard structurally
+    # prevents ever publishing the internal docs/PRIVACY_POLICY.md draft
+    # (no placeholder / annex / draft markers may reach the page).
+    "llm/tests/test_privacy_policy_page.py",
     # Model-registration completeness (MR_01..05): the glob-driven pin
     # that every table-defining llm/seca/**/models.py is wildcard-
     # imported by auth/router.py BEFORE create_all, plus a full-app
@@ -399,6 +404,7 @@ COVERAGE_TARGETS = [
     "llm.seca.auth.service",
     "llm.seca.auth.hashing",
     "llm.seca.auth.tokens",
+    "llm.seca.legal.router",
     # llm.seca.auth.erasure is intentionally NOT a --cov target: it
     # imports llm.seca.coach.study_plan.models, whose package __init__
     # loads the numpy-backed coach engine — the same "cannot load module

@@ -26,6 +26,7 @@ from llm.seca.auth.router import (
 )
 from llm.seca.auth.api_key import verify_api_key
 from llm.seca.auth.web_deletion import router as web_deletion_router
+from llm.seca.legal.router import router as legal_router
 from llm.seca.chat.repo import (
     HISTORY_DEFAULT_LIMIT,
     HISTORY_MAX_LIMIT,
@@ -875,6 +876,9 @@ app.include_router(auth_router)
 # Google Play): /delete-account* — reachable without the app.  Top-level
 # (no /auth prefix) so the URL is short enough to hand to Play Console.
 app.include_router(web_deletion_router)
+# Public privacy policy (GET /privacy, /privacy-policy) — the live URL
+# Google Play requires in the store listing + Data safety form.
+app.include_router(legal_router)
 app.include_router(game_router)
 app.include_router(curriculum_router)
 app.include_router(analytics_router)
