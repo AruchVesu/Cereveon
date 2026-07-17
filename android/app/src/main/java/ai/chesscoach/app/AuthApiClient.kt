@@ -129,6 +129,31 @@ interface AuthApiClient {
         rating: Float? = null,
         confidence: Float? = null,
     ): ApiResult<MeResponse> = ApiResult.HttpError(501)
+
+    /**
+     * DELETE /auth/me — GDPR Art. 17 account erasure
+     * (`docs/API_CONTRACTS.md` §41).
+     *
+     * Permanently deletes the authenticated account and EVERY linked
+     * server-side row (games, chat history, skill profile, feedback,
+     * notifications, Lichess link + imported games, sessions).  The
+     * bearer [token] is the only credential — Lichess sign-in accounts
+     * have no usable password.  Irreversible; callers MUST gate the
+     * call behind an explicit confirmation UI
+     * ([AccountFlows.confirmAndDeleteAccount] is the sanctioned flow).
+     *
+     * Default implementation returns [ApiResult.HttpError(501)] so test
+     * fakes do not need to override this method.
+     *
+     * @return [ApiResult.Success(Unit)] on HTTP 200 ({"status":"deleted"});
+     *         [ApiResult.HttpError(401)] when the token is invalid or the
+     *         session is already gone (including a repeat of this call —
+     *         the deletion did NOT run under this token, so callers must
+     *         not claim it did); [ApiResult.Timeout] /
+     *         [ApiResult.NetworkError] on transport failures — the
+     *         account still exists in those cases.
+     */
+    suspend fun deleteAccount(token: String): ApiResult<Unit> = ApiResult.HttpError(501)
 }
 
 /**
@@ -271,5 +296,17 @@ class HttpAuthApiClient(
         // addition to 200 OK; widen the success set accordingly.
         successCodes = setOf(HttpURLConnection.HTTP_OK, HttpURLConnection.HTTP_CREATED),
         parse = { body -> ApiJson.decodeFromString<LoginResponse>(body) },
+    )
+
+    override suspend fun deleteAccount(token: String): ApiResult<Unit> = http.requestNoBody(
+        // Real DELETE verb — unlike PATCH (see updateMe), HttpURLConnection
+        // accepts DELETE on both the host JVM and Android runtimes, so no
+        // method-override header is needed.  No token-refresh consumption
+        // either: the session dies with the account, so a rotated JWT on
+        // this response is unusable by construction (the server-side
+        // rotation middleware no-ops on the deleted session — contract §41).
+        path = ME_PATH,
+        method = "DELETE",
+        headers = bearerHeader(token),
     )
 }

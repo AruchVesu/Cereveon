@@ -2389,7 +2389,12 @@ notifications, Lichess link + import jobs) via the single deletion
 authority in `llm/seca/auth/erasure.py` (`purge_player_data` —
 children before parents, one transaction, per-table counts logged
 server-side).  Irreversible — the client MUST gate the call behind an
-explicit confirmation UI.
+explicit confirmation UI.  The Android surface is Settings › Account ›
+**Delete account** → `AccountFlows.confirmAndDeleteAccount` ("Are you
+sure" dialog; `SettingsDeleteAccountSourcePinTest` pins that the
+destructive call is reachable only from the dialog's positive button,
+and that a failed deletion never wipes local state).  iOS has no entry
+point yet (Phase-0 parity gap).
 
 Identity proof is the bearer token alone (no password re-entry):
 Lichess sign-in accounts have no usable password, so the standing

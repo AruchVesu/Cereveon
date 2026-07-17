@@ -60,12 +60,14 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
 
     /**
      * Optional callbacks the host activity can wire to handle
-     * Account-section taps.  Both default to no-ops; MainActivity
-     * sets them to forward to its existing change-password dialog
-     * and logout flow.
+     * Account-section taps.  All default to no-ops; the hosts set them
+     * to forward to the shared [AccountFlows] change-password dialog,
+     * logout flow, and confirmation-gated account-deletion flow
+     * (GDPR Art. 17 — the row itself never deletes anything).
      */
     var onChangePasswordTapped: (() -> Unit)? = null
     var onSignOutTapped: (() -> Unit)? = null
+    var onDeleteAccountTapped: (() -> Unit)? = null
 
     /**
      * Optional callback the host activity wires to surface the
@@ -178,6 +180,14 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
         view.findViewById<View>(R.id.rowSignOut).setOnClickListener {
             dismiss()
             onSignOutTapped?.invoke()
+        }
+        // Delete account (GDPR Art. 17): the row only forwards to the
+        // host's AccountFlows.confirmAndDeleteAccount — the "Are you
+        // sure" gate and the DELETE /auth/me call both live there, so
+        // this sheet can never delete anything on its own.
+        view.findViewById<View>(R.id.rowDeleteAccount).setOnClickListener {
+            dismiss()
+            onDeleteAccountTapped?.invoke()
         }
     }
 

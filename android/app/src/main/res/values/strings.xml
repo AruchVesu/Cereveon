@@ -37,6 +37,19 @@
     <string name="reset_confirm_positive">Reset</string>
     <string name="reset_confirm_negative">Cancel</string>
 
+    <!--
+      Delete-account confirmation dialog (AccountFlows.confirmAndDeleteAccount;
+      GDPR Art. 17, DELETE /auth/me — docs/API_CONTRACTS.md §41).  Deletion is
+      irreversible and erases everything server-side, so the tap is gated
+      behind the same explicit "Are you sure" idiom as Reset game;
+      SettingsDeleteAccountSourcePinTest pins that the destructive path only
+      runs from the dialog's positive button.
+    -->
+    <string name="delete_account_confirm_title">Delete account?</string>
+    <string name="delete_account_confirm_message">Are you sure? This permanently deletes your account and everything in it — games, chat history, progress, study plans and imported Lichess games. This cannot be undone.</string>
+    <string name="delete_account_confirm_positive">Delete</string>
+    <string name="delete_account_confirm_negative">Cancel</string>
+
     <!-- Send-feedback dialog form (FeedbackFlows.kt). -->
     <string name="feedback_dialog_title">Send feedback</string>
     <string name="feedback_input_hint">What\'s working? What\'s broken? We read every message.</string>
