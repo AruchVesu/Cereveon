@@ -72,7 +72,9 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    player_id: Mapped[str | None] = mapped_column(String, ForeignKey("players.id"), index=True)
+    player_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("players.id", ondelete="CASCADE"), index=True
+    )
 
     # sha256 of the LATEST JWT issued for this session.  Rotated on
     # every successful authenticated call (router.get_current_player ->

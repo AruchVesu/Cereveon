@@ -85,10 +85,10 @@ class GameReview(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
 
     game_event_id: Mapped[str] = mapped_column(
-        String, ForeignKey("game_events.id"), nullable=False, index=True
+        String, ForeignKey("game_events.id", ondelete="CASCADE"), nullable=False, index=True
     )
     player_id: Mapped[str] = mapped_column(
-        String, ForeignKey("players.id"), nullable=False, index=True
+        String, ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     status: Mapped[str] = mapped_column(String, nullable=False, default=REVIEW_STATUS_QUEUED)

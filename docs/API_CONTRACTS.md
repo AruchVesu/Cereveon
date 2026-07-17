@@ -2374,6 +2374,58 @@ seeing the row because visibility filters run first.
 
 ---
 
+## 41. `DELETE /auth/me`
+
+**Host:** `llm/seca/auth/router.py`
+**Auth:** `Authorization: Bearer <token>` required (`get_current_player`)
+**Rate limit:** 5 / minute
+
+Erase the authenticated account — GDPR Art. 17 right to erasure.
+Deletes the `players` row and **every** linked row across the schema
+(sessions, games + moves, game events + finish results + reviews, chat
+history, study plans + puzzles, training history, repertoire,
+skill/bandit records, analytics, usage counters, feedback,
+notifications, Lichess link + import jobs) via the single deletion
+authority in `llm/seca/auth/erasure.py` (`purge_player_data` —
+children before parents, one transaction, per-table counts logged
+server-side).  Irreversible — the client MUST gate the call behind an
+explicit confirmation UI.
+
+Identity proof is the bearer token alone (no password re-entry):
+Lichess sign-in accounts have no usable password, so the standing
+token is the uniform credential for both account types.
+
+The token that authorised the call dies with its session: the post-2xx
+rotation middleware hits `rotate_session_token`'s documented
+deleted-session no-op (an `X-Auth-Token` header on the response, if
+set, names a session that no longer exists and is unusable), and any
+replay of the old token returns `401`.
+
+A new player-linked table added without registering it in the erasure
+plan fails `test_auth_account_deletion.py`'s metadata-discovery
+tripwire in CI — the plan cannot silently fall behind the schema (the
+`notifications` table from §40 was caught exactly this way while this
+endpoint was in review).
+
+### Request body
+
+Empty.
+
+### Response
+
+```json
+{ "status": "deleted" }
+```
+
+### Errors
+
+- `401` — missing / malformed / expired token, or session already
+  revoked (including a repeat of this call: the second attempt cannot
+  authenticate, which makes erasure trivially idempotent).
+- `429` — rate limit exceeded (Shape B).
+
+---
+
 ## Error responses
 
 The API emits **two distinct error-body shapes** that any client (the

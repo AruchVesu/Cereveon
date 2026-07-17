@@ -83,10 +83,10 @@ class MistakeStudyPlan(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     player_id: Mapped[str] = mapped_column(
-        String, ForeignKey("players.id"), nullable=False, index=True
+        String, ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True
     )
     source_event_id: Mapped[str] = mapped_column(
-        String, ForeignKey("game_events.id"), nullable=False, index=True
+        String, ForeignKey("game_events.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     # Theme tag (e.g. ``"king_safety"``, ``"fork"``, ``"back_rank"``).
@@ -155,7 +155,7 @@ class MistakeStudyPuzzle(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     plan_id: Mapped[str] = mapped_column(
-        String, ForeignKey("mistake_study_plans.id"), nullable=False, index=True
+        String, ForeignKey("mistake_study_plans.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     # One of ``PLAN_DAY_OFFSETS``.  The product surface assumes exactly

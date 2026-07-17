@@ -11,7 +11,9 @@ class TrainingPlan(Base):
     __tablename__ = "training_plans"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    player_id: Mapped[str | None] = mapped_column(String, ForeignKey("players.id"), index=True)
+    player_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("players.id", ondelete="CASCADE"), index=True
+    )
 
     topic: Mapped[str] = mapped_column(String, nullable=False)
     difficulty: Mapped[str] = mapped_column(String, nullable=False)

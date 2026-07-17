@@ -110,6 +110,114 @@ def _ensure_column(conn, table: str, column: str, sql_type: str) -> None:
     conn.commit()
 
 
+#: Parent tables whose inbound FKs must carry ON DELETE CASCADE so an
+#: operator-level ``DELETE FROM players`` (psql) cleans up everything
+#: the explicit erasure plan (llm/seca/auth/erasure.py) covers.  The
+#: runtime erasure path never RELIES on these constraints — SQLite does
+#: not enforce FK actions without a per-connection pragma, and three
+#: tables carry a bare ``player_id`` column with no FK at all — see the
+#: erasure module docstring.
+_CASCADE_PARENT_TABLES = (
+    "players",
+    "game_events",
+    "games",
+    "mistake_study_plans",
+    "training_decisions",
+)
+
+
+def _fk_cascade_retrofit_sql(
+    constraint: str, child: str, column: str, parent: str, parent_column: str
+) -> tuple[str, str]:
+    """DROP + re-ADD statement pair upgrading one FK to ON DELETE CASCADE.
+
+    Pure string builder, split out of ``_ensure_fk_delete_cascade`` so
+    the generated DDL shape is unit-testable without a live Postgres
+    (see test_auth_account_deletion.py).
+    """
+    drop = f'ALTER TABLE "{child}" DROP CONSTRAINT "{constraint}"'
+    add = (
+        f'ALTER TABLE "{child}" ADD CONSTRAINT "{constraint}" '
+        f'FOREIGN KEY ("{column}") REFERENCES "{parent}" ("{parent_column}") '
+        "ON DELETE CASCADE"
+    )
+    return drop, add
+
+
+def _ensure_fk_delete_cascade(conn) -> None:
+    """Idempotent Postgres retrofit of ON DELETE CASCADE onto live FKs.
+
+    ``create_all`` never alters existing tables (same limitation that
+    forced ``_ensure_column``), so databases created before the models
+    declared ``ondelete="CASCADE"`` keep their NO ACTION constraints.
+    This walks ``pg_constraint`` for FKs that point at a table in
+    ``_CASCADE_PARENT_TABLES`` without ``confdeltype = 'c'`` and swaps
+    each one for a CASCADE variant under its original constraint name.
+    Already-retrofitted constraints don't match the filter, so re-runs
+    are no-ops.
+
+    SQLite: no-op.  Fresh ``create_all`` DDL already carries CASCADE
+    from the models, SQLite cannot ALTER constraints in place (full
+    table rebuild — disproportionate for disposable dev files), and the
+    erasure service performs explicit ordered deletes precisely so no
+    environment depends on DB-level cascade.
+
+    Every failure path degrades to a WARNING, never a startup crash:
+    the constraint is defence in depth, and blocking boot on a catalog
+    hiccup would be a worse posture than running without it.
+    """
+    if _is_sqlite:
+        return
+    try:
+        rows = conn.execute(
+            text("""
+                SELECT con.conname, child.relname, att.attname,
+                       parent.relname, patt.attname
+                  FROM pg_constraint con
+                  JOIN pg_class child ON child.oid = con.conrelid
+                  JOIN pg_namespace ns
+                       ON ns.oid = child.relnamespace
+                      AND ns.nspname = current_schema()
+                  JOIN pg_class parent ON parent.oid = con.confrelid
+                  JOIN pg_attribute att
+                       ON att.attrelid = child.oid
+                      AND att.attnum = ANY (con.conkey)
+                  JOIN pg_attribute patt
+                       ON patt.attrelid = parent.oid
+                      AND patt.attnum = ANY (con.confkey)
+                 WHERE con.contype = 'f'
+                   AND con.confdeltype <> 'c'
+                   AND parent.relname = ANY (:parents)
+                """),
+            {"parents": list(_CASCADE_PARENT_TABLES)},
+        ).fetchall()
+    except Exception:
+        conn.rollback()
+        logger.warning("fk cascade retrofit: catalog query failed", exc_info=True)
+        return
+    for constraint, child, column, parent, parent_column in rows:
+        drop_sql, add_sql = _fk_cascade_retrofit_sql(
+            constraint, child, column, parent, parent_column
+        )
+        try:
+            conn.execute(text(drop_sql))
+            conn.execute(text(add_sql))
+            conn.commit()
+        except Exception:
+            # ADD CONSTRAINT validates existing rows, so pre-existing
+            # orphans (or a lock timeout) can fail a single FK.  Leave
+            # that constraint as it was and keep booting — the explicit
+            # erasure plan does not depend on it.
+            conn.rollback()
+            logger.warning(
+                "fk cascade retrofit failed for %s.%s -> %s (left as-is)",
+                child,
+                column,
+                parent,
+                exc_info=True,
+            )
+
+
 def init_schema() -> None:
     """Create the SQLAlchemy schema and apply small in-place migrations.
 
@@ -384,6 +492,11 @@ def init_schema() -> None:
                 )
             )
             conn.commit()
+
+        # GDPR erasure defence-in-depth (DELETE /auth/me): retrofit
+        # ON DELETE CASCADE onto pre-existing Postgres FKs so
+        # operator-level player deletes clean up like the endpoint does.
+        _ensure_fk_delete_cascade(conn)
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -1073,3 +1186,38 @@ def change_password(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"status": "updated"}
+
+
+@router.delete("/me")
+@limiter.limit("5/minute")
+def delete_me(
+    request: Request,
+    player=Depends(get_current_player),
+    db: DBSession = Depends(get_db),
+):
+    """Erase the authenticated account — GDPR Art. 17 right to erasure.
+
+    Deletes the player row and EVERY linked row (games, chat history,
+    skill profile, feedback, notifications, Lichess link + imported
+    games, sessions, study plans, analytics, ...) through the single
+    deletion authority in ``llm/seca/auth/erasure.py``.  Irreversible;
+    the client gates it behind an explicit confirmation UI.
+
+    The bearer token that authorised this call dies with its session:
+    the post-2xx rotation middleware then hits
+    ``rotate_session_token``'s documented deleted-session no-op, and
+    any replay of the old token 401s at ``get_player_by_session``.
+
+    No password re-entry is required — Lichess sign-in accounts have no
+    usable password, so the standing bearer token is the uniform proof
+    of identity for both account types (see AuthService.delete_account).
+    """
+    player_id = str(player.id)
+    counts = AuthService(db).delete_account(player)
+    logger.info(
+        "account erased player_id=%s tables=%d rows=%d",
+        player_id,
+        sum(1 for deleted in counts.values() if deleted),
+        sum(counts.values()),
+    )
+    return {"status": "deleted"}

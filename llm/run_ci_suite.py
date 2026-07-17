@@ -171,6 +171,13 @@ TEST_TARGETS = [
     "llm/tests/test_auth_refresh_header.py",
     "llm/tests/test_auth_sliding_session.py",
     "llm/tests/test_auth_missing_header.py",
+    # DELETE /auth/me account erasure (GDPR Art. 17, AD_01..12):
+    # metadata-driven discovery of every player-linked table pinned
+    # against the explicit erasure plan (drift tripwire), two-player
+    # purge with bystander isolation, endpoint + dead-token 401,
+    # Lichess-account path, the ondelete=CASCADE model pin, and the
+    # Postgres FK retrofit's SQLite no-op + DDL shape.
+    "llm/tests/test_auth_account_deletion.py",
     # "Sign in with Lichess" (OAuth PKCE, POST /auth/lichess): client-layer
     # exchange/account/revoke error taxonomy + hostile-input rejection
     # (OA_01..08) and router/service find-or-create, auto-link, and
@@ -370,6 +377,13 @@ COVERAGE_TARGETS = [
     "llm.seca.auth.service",
     "llm.seca.auth.hashing",
     "llm.seca.auth.tokens",
+    # llm.seca.auth.erasure is intentionally NOT a --cov target: it
+    # imports llm.seca.coach.study_plan.models, whose package __init__
+    # loads the numpy-backed coach engine — the same "cannot load module
+    # more than once per process" pre-load hazard that keeps
+    # chat_pipeline excluded above.  test_auth_account_deletion.py
+    # (TEST_TARGETS) exercises every branch, including the plan-vs-
+    # metadata discovery tripwire.
     "llm.seca.analytics.router",
     "llm.seca.curriculum.reward",
     "llm.seca.curriculum.spacing",
