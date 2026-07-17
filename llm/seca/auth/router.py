@@ -26,17 +26,27 @@ from .models import Base
 # pylint: disable=wildcard-import,unused-wildcard-import
 # These wildcard imports are LOAD-BEARING, not lazy: every model class
 # under llm.seca.* must be imported before ``Base.metadata.create_all`` runs
-# at lifespan startup so SQLAlchemy knows about every table.  Refactoring
-# to explicit imports would force a manual maintenance burden every time
-# a model is added.  Pylint correctly flags the pattern; we silence it
-# for this single import block.
+# at lifespan startup so SQLAlchemy knows about every table.  A module
+# missing from this block only LOOKS harmless: its tables silently never
+# get created on any create_all-provisioned database, and the first
+# runtime consumer 500s with "no such table" — exactly the 2026-07-17
+# prod incident, where brain.training.models was absent (its only
+# consumers, the GDPR erasure/export endpoints, import it lazily at
+# request time — after create_all had already run).  The completeness
+# of this block is now pinned by test_model_registration.py (MR_01):
+# every llm/seca/**/models.py that defines a __tablename__ must appear
+# here, so the maintenance burden the pattern implies is automated.
 from llm.seca.auth.models import *  # noqa: F401,F403
 from llm.seca.events.models import *  # noqa: F401,F403
 from llm.seca.brain.models import *  # noqa: F401,F403
+from llm.seca.brain.training.models import *  # noqa: F401,F403
 from llm.seca.analytics.models import *  # noqa: F401,F403
 from llm.seca.storage.models import *  # noqa: F401,F403
 from llm.seca.chat.models import *  # noqa: F401,F403
+from llm.seca.curriculum.models import *  # noqa: F401,F403
 from llm.seca.lichess.models import *  # noqa: F401,F403
+from llm.seca.notifications.models import *  # noqa: F401,F403
+from llm.seca.review.models import *  # noqa: F401,F403
 from llm.seca.training.models import *  # noqa: F401,F403
 from llm.seca.coach.study_plan.models import *  # noqa: F401,F403
 from llm.seca.entitlements.models import *  # noqa: F401,F403

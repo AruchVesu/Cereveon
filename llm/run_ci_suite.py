@@ -184,6 +184,14 @@ TEST_TARGETS = [
     # the player-linked closure, cross-player isolation, end-to-end
     # JSON-serialisability, and the route handler's document shape.
     "llm/tests/test_auth_data_export.py",
+    # Model-registration completeness (MR_01..05): the glob-driven pin
+    # that every table-defining llm/seca/**/models.py is wildcard-
+    # imported by auth/router.py BEFORE create_all, plus a full-app
+    # (lifespan) register→export→delete→401 journey.  Regression guard
+    # for the 2026-07-17 prod incident (brain.training.models missing
+    # from the block → "no such table: training_outcomes" 500s on the
+    # GDPR endpoints while every fixture-based unit test stayed green).
+    "llm/tests/test_model_registration.py",
     # "Sign in with Lichess" (OAuth PKCE, POST /auth/lichess): client-layer
     # exchange/account/revoke error taxonomy + hostile-input rejection
     # (OA_01..08) and router/service find-or-create, auto-link, and
