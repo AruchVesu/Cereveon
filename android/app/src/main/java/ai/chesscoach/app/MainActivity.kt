@@ -389,6 +389,9 @@ class MainActivity : AppCompatActivity() {
             sheet.onSignOutTapped = {
                 AccountFlows.performLogout(this, authRepo, authApiClient)
             }
+            sheet.onDeleteAccountTapped = {
+                AccountFlows.confirmAndDeleteAccount(this, authRepo, authApiClient)
+            }
             sheet.onConnectLichessTapped = {
                 LichessConnectBottomSheet()
                     .show(supportFragmentManager, LichessConnectBottomSheet.TAG)

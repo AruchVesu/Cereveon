@@ -471,6 +471,30 @@
 
         </LinearLayout>
 
+        <!-- GDPR Art. 17 entry point (DELETE /auth/me, contract §41).
+             The tap only opens AccountFlows' "Are you sure" dialog —
+             SettingsDeleteAccountSourcePinTest pins that the row itself
+             is never destructive.  Amber = the Atrium destructive
+             accent (same as Sign out; the palette has no red token by
+             design). -->
+        <LinearLayout
+            android:id="@+id/rowDeleteAccount"
+            style="@style/Atrium.SettingsRow.Trailing">
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:textColor="@color/atrium_accent_amber"
+                android:text="Delete account" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Chevron"
+                android:textColor="@color/atrium_accent_amber"
+                android:text="›" />
+
+        </LinearLayout>
+
     </LinearLayout>
 
 </ScrollView>
