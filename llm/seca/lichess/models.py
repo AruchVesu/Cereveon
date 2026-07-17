@@ -61,6 +61,16 @@ class LinkedAccount(Base):
     # outage window.
     last_imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # Set when an import discovers the Lichess account is gone (404 —
+    # closed or renamed): the "we lost access" state behind the app's
+    # reconnect flow.  There is no stored OAuth token to refresh in this
+    # architecture (sign-in tokens are revoked once identity is proven),
+    # so account reachability via the public API IS connectivity, and
+    # this flag is its persisted negative.  Cleared by the same import
+    # paths on the next clean stream, or by re-linking (fresh row).
+    # NULL == connected.
+    disconnected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     player: Mapped["Player"] = relationship("Player")

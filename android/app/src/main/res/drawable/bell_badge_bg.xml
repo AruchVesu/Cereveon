@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Unread-count badge behind the Home header bell — small filled
+     circle in the Atrium accent so it reads as signal, not alarm. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="@color/atrium_accent_cyan" />
+</shape>

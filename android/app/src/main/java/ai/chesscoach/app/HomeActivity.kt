@@ -139,6 +139,17 @@ class HomeActivity : AppCompatActivity() {
         )
     }
 
+    /**
+     * Lazy NotificationsApiClient for the header bell badge + the feed
+     * sheet this activity hosts (docs/API_CONTRACTS.md §40).
+     */
+    private val notificationsApiClient: NotificationsApiClient by lazy {
+        HttpNotificationsApiClient(
+            baseUrl = BuildConfig.COACH_API_BASE,
+            tokenSink = { newToken -> authRepo.saveToken(newToken) },
+        )
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -167,6 +178,12 @@ class HomeActivity : AppCompatActivity() {
         // circle is the actual touch target (see activity_home.xml).
         findViewById<View>(R.id.homeAvatarTapTarget).setOnClickListener {
             openSettings()
+        }
+
+        // Bell → notifications feed sheet.  The badge refresh fires
+        // from onResume (below) so it also covers this cold-start.
+        findViewById<View>(R.id.homeBellTapTarget).setOnClickListener {
+            openNotifications()
         }
 
         // Theme runs edge-to-edge — without this listener the bottom
@@ -394,6 +411,56 @@ class HomeActivity : AppCompatActivity() {
         // refire so the TodaysDrillCard surfaces immediately rather
         // than waiting for the next cold-start.
         fetchAndPopulateTodaysDrill()
+        // Refresh the bell badge.  onResume covers both the cold-start
+        // (onCreate → onResume) and the return path where a background
+        // Lichess import (kicked at sign-in or from the Connect sheet)
+        // finished while Home was off-screen.
+        refreshNotificationsBadge()
+    }
+
+    /**
+     * One GET /notifications to (re)paint the bell badge.  Failures are
+     * silent — the badge is enrichment; the feed sheet re-fetches its
+     * own truth when opened.
+     */
+    private fun refreshNotificationsBadge() {
+        if (authRepo.getToken() == null) return
+        lifecycleScope.launch {
+            val token = authRepo.getToken() ?: return@launch
+            when (val r = notificationsApiClient.feed(token)) {
+                is ApiResult.Success -> renderBellBadge(r.data.unreadCount)
+                else -> { /* keep whatever the badge currently shows */ }
+            }
+        }
+    }
+
+    private fun renderBellBadge(unreadCount: Int) {
+        val badge = findViewById<TextView>(R.id.homeBellBadge) ?: return
+        if (unreadCount <= 0) {
+            badge.visibility = View.GONE
+        } else {
+            badge.text = NotificationsBottomSheet.formatBadgeLabel(unreadCount)
+            badge.visibility = View.VISIBLE
+        }
+    }
+
+    /** Bell tap — the notifications feed sheet, hosted over Home. */
+    private fun openNotifications() {
+        if (supportFragmentManager.isStateSaved) return
+        val sheet = NotificationsBottomSheet()
+        sheet.notificationsApiClient = notificationsApiClient
+        sheet.authRepository = authRepo
+        sheet.onUnreadCountChanged = { count -> renderBellBadge(count) }
+        sheet.onOpenHistory = {
+            launchMain(sheet = MainActivity.OPEN_SHEET_HISTORY)
+        }
+        sheet.onReconnectLichess = {
+            if (!supportFragmentManager.isStateSaved) {
+                LichessConnectBottomSheet()
+                    .show(supportFragmentManager, LichessConnectBottomSheet.TAG)
+            }
+        }
+        sheet.show(supportFragmentManager, NotificationsBottomSheet.TAG)
     }
 
     /**

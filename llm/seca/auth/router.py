@@ -297,6 +297,20 @@ def init_schema() -> None:
             "INTEGER DEFAULT 0",
         )
 
+        # Lichess reconnect flow (communication & access spec §2.6,
+        # adapted).  Set when an import 404s on the linked account
+        # (closed/renamed), cleared on the next clean stream or
+        # re-link; GET /lichess/status surfaces it so the client can
+        # offer Reconnect.  Nullable, no default — legacy rows read as
+        # NULL (== connected), which is correct for every pre-existing
+        # link.
+        _ensure_column(
+            conn,
+            "linked_accounts",
+            "disconnected_at",
+            _column_type_for_dialect("DATETIME", "TIMESTAMP"),
+        )
+
         # Weekly-curriculum anchor (aggregate-weakness label + backfill).
         # Records the player's dominant MistakeCategory, surfaced as the
         # week's focus label.  For day-3 / day-7 puzzle selection it is only

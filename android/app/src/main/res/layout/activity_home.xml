@@ -71,6 +71,44 @@
                     android:letterSpacing="0.018"
                     android:text="Cereveon" />
 
+                <!-- Notification bell — opens the feed sheet.  Same
+                     48dp-target / smaller-visual pattern as the avatar
+                     beside it.  The badge dot renders the unread count
+                     (server-computed, medium+ priority) and hides at
+                     zero. -->
+                <FrameLayout
+                    android:id="@+id/homeBellTapTarget"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:contentDescription="@string/notifications_bell_cd"
+                    android:background="?attr/selectableItemBackgroundBorderless">
+
+                    <ImageView
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:layout_gravity="center"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_bell"
+                        app:tint="@color/atrium_muted" />
+
+                    <TextView
+                        android:id="@+id/homeBellBadge"
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:layout_gravity="top|end"
+                        android:layout_marginTop="6dp"
+                        android:layout_marginEnd="6dp"
+                        android:gravity="center"
+                        android:background="@drawable/bell_badge_bg"
+                        android:fontFamily="monospace"
+                        android:textSize="9sp"
+                        android:textColor="@color/atrium_bg_base"
+                        android:visibility="gone"
+                        tools:visibility="visible"
+                        tools:text="3" />
+
+                </FrameLayout>
+
                 <!-- The avatar doubles as the Settings entry point (the
                      only other route is the in-game drawer, which
                      requires starting a game first).  The 48dp

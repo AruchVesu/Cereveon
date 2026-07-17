@@ -27,6 +27,8 @@ import org.junit.Test
  * STATUS_BEARER          Authorization Bearer header is sent.
  * STATUS_NOT_LINKED      `{"linked": false}` deserialises to linked=false.
  * STATUS_LINKED          full linked response deserialises counts + username.
+ * STATUS_DISCONNECTED    reconnect fields parse; absent fields default to
+ *                        connected (older servers can't trigger the UI).
  * STATUS_HTTP_401        401 → ApiResult.HttpError(401).
  * STATUS_ROTATES         X-Auth-Token in response is forwarded to tokenSink.
  *
@@ -139,6 +141,37 @@ class LichessApiClientIntegrationTest {
         assertEquals("thibault", data.externalUsername)
         assertEquals(5, data.importedGameCount)
         assertEquals("2026-05-13T08:28:57.755000", data.lastImportedAt)
+    }
+
+    @Test
+    fun `STATUS_DISCONNECTED - reconnect fields parse and default to connected`() = runBlocking {
+        // Newer server: disconnected=true after an import 404'd on the
+        // linked account (API_CONTRACTS §29 reconnect flow).
+        val brokenBody = """
+            {
+              "linked": true,
+              "platform": "lichess",
+              "external_username": "thibault",
+              "imported_game_count": 5,
+              "disconnected": true,
+              "disconnected_at": "2026-07-16T09:00:00.000000"
+            }
+        """.trimIndent()
+        server.enqueue(MockResponse().setResponseCode(200).setBody(brokenBody))
+        val broken = (client().status("tok") as ApiResult.Success<*>).data as LichessStatusResponse
+        assertEquals(true, broken.disconnected)
+        assertEquals("2026-07-16T09:00:00.000000", broken.disconnectedAt)
+
+        // Older server (fields absent): must default to connected so the
+        // reconnect UI can never fire on a pre-reconnect-flow backend.
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"linked": true, "external_username": "thibault", "imported_game_count": 5}""",
+            ),
+        )
+        val legacy = (client().status("tok") as ApiResult.Success<*>).data as LichessStatusResponse
+        assertEquals(false, legacy.disconnected)
+        assertNull(legacy.disconnectedAt)
     }
 
     @Test

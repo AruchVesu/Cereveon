@@ -69,6 +69,14 @@ class LichessConnectViewModel(
             val importedGameCount: Int = 0,
             val calibration: LichessCalibrationResult? = null,
             val lastImportSummary: LichessImportResponse? = null,
+            /**
+             * Reconnect flow (API_CONTRACTS §29): true when the server
+             * has recorded that the linked account 404'd on import
+             * (closed/renamed) with no clean stream since.  The sheet
+             * renders the reconnect notice + re-link form on top of
+             * the linked status block.
+             */
+            val disconnected: Boolean = false,
         ) : UiState()
         /**
          * v2 import in flight.  [target] is the request cap (denominator
@@ -204,6 +212,7 @@ class LichessConnectViewModel(
                     linkedAt = s.linkedAt,
                     lastImportedAt = s.lastImportedAt,
                     importedGameCount = s.importedGameCount,
+                    disconnected = s.disconnected,
                 )
                 transitionTo(linked)
 

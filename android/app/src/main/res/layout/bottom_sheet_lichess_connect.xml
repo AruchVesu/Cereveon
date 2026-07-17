@@ -150,6 +150,29 @@
                 android:text="—"
                 tools:text="thibault" />
 
+            <!-- Reconnect notice — visible only when GET /lichess/status
+                 reports disconnected=true (the linked account 404'd on
+                 import: closed or renamed).  The Fragment also reveals
+                 the username form below so the user can reconnect this
+                 account or link a different one; imported games stay
+                 either way (server contract).  Amber = warning accent,
+                 same semantic as the Unlink button. -->
+            <TextView
+                android:id="@+id/lichessReconnectNotice"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/atrium_space_24"
+                android:layout_marginEnd="@dimen/atrium_space_24"
+                android:layout_marginBottom="@dimen/atrium_space_8"
+                android:padding="@dimen/atrium_space_12"
+                android:background="@color/atrium_hairline"
+                android:fontFamily="@font/inter"
+                android:textSize="13sp"
+                android:textColor="@color/atrium_accent_amber"
+                android:text="@string/lichess_reconnect_notice"
+                android:visibility="gone"
+                tools:visibility="visible" />
+
             <!-- One-shot calibration banner (shown only on the post-link transition). -->
             <TextView
                 android:id="@+id/lichessCalibrationBanner"

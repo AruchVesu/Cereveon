@@ -324,6 +324,14 @@ TEST_TARGETS = [
     # pending shape, player scoping, oldest-event-wins, guard placement
     # + IntegrityError race pins).
     "llm/tests/test_game_finish_idempotency.py",
+    # In-app notification feed (communication & access spec §5, adapted):
+    # feed visibility + badge semantics, lifecycle mutations, the
+    # game_analyzed batching producer, the lichess_disconnected alert's
+    # dedup + resolution, and the /notifications HTTP surface
+    # (NS_* / NR_*).  The import-service integration side (who fires the
+    # producers, disconnected_at lifecycle, GET /lichess/status fields)
+    # is pinned in test_lichess_import.py DC_01..DC_08.
+    "llm/tests/test_notifications.py",
 ]
 
 COVERAGE_TARGETS = [
@@ -406,6 +414,12 @@ COVERAGE_TARGETS = [
     "llm.seca.review.writer",
     "llm.seca.review.service",
     "llm.seca.review.router",
+    # In-app notification feed: Notification model, feed/badge/producer
+    # service, /notifications HTTP surface.  Covered by
+    # test_notifications.py + the DC_* class in test_lichess_import.py.
+    "llm.seca.notifications.models",
+    "llm.seca.notifications.service",
+    "llm.seca.notifications.router",
     # llm.seca.coach.live_controller, llm.seca.coach.executor,
     # llm.seca.coach.confidence_language_controller, and
     # llm.seca.coach.explain_pipeline are excluded from --cov targets:

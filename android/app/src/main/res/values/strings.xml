@@ -92,4 +92,24 @@
     <string name="lichess_error_network">Network error · check your connection</string>
     <string name="lichess_error_timeout">Request timed out · try again</string>
     <string name="lichess_error_unknown">Something went wrong · try again</string>
+
+    <!-- Reconnect state (API_CONTRACTS §29 `disconnected`): the linked
+         Lichess account 404'd on import — closed or renamed.  The
+         notice sits above the re-link form inside the Connect sheet;
+         copy adapted from communication & access spec §2.6. -->
+    <string name="lichess_reconnect_notice">We lost access to your Lichess account. This can happen if it was closed or renamed. Your imported games and reviews stay here — reconnect the same account once it\'s back, or connect a different one below.</string>
+    <string name="lichess_reconnect_button_label">Reconnect Lichess</string>
+
+    <!--
+      Notifications feed (NotificationsBottomSheet.kt + Home header
+      bell).  Mirrors docs/API_CONTRACTS.md §40 wording where
+      user-facing.
+    -->
+    <string name="notifications_bell_cd">Notifications</string>
+    <string name="notifications_dismiss_cd">Dismiss notification</string>
+    <string name="notifications_mark_all_read">MARK ALL READ</string>
+    <string name="notifications_section_unread">UNREAD (%1$d)</string>
+    <string name="notifications_section_read">READ</string>
+    <string name="notifications_empty">Nothing here yet. Game reviews and account notices will land in this inbox.</string>
+    <string name="notifications_error">Could not load notifications. Check your connection.</string>
 </resources>

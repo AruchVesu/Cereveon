@@ -69,6 +69,7 @@ class LichessConnectBottomSheet : BottomSheetDialogFragment() {
     private lateinit var btnUnlink: Button
     private lateinit var linkedHandleText: TextView
     private lateinit var calibrationBanner: TextView
+    private lateinit var reconnectNotice: TextView
     private lateinit var importedCountText: TextView
     private lateinit var lastSyncedText: TextView
 
@@ -103,6 +104,7 @@ class LichessConnectBottomSheet : BottomSheetDialogFragment() {
         btnUnlink = view.findViewById(R.id.btnLichessUnlink)
         linkedHandleText = view.findViewById(R.id.lichessLinkedHandle)
         calibrationBanner = view.findViewById(R.id.lichessCalibrationBanner)
+        reconnectNotice = view.findViewById(R.id.lichessReconnectNotice)
         importedCountText = view.findViewById(R.id.lichessImportedCount)
         lastSyncedText = view.findViewById(R.id.lichessLastSyncedValue)
         importProgressBlock = view.findViewById(R.id.lichessImportProgressBlock)
@@ -176,22 +178,44 @@ class LichessConnectBottomSheet : BottomSheetDialogFragment() {
                 groupNotLinked.isVisible = true
                 groupLinked.isVisible = false
                 setControlsEnabled(true)
+                // A prior disconnected render may have relabelled the
+                // link button; a plain not-linked state always reads
+                // "Link".
+                btnLink.text = getString(R.string.lichess_link_button_label)
             }
             is LichessConnectViewModel.UiState.Linked -> {
                 loadingSpinner.isVisible = false
-                groupNotLinked.isVisible = false
                 groupLinked.isVisible = true
                 setControlsEnabled(true)
                 // Hide the v2 import-progress block when transitioning
                 // out of Importing (or just landing on Linked fresh).
                 importProgressBlock.isVisible = false
-                btnImport.isVisible = true
 
                 linkedHandleText.text = state.username
                 importedCountText.text = state.importedGameCount.toString()
                 lastSyncedText.text =
                     state.lastImportedAt?.let { formatTimestamp(it) }
                         ?: getString(R.string.lichess_never_synced)
+
+                // Reconnect state (API_CONTRACTS §29 disconnected flag):
+                // surface the notice AND the username form so the user
+                // can reconnect this account (once restored) or link a
+                // different one — history is preserved server-side
+                // either way.  Import is hidden while disconnected: the
+                // stream can only 404 until a re-link or the account
+                // coming back.
+                reconnectNotice.isVisible = state.disconnected
+                groupNotLinked.isVisible = state.disconnected
+                btnImport.isVisible = !state.disconnected
+                btnLink.text = getString(
+                    if (state.disconnected) R.string.lichess_reconnect_button_label
+                    else R.string.lichess_link_button_label,
+                )
+                if (state.disconnected && usernameField.text.isNullOrBlank()) {
+                    // Pre-fill with the broken handle — the common case
+                    // is reconnecting the same account after it's back.
+                    usernameField.setText(state.username)
+                }
 
                 // One-shot calibration banner.
                 val calibration = state.calibration
@@ -218,6 +242,9 @@ class LichessConnectBottomSheet : BottomSheetDialogFragment() {
                     prior.lastImportedAt?.let { formatTimestamp(it) }
                         ?: getString(R.string.lichess_never_synced)
                 calibrationBanner.isVisible = false
+                // An import can only start from a connected state, so
+                // the reconnect notice is stale by construction here.
+                reconnectNotice.isVisible = false
 
                 // Swap the Import button for the determinate progress
                 // block.  Unlink stays enabled so the user can cancel

@@ -88,6 +88,16 @@ data class LichessStatusResponse(
      * responses where no job is active.
      */
     @SerialName("active_import_job_id") val activeImportJobId: String? = null,
+    /**
+     * Reconnect flow (API_CONTRACTS §29): true once an import 404'd on
+     * the linked Lichess account (closed/renamed) and no clean stream
+     * has been seen since.  The Connect sheet renders its reconnect
+     * state from this; re-linking or the next clean import clears it
+     * server-side.  Defaults keep older servers (field absent) reading
+     * as connected.
+     */
+    val disconnected: Boolean = false,
+    @SerialName("disconnected_at") val disconnectedAt: String? = null,
 )
 
 /**

@@ -1317,7 +1317,9 @@ No body, no query params.
   "linked_at":             <ISO-8601 string | null>,
   "last_imported_at":      <ISO-8601 string | null>,
   "imported_game_count":   <int>,
-  "active_import_job_id":  <string (UUID) | null>
+  "active_import_job_id":  <string (UUID) | null>,
+  "disconnected":          <bool>,
+  "disconnected_at":       <ISO-8601 string | null>
 }
 ```
 
@@ -1334,6 +1336,16 @@ No body, no query params.
   progress view after a sheet dismiss / device restart by passing
   the value to §31a.  Old v1 clients ignore unknown fields and are
   unaffected.
+- `disconnected` / `disconnected_at` *(2026-07-17, reconnect flow)* —
+  `true` once an import has 404'd on the linked account (closed or
+  renamed on Lichess) and no clean stream has been seen since.  While
+  `true` the client should surface the Reconnect state (§2.6 of the
+  communication & access spec, adapted): re-run the OAuth link flow or
+  `POST /lichess/link` — either clears the state, as does the next
+  clean import.  There is no stored Lichess OAuth token in this
+  architecture (sign-in tokens are revoked once identity is verified),
+  so public-API reachability of the linked account IS the definition
+  of "connected".  Additive fields; old clients ignore them.
 
 ---
 
@@ -2256,6 +2268,109 @@ as §31a)
 Poll the review row.  `200` with the §39 body; `404` when no review
 exists at the current `analysis_version` (client shows the "Get coach
 review" button).  Same `400`/`401`/`403`/`404` guards as §39.
+
+---
+
+## 40. `GET /notifications` + lifecycle mutations
+
+**Host:** `llm/seca/notifications/router.py`
+**Auth:** `Authorization: Bearer <token>` required; owner-scoped
+**Rate limit:** GET not rate-limited (cheap read, fetched on Home
+resume); each mutation 30 / minute.
+
+In-app notification feed (communication & access spec §5, adapted to
+this codebase).  Rows are created **server-side only** — the Lichess
+import worker (`game_analyzed`, batched per §5.4) and the disconnect
+detector (`system_alert` with the reconnect action).  There is no
+create endpoint.
+
+### `GET /notifications`
+
+Visible rows (not dismissed, not expired, ≤ 30 days old), newest
+first, capped at 50.  Read rows stay in the feed; the client renders
+them under a "Read" section.
+
+```json
+{
+  "notifications": [
+    {
+      "id":            <string (UUID)>,
+      "type":          "game_analyzed" | "system_alert",
+      "priority":      "low" | "medium" | "high" | "critical",
+      "title":         <string>,
+      "body":          <string>,
+      "action":        "open_history" | "lichess_reconnect" | null,
+      "action_label":  <string | null>,
+      "metadata":      <object>,
+      "created_at":    <ISO-8601 string>,
+      "read_at":       <ISO-8601 string | null>
+    }
+  ],
+  "unread_count": <int>
+}
+```
+
+- `unread_count` is the bell-badge value: unread visible rows at
+  priority medium and above (spec §5.6).  Low-priority rows appear in
+  the feed but never badge.
+- `action` is an app-internal deep-link **key**, not a URL — the
+  client maps `open_history` to the game-history sheet and
+  `lichess_reconnect` to the Lichess connect sheet.  Unknown keys must
+  render as informational rows (no CTA), so new types can ship
+  server-first.
+- `metadata` carries per-type context: `{"games_analyzed": <int>}` for
+  `game_analyzed`, `{"lichess_username": <string>}` for the reconnect
+  alert.
+
+### `POST /notifications/{id}/read`
+
+Marks one row read (idempotent — the first `read_at` wins).
+
+```json
+{ "read": true, "unread_count": <int> }
+```
+
+### `POST /notifications/read-all`
+
+Marks every **visible** unread row read; rows stay in the feed.
+
+```json
+{ "marked": <int>, "unread_count": 0 }
+```
+
+### `POST /notifications/{id}/dismiss`
+
+Soft-deletes one row from the feed (idempotent; the row stays in the
+DB).  Dismissing does not mark read — the badge count simply stops
+seeing the row because visibility filters run first.
+
+```json
+{ "dismissed": true, "unread_count": <int> }
+```
+
+### Errors
+
+| Status | Cause |
+|--------|-------|
+| `400`  | `id` longer than 64 chars. |
+| `401`  | Missing or invalid `Authorization` header. |
+| `403`  | Notification belongs to another player (probe-visible, same convention as §39). |
+| `404`  | Notification does not exist. |
+| `429`  | Mutation rate limit exceeded (Shape B). |
+
+### Producer semantics (server-side, no HTTP surface)
+
+- `game_analyzed` — fired when an **async** import job succeeds with
+  `analyzed > 0` (§31); the v1 sync import (§30) deliberately does not
+  notify (its caller renders the summary inline).  A second job
+  finishing within 60 minutes **merges** into the still-unread row
+  (count summed, `created_at` reset); a read row is never merged into.
+  Expires 30 days after (re)creation.
+- `system_alert` / `lichess_reconnect` — fired when any import 404s on
+  the linked account; at most one live copy per player.  No expiry
+  ("until resolved"): it is auto-dismissed by the next clean import,
+  re-link, OAuth sign-in auto-link, or unlink — see §29's
+  `disconnected` field for the paired status flag.
 
 ---
 
