@@ -184,6 +184,14 @@ TEST_TARGETS = [
     # the player-linked closure, cross-player isolation, end-to-end
     # JSON-serialisability, and the route handler's document shape.
     "llm/tests/test_auth_data_export.py",
+    # Public web account-deletion page (GDPR Art. 17 + Google Play,
+    # WD_01..12): the /delete-account* surface reachable WITHOUT the app.
+    # Password path (verify-then-purge + wrong-password / unknown-email /
+    # no-confirm guards) and the Lichess web-OAuth flow (PKCE + signed-
+    # cookie CSRF state, match-then-purge, no-linked-account), plus the
+    # reused exchange redirect_uri override and verify_credentials-issues-
+    # no-session pins.
+    "llm/tests/test_web_account_deletion.py",
     # Model-registration completeness (MR_01..05): the glob-driven pin
     # that every table-defining llm/seca/**/models.py is wildcard-
     # imported by auth/router.py BEFORE create_all, plus a full-app
@@ -397,9 +405,11 @@ COVERAGE_TARGETS = [
     # more than once per process" pre-load hazard that keeps
     # chat_pipeline excluded above.  test_auth_account_deletion.py
     # (TEST_TARGETS) exercises every branch, including the plan-vs-
-    # metadata discovery tripwire.  llm.seca.auth.export is excluded
-    # for the same reason (it imports erasure, and with it the same
-    # model graph); test_auth_data_export.py exercises every branch.
+    # metadata discovery tripwire.  llm.seca.auth.export and
+    # llm.seca.auth.web_deletion are excluded for the same reason (both
+    # reach the erasure model graph — web_deletion transitively via its
+    # auth.router import); test_auth_data_export.py and
+    # test_web_account_deletion.py (TEST_TARGETS) exercise every branch.
     "llm.seca.analytics.router",
     "llm.seca.curriculum.reward",
     "llm.seca.curriculum.spacing",
