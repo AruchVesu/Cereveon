@@ -42,6 +42,21 @@
         app:atriumKicker="Inbox"
         app:atriumTitle="Notifications" />
 
+    <!-- Feed-fetch spinner — visible only while GET /notifications is
+         in flight, so the sheet never sits as a bare header over a
+         blank body (on-device report, 2026-07-17).  Same Atrium
+         primitive as the Lichess sheet's lichessLoadingSpinner. -->
+    <ProgressBar
+        android:id="@+id/notificationsLoadingSpinner"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="@dimen/atrium_space_16"
+        android:layout_marginBottom="@dimen/atrium_space_8"
+        android:indeterminateTint="@color/atrium_accent_cyan"
+        android:visibility="gone"
+        tools:visibility="visible" />
+
     <!-- Mark-all-read action — right-aligned mono label, chip-less so
          it reads as a quiet utility, not a CTA. -->
     <TextView

@@ -7,6 +7,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -55,6 +56,7 @@ class NotificationsBottomSheet : BottomSheetDialogFragment() {
     private lateinit var notificationsList: LinearLayout
     private lateinit var txtEmpty: TextView
     private lateinit var btnMarkAllRead: TextView
+    private lateinit var loadingSpinner: ProgressBar
 
     private var loadJob: Job? = null
     private var latestFeed: List<NotificationItem> = emptyList()
@@ -70,6 +72,7 @@ class NotificationsBottomSheet : BottomSheetDialogFragment() {
         notificationsList = view.findViewById(R.id.notificationsList)
         txtEmpty = view.findViewById(R.id.txtNotificationsEmpty)
         btnMarkAllRead = view.findViewById(R.id.btnMarkAllRead)
+        loadingSpinner = view.findViewById(R.id.notificationsLoadingSpinner)
 
         btnMarkAllRead.setOnClickListener { markAllRead() }
         load()
@@ -89,9 +92,15 @@ class NotificationsBottomSheet : BottomSheetDialogFragment() {
             showEmpty(getString(R.string.notifications_error))
             return
         }
+        // Spinner covers the fetch window only — the quick mutation
+        // paths (read / dismiss / mark-all) update in place over
+        // already-rendered rows and would just flash it.
+        loadingSpinner.visibility = View.VISIBLE
         loadJob?.cancel()
         loadJob = viewLifecycleOwner.lifecycleScope.launch {
-            when (val result = client.feed(token)) {
+            val result = client.feed(token)
+            loadingSpinner.visibility = View.GONE
+            when (result) {
                 is ApiResult.Success -> {
                     latestFeed = result.data.notifications
                     onUnreadCountChanged?.invoke(result.data.unreadCount)
