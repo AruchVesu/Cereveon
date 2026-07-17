@@ -2431,6 +2431,59 @@ Empty.
 
 ---
 
+## 42. `GET /auth/me/export`
+
+**Host:** `llm/seca/auth/router.py`
+**Auth:** `Authorization: Bearer <token>` required (`get_current_player`)
+**Rate limit:** 3 / minute (the heaviest read in the API — one SELECT
+per player-linked table)
+
+GDPR Art. 15 (access) + Art. 20 (portability): download everything the
+service stores about the authenticated account as one JSON document.
+
+Scope is structurally identical to erasure (§41): both endpoints read
+the same plan (`erasure.player_data_plan`), so the metadata-discovery
+tripwire that keeps §41 complete keeps this document complete in the
+same breath.  Credential columns are withheld by the explicit policy in
+`llm/seca/auth/export.py::COLUMN_EXCLUSIONS` (`players.password_hash`,
+`sessions.token_hash` / `previous_token_hash`); a pattern guard in
+`test_auth_data_export.py` forces any future secret-smelling column
+(password/token/secret in the name) into that policy — nothing can
+leak into the export by default.
+
+### Request body
+
+Empty.
+
+### Response
+
+```json
+{
+  "export_version": 1,
+  "generated_at": "<ISO-8601 UTC>",
+  "player_id": "<uuid>",
+  "contents": "GDPR Art. 15/20 data export — every table linked to this account",
+  "data": { "<table_name>": [ { "<column>": <value>, … } ], … }
+}
+```
+
+- `data` carries one key per player-linked table (26 as of this
+  writing — `players`, `game_events`, `chat_turns`, …), each a list of
+  row objects; empty tables are present as `[]`, never omitted, so the
+  key set always matches the erasure scope.
+- Datetimes are ISO-8601 strings; JSON columns arrive as nested
+  objects.  Adding tables or columns is NOT an `export_version` bump —
+  consumers must treat `data` as an open mapping.
+- No pagination in v1: response size is bounded by real usage (free
+  tier: 1 game/day).  Revisit if exports exceed a few MB.
+
+### Errors
+
+- `401` — missing / malformed / expired token.
+- `429` — rate limit exceeded (Shape B).
+
+---
+
 ## Error responses
 
 The API emits **two distinct error-body shapes** that any client (the

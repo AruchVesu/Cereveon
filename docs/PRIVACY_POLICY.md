@@ -210,8 +210,10 @@ stay within the EEA.
 
 ## 10. Your rights
 
-Under the GDPR you can ask us to: **access** your data (and receive a
-copy in a portable format), **rectify** it, **erase** it, **restrict**
+Under the GDPR you can ask us to: **access** your data and receive a
+copy in a portable, machine-readable format (available today as a
+self-serve JSON download via the API's export endpoint, contract §42;
+an in-app download button is pending), **rectify** it, **erase** it, **restrict**
 or **object to** processing based on legitimate interest, and **not be
 subject to** solely automated decisions with legal effect (we make
 none). Write to [privacy@cereveon.com] from your account email (or with
@@ -322,4 +324,4 @@ direct read on 2026-07-17, not just survey output).
 | Single-tier Hetzner hosting; Caddy TLS + HSTS; Postgres on-box | `docs/DEPLOYMENT.md` §0; `docker-compose.prod.yml`; `Caddyfile` |
 | Account erasure: `DELETE /auth/me` purges every player-linked table (explicit ordered plan + discovery tripwire) | `llm/seca/auth/erasure.py`; `llm/tests/test_auth_account_deletion.py`; contract §41 |
 | Player-graph FKs declare `ondelete="CASCADE"`; live Postgres retrofitted at startup | model files (21 FK edges); `llm/seca/auth/router.py::_ensure_fk_delete_cascade` |
-| Data-export / portability endpoint still absent (open gap) | route survey 2026-07-17 |
+| Data export (Art. 15/20): `GET /auth/me/export` serialises the same table scope erasure deletes (shared `player_data_plan`), credential columns excluded with a secret-pattern test guard | `llm/seca/auth/export.py`; `test_auth_data_export.py`; contract §42 |

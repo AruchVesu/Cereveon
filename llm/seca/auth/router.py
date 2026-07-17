@@ -1221,3 +1221,31 @@ def delete_me(
         sum(counts.values()),
     )
     return {"status": "deleted"}
+
+
+@router.get("/me/export")
+@limiter.limit("3/minute")
+def export_me(
+    request: Request,
+    player=Depends(get_current_player),
+    db: DBSession = Depends(get_db),
+):
+    """GDPR Art. 15/20 — full account data export (contract §42).
+
+    Serialises every table the erasure plan covers — the two rights
+    endpoints share one scope authority (``erasure.player_data_plan``),
+    so the metadata-discovery tripwire that keeps DELETE /auth/me
+    complete keeps this document complete too.  Credential columns are
+    withheld by ``export.COLUMN_EXCLUSIONS`` (password/token hashes are
+    attack material, not user data).
+
+    Read-only, one SELECT per player-linked table — the heaviest read
+    in the API, hence the tight rate limit.
+    """
+    # Local import mirrors AuthService.delete_account's rationale: the
+    # export module pulls the erasure model graph (including the
+    # numpy-backed coach package) — keep it off this module's import
+    # path so coverage pre-loads stay safe.
+    from .export import export_player_data
+
+    return export_player_data(db, str(player.id))
