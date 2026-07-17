@@ -154,6 +154,27 @@ interface AuthApiClient {
      *         account still exists in those cases.
      */
     suspend fun deleteAccount(token: String): ApiResult<Unit> = ApiResult.HttpError(501)
+
+    /**
+     * GET /auth/me/export — GDPR Art. 15/20 data export
+     * (`docs/API_CONTRACTS.md` §42).
+     *
+     * Returns the raw JSON document as a String.  The contract treats
+     * the document's ``data`` field as an open mapping (adding tables
+     * or columns is not a version bump), so the client deliberately
+     * does NOT parse into typed DTOs — it saves the exact bytes the
+     * server produced ([DataExportFlows] writes them to the user's
+     * chosen location verbatim).
+     *
+     * Default implementation returns [ApiResult.HttpError(501)] so test
+     * fakes do not need to override this method.
+     *
+     * @return [ApiResult.Success] with the raw document on HTTP 200;
+     *         [ApiResult.HttpError(401)] on an invalid/expired token;
+     *         [ApiResult.Timeout] / [ApiResult.NetworkError] on
+     *         transport failures.
+     */
+    suspend fun exportData(token: String): ApiResult<String> = ApiResult.HttpError(501)
 }
 
 /**
@@ -190,6 +211,7 @@ class HttpAuthApiClient(
         private const val ME_PATH = "/auth/me"
         private const val REGISTER_PATH = "/auth/register"
         private const val CHANGE_PASSWORD_PATH = "/auth/change-password"
+        private const val EXPORT_PATH = "/auth/me/export"
     }
 
     private val http = BaseHttpClient(baseUrl, connectTimeoutMs, readTimeoutMs)
@@ -308,5 +330,17 @@ class HttpAuthApiClient(
         path = ME_PATH,
         method = "DELETE",
         headers = bearerHeader(token),
+    )
+
+    override suspend fun exportData(token: String): ApiResult<String> = http.request(
+        path = EXPORT_PATH,
+        method = "GET",
+        headers = bearerHeader(token),
+        // Normal authenticated read — consume the X-Auth-Token rotation
+        // header (unlike deleteAccount, the session survives this call).
+        onResponse = refreshOnSuccess(),
+        // The document is saved verbatim; parsing would only risk
+        // re-serialisation drift against the server's §42 bytes.
+        parse = { body -> body },
     )
 }

@@ -70,6 +70,13 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
     var onDeleteAccountTapped: (() -> Unit)? = null
 
     /**
+     * "Download my data" (GDPR Art. 15/20, contract §42).  The hosts
+     * forward to [DataExportFlows.startDownload] — the sheet never
+     * fetches or writes anything itself.
+     */
+    var onDownloadDataTapped: (() -> Unit)? = null
+
+    /**
      * Optional callback the host activity wires to surface the
      * Lichess Connect bottom sheet when the "Lichess" row in the
      * Integrations section is tapped.  Defaults to no-op; the host
@@ -188,6 +195,13 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
         view.findViewById<View>(R.id.rowDeleteAccount).setOnClickListener {
             dismiss()
             onDeleteAccountTapped?.invoke()
+        }
+        // Download my data (GDPR Art. 15/20): forwards to the host's
+        // DataExportFlows.startDownload — fetch + SAF save both live
+        // there, so this sheet never touches the network or the disk.
+        view.findViewById<View>(R.id.rowDownloadData).setOnClickListener {
+            dismiss()
+            onDownloadDataTapped?.invoke()
         }
     }
 

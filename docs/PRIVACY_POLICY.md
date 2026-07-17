@@ -211,9 +211,10 @@ stay within the EEA.
 ## 10. Your rights
 
 Under the GDPR you can ask us to: **access** your data and receive a
-copy in a portable, machine-readable format (available today as a
-self-serve JSON download via the API's export endpoint, contract §42;
-an in-app download button is pending), **rectify** it, **erase** it, **restrict**
+copy in a portable, machine-readable format — self-serve, in the app:
+Settings › Account › **Download my data** saves everything we store
+about you as a JSON file wherever you choose (contract §42; Android
+today, iOS pending), **rectify** it, **erase** it, **restrict**
 or **object to** processing based on legitimate interest, and **not be
 subject to** solely automated decisions with legal effect (we make
 none). Write to [privacy@cereveon.com] from your account email (or with

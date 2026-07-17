@@ -2477,6 +2477,17 @@ Empty.
 - No pagination in v1: response size is bounded by real usage (free
   tier: 1 game/day).  Revisit if exports exceed a few MB.
 
+The Android surface is Settings › Account › **Download my data** →
+`DataExportFlows.startDownload`: fetch-then-pick via the Storage
+Access Framework (`CreateDocument("application/json")`, zero
+permissions on minSdk 26+), saving the server's bytes verbatim as
+`cereveon-data-export-<date>.json`.
+`SettingsDownloadDataSourcePinTest` pins that a failed fetch never
+opens the picker (and never creates a file);
+`AuthExportDataIntegrationTest` pins the wire contract, including
+that the raw body round-trips unparsed.  iOS has no entry point yet
+(Phase-0 parity gap).
+
 ### Errors
 
 - `401` — missing / malformed / expired token.

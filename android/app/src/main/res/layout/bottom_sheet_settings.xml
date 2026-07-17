@@ -453,6 +453,27 @@
 
         </LinearLayout>
 
+        <!-- GDPR Art. 15/20 self-serve export (GET /auth/me/export,
+             contract §42): fetches the full account document and saves
+             it wherever the user picks (Storage Access Framework — no
+             permissions).  Non-destructive, so default row colours; the
+             destructive rows below carry the amber accent. -->
+        <LinearLayout
+            android:id="@+id/rowDownloadData"
+            style="@style/Atrium.SettingsRow.Trailing">
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Title"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:text="Download my data" />
+
+            <TextView
+                style="@style/Atrium.SettingsRow.Chevron"
+                android:text="›" />
+
+        </LinearLayout>
+
         <LinearLayout
             android:id="@+id/rowSignOut"
             style="@style/Atrium.SettingsRow.Trailing">
