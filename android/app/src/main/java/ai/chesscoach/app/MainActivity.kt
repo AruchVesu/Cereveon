@@ -118,6 +118,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var txtReviewMove: TextView
     private lateinit var reviewApiClient: ReviewApiClient
 
+    // SAF launcher for Settings › Download my data (contract §42).
+    // Property initializer = registered before STARTED, as the
+    // activity-result API requires; DataExportFlows owns the flow.
+    private val exportSaveLauncher = DataExportFlows.registerSaveLauncher(this)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -391,6 +396,9 @@ class MainActivity : AppCompatActivity() {
             }
             sheet.onDeleteAccountTapped = {
                 AccountFlows.confirmAndDeleteAccount(this, authRepo, authApiClient)
+            }
+            sheet.onDownloadDataTapped = {
+                DataExportFlows.startDownload(this, authRepo, authApiClient, exportSaveLauncher)
             }
             sheet.onConnectLichessTapped = {
                 LichessConnectBottomSheet()
