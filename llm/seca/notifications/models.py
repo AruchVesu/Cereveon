@@ -66,7 +66,7 @@ class Notification(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     player_id: Mapped[str] = mapped_column(
-        String, ForeignKey("players.id"), nullable=False, index=True
+        String, ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     type: Mapped[str] = mapped_column(String, nullable=False)

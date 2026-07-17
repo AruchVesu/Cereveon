@@ -12,7 +12,9 @@ class AnalyticsEvent(Base):
     __tablename__ = "analytics_events"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    player_id: Mapped[str | None] = mapped_column(String, ForeignKey("players.id"), nullable=True)
+    player_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("players.id", ondelete="CASCADE"), nullable=True
+    )
 
     event_type: Mapped[str] = mapped_column(String, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -36,7 +38,7 @@ class WeeklyDigest(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     player_id: Mapped[str] = mapped_column(
-        String, ForeignKey("players.id"), nullable=False, index=True
+        String, ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     period_start: Mapped[datetime] = mapped_column(DateTime, nullable=False)

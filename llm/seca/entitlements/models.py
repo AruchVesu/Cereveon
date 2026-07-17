@@ -63,7 +63,7 @@ class UsageCounter(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     player_id: Mapped[str] = mapped_column(
-        String, ForeignKey("players.id"), index=True, nullable=False
+        String, ForeignKey("players.id", ondelete="CASCADE"), index=True, nullable=False
     )
 
     # Closed vocabulary owned by the entitlements service:

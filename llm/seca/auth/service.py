@@ -366,3 +366,30 @@ class AuthService:
     def logout(self, session_id: str):
         self.db.query(Session).filter_by(id=session_id).delete()
         self.db.commit()
+
+    # ---------------------------
+    # Account erasure (GDPR Art. 17)
+    # ---------------------------
+    def delete_account(self, player: Player) -> dict[str, int]:
+        """Erase the player's account and every linked row.
+
+        Delegates to ``erasure.purge_player_data`` — the single deletion
+        authority — so the table list lives in exactly one place.  All
+        sessions die with the account (the ``sessions`` table is part of
+        the erasure plan), so the presented JWT is unusable the moment
+        this returns.  Deliberately requires no password re-entry:
+        Lichess sign-in accounts have no usable password (see
+        ``login_with_lichess``), and the bearer token presented to
+        ``DELETE /auth/me`` is the account's standing proof of identity;
+        the client gates the call behind an explicit confirmation UI.
+        """
+        # Local import: erasure pulls model modules from across the
+        # schema, including llm.seca.coach.study_plan.models, whose
+        # package __init__ loads the numpy-backed coach engine.  A
+        # module-level import would make coverage's pre-load of
+        # llm.seca.auth.service drag that chain in — the same
+        # once-per-process double-load hazard that keeps chat_pipeline
+        # out of COVERAGE_TARGETS (see llm/run_ci_suite.py).
+        from .erasure import purge_player_data
+
+        return purge_player_data(self.db, str(player.id))

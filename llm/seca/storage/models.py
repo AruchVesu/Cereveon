@@ -75,7 +75,9 @@ class Game(Base):
     __tablename__ = "games"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    player_id: Mapped[str | None] = mapped_column(String, ForeignKey("players.id"), index=True)
+    player_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("players.id", ondelete="CASCADE"), index=True
+    )
     result: Mapped[str | None] = mapped_column(String)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -107,7 +109,9 @@ class Move(Base):
     __tablename__ = "moves"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    game_id: Mapped[str | None] = mapped_column(String, ForeignKey("games.id"), index=True)
+    game_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("games.id", ondelete="CASCADE"), index=True
+    )
     ply: Mapped[int | None] = mapped_column(Integer)
     fen: Mapped[str | None] = mapped_column(Text)
     uci: Mapped[str | None] = mapped_column(String)
@@ -135,7 +139,9 @@ class Explanation(Base):
     __tablename__ = "explanations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    game_id: Mapped[str | None] = mapped_column(String, ForeignKey("games.id"), index=True)
+    game_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("games.id", ondelete="CASCADE"), index=True
+    )
     ply: Mapped[int | None] = mapped_column(Integer)
     explanation_type: Mapped[str | None] = mapped_column(String)
     confidence: Mapped[float | None] = mapped_column(Float)
@@ -185,7 +191,7 @@ class Repertoire(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     player_id: Mapped[str] = mapped_column(
-        String, ForeignKey("players.id"), nullable=False, index=True
+        String, ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True
     )
     eco: Mapped[str] = mapped_column(String, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)

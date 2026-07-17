@@ -10,7 +10,9 @@ class RatingUpdate(Base):
     __tablename__ = "rating_updates"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    event_id = Column(String, ForeignKey("game_events.id"), nullable=False)
+    event_id = Column(
+        String, ForeignKey("game_events.id", ondelete="CASCADE"), nullable=False
+    )
 
     rating_before = Column(Float, nullable=False)
     rating_after = Column(Float, nullable=False)
@@ -22,7 +24,9 @@ class ConfidenceUpdate(Base):
     __tablename__ = "confidence_updates"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    event_id = Column(String, ForeignKey("game_events.id"), nullable=False)
+    event_id = Column(
+        String, ForeignKey("game_events.id", ondelete="CASCADE"), nullable=False
+    )
 
     confidence_before = Column(Float, nullable=False)
     confidence_after = Column(Float, nullable=False)

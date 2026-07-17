@@ -52,7 +52,7 @@ class ChatTurn(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     player_id: Mapped[str] = mapped_column(
-        String, ForeignKey("players.id"), index=True, nullable=False
+        String, ForeignKey("players.id", ondelete="CASCADE"), index=True, nullable=False
     )
 
     # Game this turn belongs to (``games.id``) so chat history is scoped

@@ -12,7 +12,9 @@ class GameEvent(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
 
-    player_id: Mapped[str | None] = mapped_column(String, ForeignKey("players.id"), index=True)
+    player_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("players.id", ondelete="CASCADE"), index=True
+    )
 
     # raw PGN or compact move list
     pgn: Mapped[str] = mapped_column(Text, nullable=False)

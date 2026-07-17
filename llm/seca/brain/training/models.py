@@ -30,7 +30,9 @@ class TrainingOutcome(Base):
     __table_args__ = (Index("idx_training_outcomes_decision", "decision_id"),)
 
     id = Column(String, primary_key=True)
-    decision_id = Column(String, ForeignKey("training_decisions.id"), nullable=False)
+    decision_id = Column(
+        String, ForeignKey("training_decisions.id", ondelete="CASCADE"), nullable=False
+    )
     measured_at = Column(DateTime, nullable=False)
 
     rating_after = Column(Float, nullable=False)
