@@ -33,11 +33,12 @@ import org.junit.Test
  * STATUS_ROTATES         X-Auth-Token in response is forwarded to tokenSink.
  *
  * LINK_METHOD            POST /lichess/link uses HTTP POST.
- * LINK_BODY              request body is {"username": "alice"}.
+ * LINK_BODY              request body carries the OAuth code + code_verifier
+ *                        (ownership proof; no self-asserted username).
  * LINK_CONTENT_TYPE      Content-Type: application/json is sent.
  * LINK_CALIBRATION       calibration sub-object deserialises with all fields.
- * LINK_HTTP_404          404 → ApiResult.HttpError(404).
- * LINK_HTTP_409          409 → ApiResult.HttpError(409).
+ * LINK_HTTP_401          401 → ApiResult.HttpError(401) (Lichess rejected grant).
+ * LINK_HTTP_502          502 → ApiResult.HttpError(502) (Lichess upstream).
  *
  * IMPORT_METHOD          POST /lichess/import uses HTTP POST.
  * IMPORT_QUERY_DEFAULT   default max_games=50 + rated=true on the query string.
@@ -202,25 +203,29 @@ class LichessApiClientIntegrationTest {
     @Test
     fun `LINK_METHOD - request uses HTTP POST`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody(LINK_OK_BODY))
-        client().link("alice", "tok")
+        client().link("auth-code-xyz", "verifier-123", "tok")
         assertEquals("POST", server.takeRequest(10, TimeUnit.SECONDS)!!.method)
     }
 
     @Test
-    fun `LINK_BODY - request body carries username`() = runBlocking {
+    fun `LINK_BODY - request body carries the OAuth code and verifier`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody(LINK_OK_BODY))
-        client().link("alice", "tok")
+        client().link("auth-code-xyz", "verifier-123", "tok")
         val body = server.takeRequest(10, TimeUnit.SECONDS)!!.body.readUtf8()
         assertTrue(
-            "expected body to carry username, got: $body",
-            body.contains("\"username\":\"alice\""),
+            "expected body to carry the auth code, got: $body",
+            body.contains("\"code\":\"auth-code-xyz\""),
+        )
+        assertTrue(
+            "expected body to carry the code_verifier, got: $body",
+            body.contains("\"code_verifier\":\"verifier-123\""),
         )
     }
 
     @Test
     fun `LINK_CONTENT_TYPE - request sends application slash json`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody(LINK_OK_BODY))
-        client().link("alice", "tok")
+        client().link("auth-code-xyz", "verifier-123", "tok")
         val ct = server.takeRequest(10, TimeUnit.SECONDS)!!.getHeader("Content-Type")
         assertEquals("application/json", ct)
     }
@@ -228,7 +233,7 @@ class LichessApiClientIntegrationTest {
     @Test
     fun `LINK_CALIBRATION - calibration sub-object deserialises`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody(LINK_OK_BODY))
-        val result = client().link("alice", "tok")
+        val result = client().link("auth-code-xyz", "verifier-123", "tok")
         assertTrue(result is ApiResult.Success<*>)
         val data = (result as ApiResult.Success<*>).data as LichessLinkResponse
         assertEquals("thibault", data.externalUsername)
@@ -241,19 +246,21 @@ class LichessApiClientIntegrationTest {
     }
 
     @Test
-    fun `LINK_HTTP_404 - lichess user not found surfaces as 404`() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(404))
-        val result = client().link("ghost", "tok")
+    fun `LINK_HTTP_401 - rejected OAuth grant surfaces as 401`() = runBlocking {
+        // Lichess refused the authorization code (expired / replayed /
+        // wrong verifier); the router maps LichessOAuthError → 401.
+        server.enqueue(MockResponse().setResponseCode(401))
+        val result = client().link("expired-code", "verifier-123", "tok")
         assertTrue(result is ApiResult.HttpError)
-        assertEquals(404, (result as ApiResult.HttpError).code)
+        assertEquals(401, (result as ApiResult.HttpError).code)
     }
 
     @Test
-    fun `LINK_HTTP_409 - cross-player conflict surfaces as 409`() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(409))
-        val result = client().link("alice", "tok")
+    fun `LINK_HTTP_502 - lichess upstream failure surfaces as 502`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(502))
+        val result = client().link("auth-code-xyz", "verifier-123", "tok")
         assertTrue(result is ApiResult.HttpError)
-        assertEquals(409, (result as ApiResult.HttpError).code)
+        assertEquals(502, (result as ApiResult.HttpError).code)
     }
 
     // ===========================================================================

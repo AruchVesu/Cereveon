@@ -42,6 +42,16 @@ object LichessOAuth {
     const val REDIRECT_SCHEME = "ai.chesscoach.app"
     const val REDIRECT_HOST = "lichess-auth"
 
+    /**
+     * Dedicated redirect for the ACCOUNT-LINK OAuth flow (logged-in user
+     * proving Lichess ownership before linking).  Distinct host from
+     * sign-in so the redirect routes to [LichessLinkRedirectActivity]
+     * with no ambiguity.  Mirrors the server's
+     * ``LICHESS_OAUTH_LINK_REDIRECT_URI``.
+     */
+    const val LINK_REDIRECT_URI = "ai.chesscoach.app://lichess-link"
+    const val LINK_REDIRECT_HOST = "lichess-link"
+
     // 64 random bytes → 86 base64url chars, comfortably inside the RFC
     // 7636 §4.1 verifier bounds (43–128) with ~512 bits of entropy.
     private const val VERIFIER_BYTES = 64
@@ -76,11 +86,15 @@ object LichessOAuth {
      * value is URL-encoded defensively even though the generated ones
      * are already URL-safe base64.
      */
-    fun buildAuthorizeUrl(codeChallenge: String, state: String): String =
+    fun buildAuthorizeUrl(
+        codeChallenge: String,
+        state: String,
+        redirectUri: String = REDIRECT_URI,
+    ): String =
         AUTHORIZE_ENDPOINT +
             "?response_type=code" +
             "&client_id=${encode(CLIENT_ID)}" +
-            "&redirect_uri=${encode(REDIRECT_URI)}" +
+            "&redirect_uri=${encode(redirectUri)}" +
             "&code_challenge_method=S256" +
             "&code_challenge=${encode(codeChallenge)}" +
             "&state=${encode(state)}"

@@ -14,8 +14,6 @@ import androidx.core.view.isVisible
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelProvider.NewInstanceFactory
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
-import com.google.android.material.textfield.TextInputEditText
-import com.google.android.material.textfield.TextInputLayout
 
 /**
  * Cereveon · Atrium · Lichess Connect bottom sheet.
@@ -23,10 +21,11 @@ import com.google.android.material.textfield.TextInputLayout
  * Surface invariants (mirror docs/API_CONTRACTS.md §§27–30 + the
  * trust-boundary note from llm/seca/lichess/import_service.py):
  *
- *   - Username pre-validated client-side via
- *     [LichessConnectViewModel.isValidUsername]; the same regex the
- *     backend enforces.  An obviously-bad handle is rejected without a
- *     round-trip.
+ *   - Linking requires proof of ownership: the "Connect" button opens
+ *     the Lichess OAuth consent screen via [LichessLinkFlow]; the
+ *     backend exchanges the returned code server-side and links the
+ *     VERIFIED identity.  No username is typed — a user can only link
+ *     an account they actually control (the same PKCE flow as sign-in).
  *
  *   - On link success the calibration banner is shown ONCE — if the
  *     user reopens the sheet later, the GET /lichess/status response
@@ -62,8 +61,6 @@ class LichessConnectBottomSheet : BottomSheetDialogFragment() {
     private lateinit var loadingSpinner: ProgressBar
     private lateinit var groupNotLinked: View
     private lateinit var groupLinked: View
-    private lateinit var usernameLayout: TextInputLayout
-    private lateinit var usernameField: TextInputEditText
     private lateinit var btnLink: Button
     private lateinit var btnImport: Button
     private lateinit var btnUnlink: Button
@@ -97,8 +94,6 @@ class LichessConnectBottomSheet : BottomSheetDialogFragment() {
         loadingSpinner = view.findViewById(R.id.lichessLoadingSpinner)
         groupNotLinked = view.findViewById(R.id.groupNotLinked)
         groupLinked = view.findViewById(R.id.groupLinked)
-        usernameLayout = view.findViewById(R.id.lichessUsernameLayout)
-        usernameField = view.findViewById(R.id.lichessUsernameField)
         btnLink = view.findViewById(R.id.btnLichessLink)
         btnImport = view.findViewById(R.id.btnLichessImport)
         btnUnlink = view.findViewById(R.id.btnLichessUnlink)
@@ -117,10 +112,17 @@ class LichessConnectBottomSheet : BottomSheetDialogFragment() {
         viewModel.onStateChanged = { state -> renderState(state) }
         viewModel.onError = { kind -> surfaceError(kind) }
 
+        // Link / Reconnect → prove Lichess ownership via OAuth: the
+        // browser opens the consent screen and LichessLinkRedirectActivity
+        // completes the link (verified identity, not a typed username).
+        // On return, onStart() → refreshStatus() reflects Linked.
         btnLink.setOnClickListener {
-            val raw = usernameField.text?.toString().orEmpty()
-            usernameLayout.error = null
-            viewModel.link(raw)
+            val host = activity ?: return@setOnClickListener
+            if (LichessLinkFlow.start(host)) {
+                Toast.makeText(host, R.string.lichess_link_opening, Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(host, R.string.lichess_link_no_browser, Toast.LENGTH_LONG).show()
+            }
         }
         btnImport.setOnClickListener {
             viewModel.importGames()
@@ -198,12 +200,11 @@ class LichessConnectBottomSheet : BottomSheetDialogFragment() {
                         ?: getString(R.string.lichess_never_synced)
 
                 // Reconnect state (API_CONTRACTS §29 disconnected flag):
-                // surface the notice AND the username form so the user
-                // can reconnect this account (once restored) or link a
-                // different one — history is preserved server-side
-                // either way.  Import is hidden while disconnected: the
-                // stream can only 404 until a re-link or the account
-                // coming back.
+                // surface the notice AND the Connect button so the user
+                // can reconnect (re-prove ownership via OAuth) — history
+                // is preserved server-side either way.  Import is hidden
+                // while disconnected: the stream can only 404 until a
+                // re-link or the account coming back.
                 reconnectNotice.isVisible = state.disconnected
                 groupNotLinked.isVisible = state.disconnected
                 btnImport.isVisible = !state.disconnected
@@ -211,11 +212,6 @@ class LichessConnectBottomSheet : BottomSheetDialogFragment() {
                     if (state.disconnected) R.string.lichess_reconnect_button_label
                     else R.string.lichess_link_button_label,
                 )
-                if (state.disconnected && usernameField.text.isNullOrBlank()) {
-                    // Pre-fill with the broken handle — the common case
-                    // is reconnecting the same account after it's back.
-                    usernameField.setText(state.username)
-                }
 
                 // One-shot calibration banner.
                 val calibration = state.calibration
@@ -296,7 +292,6 @@ class LichessConnectBottomSheet : BottomSheetDialogFragment() {
         btnLink.isEnabled = enabled
         btnImport.isEnabled = enabled
         btnUnlink.isEnabled = enabled
-        usernameField.isEnabled = enabled
     }
 
     // ------------------------------------------------------------------
@@ -308,14 +303,6 @@ class LichessConnectBottomSheet : BottomSheetDialogFragment() {
         val message = when (kind) {
             LichessConnectViewModel.ErrorKind.UNAUTHENTICATED ->
                 getString(R.string.lichess_error_unauthenticated)
-            LichessConnectViewModel.ErrorKind.USERNAME_INVALID -> {
-                usernameLayout.error = getString(R.string.lichess_error_username_invalid)
-                return  // inline-only; no toast
-            }
-            LichessConnectViewModel.ErrorKind.USERNAME_NOT_FOUND ->
-                getString(R.string.lichess_error_username_not_found)
-            LichessConnectViewModel.ErrorKind.ALREADY_LINKED_TO_OTHER_PLAYER ->
-                getString(R.string.lichess_error_already_linked)
             LichessConnectViewModel.ErrorKind.NOT_LINKED ->
                 getString(R.string.lichess_error_not_linked)
             LichessConnectViewModel.ErrorKind.RATE_LIMITED ->

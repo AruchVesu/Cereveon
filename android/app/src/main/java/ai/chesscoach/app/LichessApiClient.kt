@@ -31,17 +31,23 @@ interface LichessApiClient {
         ApiResult.HttpError(501)
 
     /**
-     * POST /lichess/link.
+     * POST /lichess/link — OAuth ownership-verified linking.
+     *
+     * Forwards the one-time authorization [code] + [codeVerifier] from
+     * the Lichess consent flow (the app never sees a Lichess token);
+     * the backend exchanges them and links the VERIFIED identity.
      *
      * @return [ApiResult.Success] with [LichessLinkResponse] on HTTP 200.
-     *         [ApiResult.HttpError(404)] when the Lichess username does
-     *         not exist; (409) when the handle is already linked to
-     *         another ChessCoach player; (400) on schema validation;
-     *         (502/503) on Lichess upstream / rate-limit; transport
-     *         variants otherwise.
+     *         [ApiResult.HttpError(401)] when Lichess rejected the grant
+     *         (restart the flow); (400) on schema validation; (502/503)
+     *         on Lichess upstream / rate-limit; transport variants
+     *         otherwise.
      */
-    suspend fun link(username: String, token: String): ApiResult<LichessLinkResponse> =
-        ApiResult.HttpError(501)
+    suspend fun link(
+        code: String,
+        codeVerifier: String,
+        token: String,
+    ): ApiResult<LichessLinkResponse> = ApiResult.HttpError(501)
 
     /**
      * POST /lichess/import?max_games=N (v1 synchronous path).
@@ -186,13 +192,16 @@ class HttpLichessApiClient(
         )
 
     override suspend fun link(
-        username: String,
+        code: String,
+        codeVerifier: String,
         token: String,
     ): ApiResult<LichessLinkResponse> = http.request(
         path = LINK_PATH,
         method = "POST",
         headers = bearerHeader(token),
-        body = ApiJson.encodeToString(LichessLinkRequest(username = username)),
+        body = ApiJson.encodeToString(
+            LichessLinkRequest(code = code, codeVerifier = codeVerifier)
+        ),
         onResponse = refreshOnSuccess(),
         parse = { body -> ApiJson.decodeFromString<LichessLinkResponse>(body) },
     )

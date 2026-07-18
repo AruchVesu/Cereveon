@@ -19,12 +19,17 @@ import kotlinx.serialization.Serializable
  */
 
 /**
- * Request body for POST /lichess/link.  Username is shape-validated
- * server-side (2–30 chars, `[A-Za-z0-9_-]`).  We send whatever the
- * user typed verbatim — the backend canonicalises to lowercase id.
+ * Request body for POST /lichess/link.  Linking now requires OAuth
+ * ownership proof (same PKCE flow as "Sign in with Lichess"), not a
+ * self-asserted username: the app forwards the one-time authorization
+ * ``code`` + its ``code_verifier``; the backend exchanges them, reads
+ * the VERIFIED Lichess identity, and links that.
  */
 @Serializable
-data class LichessLinkRequest(val username: String)
+data class LichessLinkRequest(
+    val code: String,
+    @SerialName("code_verifier") val codeVerifier: String,
+)
 
 /**
  * Response from POST /lichess/link.

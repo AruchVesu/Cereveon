@@ -16,8 +16,10 @@ import kotlinx.coroutines.withContext
  * Lifecycle:
  *   - Sheet opens → [refreshStatus] → fetches GET /lichess/status →
  *     transitions to [Linked] or [NotLinked].
- *   - User taps "Link" with a username → [link] → POST /lichess/link →
- *     [Linked] (with optional calibration details).
+ *   - User taps "Link", which opens an OAuth browser round-trip OUTSIDE this
+ *     ViewModel ([LichessLinkFlow] → [LichessLinkRedirectActivity],
+ *     POST /lichess/link) so ownership is proven; on return the sheet
+ *     calls [refreshStatus] and lands on [Linked].
  *   - User taps "Import games" → [importGames] → POST /lichess/import →
  *     [Linked] with the new counts merged in.
  *   - User taps "Unlink" → [unlink] → DELETE /lichess/link → [NotLinked].
@@ -109,9 +111,6 @@ class LichessConnectViewModel(
      */
     enum class ErrorKind {
         UNAUTHENTICATED,
-        USERNAME_INVALID,
-        USERNAME_NOT_FOUND,
-        ALREADY_LINKED_TO_OTHER_PLAYER,
         NOT_LINKED,
         RATE_LIMITED,
         UPSTREAM,
@@ -157,9 +156,10 @@ class LichessConnectViewModel(
         viewModelScope.launch { performStatus() }
     }
 
-    fun link(username: String) {
-        viewModelScope.launch { performLink(username) }
-    }
+    // Linking is no longer a ViewModel operation: it runs as an OAuth
+    // browser round-trip (LichessLinkFlow → LichessLinkRedirectActivity)
+    // so ownership is proven, not self-asserted.  The sheet just launches
+    // it; refreshStatus() reflects the new Linked state on return.
 
     fun importGames(maxGames: Int = LichessApiClient.DEFAULT_MAX_IMPORT) {
         viewModelScope.launch { performImport(maxGames) }
@@ -246,33 +246,6 @@ class LichessConnectViewModel(
                 }
             }
             is ApiResult.HttpError -> surfaceHttpError(result.code, "status")
-            is ApiResult.NetworkError -> surfaceErrorKind(ErrorKind.NETWORK)
-            ApiResult.Timeout -> surfaceErrorKind(ErrorKind.TIMEOUT)
-        }
-    }
-
-    private suspend fun performLink(username: String) {
-        val trimmed = username.trim()
-        if (!isValidUsername(trimmed)) {
-            surfaceErrorKind(ErrorKind.USERNAME_INVALID)
-            return
-        }
-        val token = requireToken() ?: return
-        transitionTo(UiState.Loading(previousState = current))
-        when (val result = withContext(ioDispatcher) { client.link(trimmed, token) }) {
-            is ApiResult.Success -> {
-                val data = result.data
-                transitionTo(
-                    UiState.Linked(
-                        username = data.externalUsername,
-                        linkedAt = data.linkedAt,
-                        lastImportedAt = null,
-                        importedGameCount = 0,
-                        calibration = data.calibration,
-                    )
-                )
-            }
-            is ApiResult.HttpError -> surfaceHttpError(result.code, "link")
             is ApiResult.NetworkError -> surfaceErrorKind(ErrorKind.NETWORK)
             ApiResult.Timeout -> surfaceErrorKind(ErrorKind.TIMEOUT)
         }
@@ -481,15 +454,6 @@ class LichessConnectViewModel(
 
     private fun surfaceHttpError(code: Int, operation: String) {
         val kind = when (operation) {
-            "link" -> when (code) {
-                400 -> ErrorKind.USERNAME_INVALID
-                401 -> ErrorKind.UNAUTHENTICATED
-                404 -> ErrorKind.USERNAME_NOT_FOUND
-                409 -> ErrorKind.ALREADY_LINKED_TO_OTHER_PLAYER
-                502 -> ErrorKind.UPSTREAM
-                503 -> ErrorKind.RATE_LIMITED
-                else -> ErrorKind.UNKNOWN
-            }
             "import" -> when (code) {
                 400 -> ErrorKind.NOT_LINKED
                 401 -> ErrorKind.UNAUTHENTICATED
@@ -509,14 +473,6 @@ class LichessConnectViewModel(
 
     companion object {
         /**
-         * Same shape Lichess accepts (mirrored from the backend
-         * ``_LICHESS_USERNAME_RE`` and the server-side client guard).
-         * Pre-validating client-side gives instant feedback and saves
-         * a round-trip for obviously-malformed input.
-         */
-        private val USERNAME_RE = Regex("^[A-Za-z0-9_-]{2,30}$")
-
-        /**
          * Poll cadence for the v2 import job — 2s.  Server rate limits
          * the GET at 120/min (60/min headroom over the steady-state
          * 30/min this produces).  The Fragment is expected to gate the
@@ -525,8 +481,5 @@ class LichessConnectViewModel(
          * read the value to compute deterministic time advances.
          */
         internal const val POLL_INTERVAL_MS: Long = 2_000L
-
-        fun isValidUsername(username: String): Boolean =
-            USERNAME_RE.matches(username)
     }
 }
