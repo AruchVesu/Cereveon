@@ -25,6 +25,10 @@ import org.junit.Test
  *  7.  OAUTH_CONSTANTS_PINNED      client_id / redirect_uri match the server
  *                                  constants in llm/seca/lichess/client.py
  *                                  (docs/API_CONTRACTS.md §16a pins the pair).
+ *  8.  OAUTH_LINK_URL_REDIRECT     account-link flow reuses the PKCE params but
+ *                                  targets the dedicated link redirect.
+ *  9.  OAUTH_LINK_CONSTANTS_PINNED link redirect mirrors the server constant and
+ *                                  is distinct from the sign-in redirect/host.
  */
 class LichessOAuthTest {
 
@@ -116,5 +120,45 @@ class LichessOAuthTest {
             LichessOAuth.REDIRECT_URI,
             "${LichessOAuth.REDIRECT_SCHEME}://${LichessOAuth.REDIRECT_HOST}",
         )
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 8–9  Account-link OAuth redirect (logged-in ownership proof)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `OAUTH_LINK_URL_REDIRECT - link flow targets the dedicated link redirect`() {
+        // The account-LINK flow reuses the same PKCE machinery as sign-in
+        // but MUST land on the link redirect so the code routes to
+        // LichessLinkRedirectActivity, never LoginActivity.
+        val url = LichessOAuth.buildAuthorizeUrl(
+            codeChallenge = "test-challenge",
+            state = "test-state",
+            redirectUri = LichessOAuth.LINK_REDIRECT_URI,
+        )
+        assertTrue(
+            "link redirect_uri must be percent-encoded, was: $url",
+            "redirect_uri=ai.chesscoach.app%3A%2F%2Flichess-link" in url,
+        )
+        // Same identity-only PKCE contract as sign-in.
+        assertTrue("code_challenge_method=S256" in url)
+        assertTrue("code_challenge=test-challenge" in url)
+        assertTrue("state=test-state" in url)
+        assertFalse("scope must not be requested", "scope=" in url)
+    }
+
+    @Test
+    fun `OAUTH_LINK_CONSTANTS_PINNED - link redirect matches the server and never collides with sign-in`() {
+        // Mirrors LICHESS_OAUTH_LINK_REDIRECT_URI in llm/seca/lichess/client.py.
+        assertEquals("ai.chesscoach.app://lichess-link", LichessOAuth.LINK_REDIRECT_URI)
+        assertEquals(
+            LichessOAuth.LINK_REDIRECT_URI,
+            "${LichessOAuth.REDIRECT_SCHEME}://${LichessOAuth.LINK_REDIRECT_HOST}",
+        )
+        // The two OAuth flows MUST use distinct redirects/hosts so a link
+        // code can never be delivered to the sign-in handler (or vice
+        // versa) — that separation is the whole point of the split.
+        assertNotEquals(LichessOAuth.REDIRECT_URI, LichessOAuth.LINK_REDIRECT_URI)
+        assertNotEquals(LichessOAuth.REDIRECT_HOST, LichessOAuth.LINK_REDIRECT_HOST)
     }
 }

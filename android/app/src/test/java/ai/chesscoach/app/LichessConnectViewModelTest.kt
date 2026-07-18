@@ -9,7 +9,6 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -20,17 +19,14 @@ import org.junit.Test
  *
  * Pinned invariants
  * -----------------
- * VM_REGEX_ACCEPTS_LICHESS_SHAPE  isValidUsername accepts 2-30 char `[A-Za-z0-9_-]`.
- * VM_REGEX_REJECTS_OFF_SHAPE      isValidUsername rejects spaces, `/`, non-ASCII, etc.
- *
  * VM_STATUS_NOT_LINKED            backend `{"linked": false}` → UiState.NotLinked.
  * VM_STATUS_LINKED                backend linked-true response → UiState.Linked with counts.
  *
- * VM_LINK_CLIENT_VALIDATION       Off-shape username never reaches the client + surfaces
- *                                 USERNAME_INVALID error.
- * VM_LINK_SUCCESS                 Successful link → UiState.Linked with calibration set.
- * VM_LINK_HTTP_404                404 → USERNAME_NOT_FOUND error; state reverts.
- * VM_LINK_HTTP_409                409 → ALREADY_LINKED_TO_OTHER_PLAYER error; state reverts.
+ * (Linking is no longer a ViewModel operation: it runs as an OAuth
+ * browser round-trip in LichessLinkFlow → LichessLinkRedirectActivity so
+ * ownership is proven server-side.  The former VM_REGEX_* / VM_LINK_*
+ * pins retired with the self-asserted-username path; the redirect
+ * activity's CSRF-state + code-exchange contract is covered separately.)
  *
  * VM_IMPORT_REQUIRES_LINK         Calling importGames in NotLinked state surfaces NOT_LINKED
  *                                 without hitting the client.
@@ -82,19 +78,16 @@ class LichessConnectViewModelTest {
      */
     private class FakeLichessClient : LichessApiClient {
         var statusResponse: ApiResult<LichessStatusResponse> = ApiResult.HttpError(501)
-        var linkResponse: ApiResult<LichessLinkResponse> = ApiResult.HttpError(501)
         var importResponse: ApiResult<LichessImportResponse> = ApiResult.HttpError(501)
         var startImportResponse: ApiResult<LichessImportAccepted> = ApiResult.HttpError(501)
         var jobStatusResponse: ApiResult<LichessImportJobStatus> = ApiResult.HttpError(501)
         var unlinkResponse: ApiResult<LichessUnlinkResponse> = ApiResult.HttpError(501)
 
-        var linkCalls = 0
         var importCalls = 0
         var startImportCalls = 0
         var getImportJobCalls = 0
         var unlinkCalls = 0
         var statusCalls = 0
-        var capturedLinkUsername: String? = null
         var capturedImportMaxGames: Int? = null
         var capturedStartImportMaxGames: Int? = null
         var capturedGetImportJobId: String? = null
@@ -104,11 +97,9 @@ class LichessConnectViewModelTest {
             return statusResponse
         }
 
-        override suspend fun link(username: String, token: String): ApiResult<LichessLinkResponse> {
-            linkCalls += 1
-            capturedLinkUsername = username
-            return linkResponse
-        }
+        // No link() override: the ViewModel no longer performs linking
+        // (it's an OAuth browser round-trip now).  The interface default
+        // (HttpError(501)) stands so an accidental call would be loud.
 
         @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION")
         override suspend fun importGames(
@@ -156,34 +147,6 @@ class LichessConnectViewModelTest {
     )
 
     // ─────────────────────────────────────────────────────────────────────
-    // VM_REGEX_*
-    // ─────────────────────────────────────────────────────────────────────
-
-    @Test
-    fun `VM_REGEX_ACCEPTS_LICHESS_SHAPE - common shapes accepted`() {
-        listOf("DrNykterstein", "alice", "user_42", "a-b", "Ab", "x".repeat(30)).forEach {
-            assertTrue("expected '$it' to be valid", LichessConnectViewModel.isValidUsername(it))
-        }
-    }
-
-    @Test
-    fun `VM_REGEX_REJECTS_OFF_SHAPE - off-shape rejected`() {
-        listOf(
-            "",                 // empty
-            "a",                // too short
-            "x".repeat(31),     // too long
-            "with spaces",
-            "ümlaut",           // non-ASCII
-            "rot/13",           // slash
-            "drop;table",       // semicolon
-            "evil?inject",      // question mark
-            "alice/../admin",   // path traversal shape
-        ).forEach {
-            assertFalse("expected '$it' to be rejected", LichessConnectViewModel.isValidUsername(it))
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
     // VM_STATUS_*
     // ─────────────────────────────────────────────────────────────────────
 
@@ -228,90 +191,6 @@ class LichessConnectViewModelTest {
         assertEquals(5, state.importedGameCount)
         assertEquals("2026-05-13T08:28:57", state.lastImportedAt)
     }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // VM_LINK_*
-    // ─────────────────────────────────────────────────────────────────────
-
-    @Test
-    fun `VM_LINK_CLIENT_VALIDATION - off-shape username never reaches client`() =
-        runTest(testDispatcher) {
-            val client = FakeLichessClient()
-            val vm = newViewModel(client)
-            var errorKind: LichessConnectViewModel.ErrorKind? = null
-            vm.onError = { errorKind = it }
-
-            vm.link("ümlaut")
-
-            assertEquals(0, client.linkCalls)
-            assertEquals(LichessConnectViewModel.ErrorKind.USERNAME_INVALID, errorKind)
-        }
-
-    @Test
-    fun `VM_LINK_SUCCESS - successful link transitions to Linked with calibration`() =
-        runTest(testDispatcher) {
-            val client = FakeLichessClient().apply {
-                linkResponse = ApiResult.Success(
-                    LichessLinkResponse(
-                        platform = "lichess",
-                        externalUsername = "thibault",
-                        linkedAt = "2026-05-18T20:06:21",
-                        calibration = LichessCalibrationResult(
-                            applied = true,
-                            perf = "rapid",
-                            rating = 1907f,
-                            confidence = 0.85f,
-                            gamesBasis = 894,
-                            provisional = false,
-                        ),
-                    )
-                )
-            }
-            val vm = newViewModel(client)
-
-            vm.link("thibault")
-
-            val state = vm.state as LichessConnectViewModel.UiState.Linked
-            assertEquals("thibault", state.username)
-            assertEquals(1907f, state.calibration?.rating)
-            assertEquals("rapid", state.calibration?.perf)
-            assertEquals("thibault", client.capturedLinkUsername)
-        }
-
-    @Test
-    fun `VM_LINK_HTTP_404 - user not found surfaces USERNAME_NOT_FOUND`() =
-        runTest(testDispatcher) {
-            val client = FakeLichessClient().apply {
-                linkResponse = ApiResult.HttpError(404)
-            }
-            val vm = newViewModel(client)
-            var errorKind: LichessConnectViewModel.ErrorKind? = null
-            vm.onError = { errorKind = it }
-
-            vm.link("ghost")
-
-            assertEquals(LichessConnectViewModel.ErrorKind.USERNAME_NOT_FOUND, errorKind)
-            // State reverts to whatever was visible before — Initial in this test.
-            assertTrue(vm.state is LichessConnectViewModel.UiState.Initial)
-        }
-
-    @Test
-    fun `VM_LINK_HTTP_409 - cross-player conflict surfaces ALREADY_LINKED`() =
-        runTest(testDispatcher) {
-            val client = FakeLichessClient().apply {
-                linkResponse = ApiResult.HttpError(409)
-            }
-            val vm = newViewModel(client)
-            var errorKind: LichessConnectViewModel.ErrorKind? = null
-            vm.onError = { errorKind = it }
-
-            vm.link("alice")
-
-            assertEquals(
-                LichessConnectViewModel.ErrorKind.ALREADY_LINKED_TO_OTHER_PLAYER,
-                errorKind,
-            )
-        }
 
     // ─────────────────────────────────────────────────────────────────────
     // VM_IMPORT_*

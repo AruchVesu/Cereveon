@@ -3,7 +3,9 @@
     Cereveon · Atrium · Lichess Connect bottom sheet.
 
     Two visual states bound from LichessConnectBottomSheet.kt:
-      1.  Not linked    — username field + "Link" primary button.
+      1.  Not linked    — intro copy + "Connect with Lichess" primary
+                          button (opens the OAuth consent screen; no
+                          username is typed — ownership is proven).
       2.  Linked        — status block (handle, calibration banner,
                           counts) + "Import games" + "Unlink".
 
@@ -77,31 +79,6 @@
                 android:textSize="14sp"
                 android:textColor="@color/atrium_muted"
                 android:text="@string/lichess_connect_intro" />
-
-            <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/lichessUsernameLayout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="@dimen/atrium_space_24"
-                android:layout_marginEnd="@dimen/atrium_space_24"
-                android:layout_marginBottom="@dimen/atrium_space_16"
-                android:hint="@string/lichess_username_hint"
-                app:boxStrokeColor="@color/atrium_accent_cyan"
-                app:hintTextColor="@color/atrium_dim"
-                style="@style/Widget.Material3.TextInputLayout.OutlinedBox">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/lichessUsernameField"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="@font/cormorant_garamond"
-                    android:textColor="@color/atrium_ink"
-                    android:textSize="15sp"
-                    android:inputType="text"
-                    android:imeOptions="actionDone"
-                    android:maxLength="30" />
-
-            </com.google.android.material.textfield.TextInputLayout>
 
             <Button
                 android:id="@+id/btnLichessLink"

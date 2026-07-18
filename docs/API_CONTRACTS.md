@@ -835,9 +835,11 @@ Superset of the §15/§16 shape — the Android client deserialises it as
   and *this* player's existing link is never modified.  When the handle is
   linked to a **different** Cereveon account, OAuth sign-in **claims** it
   (*2026-07-03*): verified OAuth ownership overrides another account's
-  self-asserted `/lichess/link`.  `link_account`'s
-  `claim_from_other_player` flag is set only on this verified path — the
-  manual `/lichess/link` route (§27) still rejects conflicts with 409.
+  self-asserted `/lichess/link`.  As of *2026-07-17* the manual
+  `/lichess/link` route (§27) is itself OAuth-verified and sets the same
+  `claim_from_other_player` flag — so it too **claims** a contested
+  handle rather than returning 409 (there is no longer an unverified
+  link path that could create a contested handle in the first place).
   The losing account's active import jobs are cancelled and its link row
   removed; its imported games remain as history.  This resolves the
   same-human / two-logins case (handle linked on a password account,
@@ -1196,11 +1198,22 @@ Same shape as §14 — full updated list.
 **Auth:** `Authorization: Bearer <token>` required
 **Rate limit:** 10 / minute
 
-Attach a Lichess account to the authenticated player.  Validates the
-handle via Lichess `GET /api/user/{username}` and, on first link
-(player still at default rating 1200 + confidence 0.5), seeds the
+Attach a Lichess account to the authenticated player, **proving
+ownership via OAuth** — the same PKCE authorization-code flow as "Sign
+in with Lichess" (§16a), through a dedicated redirect
+(`ai.chesscoach.app://lichess-link`).  The client sends the one-time
+authorization `code` + its PKCE `code_verifier`; the server performs
+the token exchange, reads the verified account, and **revokes the
+Lichess token immediately** (it never reaches the device).  On first
+link (player still at default rating 1200 + confidence 0.5), seeds the
 player's rating + confidence from the matching Lichess perf rating
 (prefers `rapid`, then `blitz`, then `classical`).
+
+This replaces the former self-asserted `{username}` body *(2026-07-17)*,
+which let a logged-in player attach any handle they did not own.
+Because the identity is now verified, a successful link **claims** the
+handle even if another account had previously self-asserted it
+(`claim_from_other_player=True`), mirroring OAuth sign-in.
 
 The Lichess account is the only external-platform link supported in
 this release.  Imported `GameEvent` rows carry `source='lichess'` and
@@ -1211,7 +1224,15 @@ note below).
 
 | Field | Type | Constraints |
 |-------|------|-------------|
-| `username` | `string` | 2–30 chars; `[A-Za-z0-9_-]` only.  The Lichess signup-form rule. |
+| `code` | `string` | Lichess one-time authorization code from the redirect.  Matched against `AUTH_CODE_RE`. |
+| `code_verifier` | `string` | The PKCE verifier for this attempt (RFC 7636 §4.1 shape; `CODE_VERIFIER_RE`). |
+
+The redirect URI is fixed server-side to `LICHESS_OAUTH_LINK_REDIRECT_URI`
+(default `ai.chesscoach.app://lichess-link`) — clients never send it, and
+it is a **distinct host** from sign-in's `ai.chesscoach.app://lichess-auth`
+so the two flows never cross wires.  See §16a for the sign-in flow that
+mints the `code` + `code_verifier`; linking reuses that machinery with the
+dedicated link redirect.
 
 ### Response
 
@@ -1242,19 +1263,28 @@ note below).
 
 ### Errors
 
-- `400` — username failed schema validation, or the Lichess profile
-  payload was missing the `id` field.
-- `404` — Lichess returned 404 for the username.
-- `409` — that Lichess handle is already linked to another ChessCoach
-  player.  Detail: `"Lichess account '<id>' is linked to another
-  player"`.
-- `502` — Lichess returned 5xx, a non-special-cased 4xx, or its body
-  failed to parse.
-- `503` — Lichess returned 429.  Carries `Retry-After` header when
-  Lichess provided one (numeric seconds; non-numeric values are
-  dropped silently).
+- `400` — `code` / `code_verifier` failed schema validation (malformed
+  shape).
+- `401` — the Lichess authorization-code exchange failed (expired /
+  replayed code, wrong verifier, or redirect mismatch).  Detail:
+  `"Lichess authorization failed"`.  Restart the OAuth flow.
+- `502` — Lichess upstream error (5xx, an unexpected 4xx, or an
+  unparseable body) while exchanging the code or reading the account.
+  Detail: `"Lichess upstream error"`.
+- `503` — Lichess is busy / rate-limiting.  Detail: `"Lichess is busy;
+  try again shortly"`.
+
+Because ownership is now verified, this endpoint no longer returns `404`
+(no username is looked up) or `409` (a verified link **claims** the
+handle rather than rejecting it).
 
 ### Trust-boundary note
+
+Linking requires a **verified OAuth identity** (the code exchange
+above), closing the prior gap where a logged-in player could
+self-assert — and thereby link — a Lichess handle they did not own.
+The token is exchanged server-side and revoked immediately, so the
+device never holds a Lichess credential.
 
 This endpoint is the only place that mutates `Player.rating` /
 `Player.confidence` from Lichess data, and it does so at most once per
