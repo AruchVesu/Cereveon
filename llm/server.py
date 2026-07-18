@@ -46,6 +46,7 @@ from llm.seca.puzzles.router import router as puzzles_router
 from llm.seca.entitlements import service as entitlements
 from llm.seca.billing.router import router as billing_router
 from llm.seca.feedback.router import router as feedback_router
+from llm.seca.moderation.router import router as moderation_router
 from llm.seca.review.router import router as review_router
 from llm.seca.notifications.router import router as notifications_router
 
@@ -890,6 +891,9 @@ app.include_router(study_plan_router)
 app.include_router(puzzles_router)
 app.include_router(billing_router)
 app.include_router(feedback_router)
+# AI-generated-content reporting (POST /coach/report) — the in-app
+# "Report" affordance Google Play's AI-Generated Content policy requires.
+app.include_router(moderation_router)
 app.include_router(review_router)
 app.include_router(notifications_router)
 app.include_router(

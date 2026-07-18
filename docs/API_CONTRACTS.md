@@ -2568,6 +2568,57 @@ draft / annex markers.
 
 ---
 
+## 45. `POST /coach/report`
+
+**Host:** `llm/seca/moderation/router.py`
+**Auth:** `Authorization: Bearer <token>` required (`get_current_player`)
+**Rate limit:** 10 / minute
+
+Flag a coach (AI-generated) message as offensive or harmful — the
+in-app reporting affordance Google Play's **AI-Generated Content
+policy** requires (users must be able to report offensive AI output
+without leaving the app; reports inform moderation).  Distinct from
+`POST /game/coach-feedback`, which is a helpful/not-helpful *quality*
+signal.
+
+### Request body
+
+```json
+{
+  "content": <string>,              // the reported coach text (required, ≤ 8000)
+  "surface": "chat" | "live_move" | "review" | "study_plan" | "other",
+  "fen":     <string | null>,       // board context, ≤ 200 (optional)
+  "reason":  <string | null>        // user's note, ≤ 1000 (optional)
+}
+```
+
+`content` is trimmed and must be non-empty; `surface` must be in the
+closed vocabulary; `fen` / `reason` are omitted from the Android wire
+when null.  The reported text is untrusted user-flagged content: stored
+verbatim in `content_reports` (an operator-reviewed queue, `reviewed =
+0`), **never logged** (the log line carries only player id + surface +
+length), and never read back into any coaching / prompt / adaptation
+path.  Deleted with the account (in the erasure + export plans).
+
+### Response
+
+```json
+{ "status": "received", "id": "<uuid>" }
+```
+
+### Errors
+
+- `401` — missing / invalid token.
+- `422` — empty content, unknown surface, or an over-cap field.
+- `429` — rate limit exceeded (Shape B).
+
+The Android surface is the **Report (flag)** icon on each coach message
+in the chat panel (`ChatAdapter` → `ChatBottomSheet.showReportDialog`);
+`ReportContentSourcePinTest` pins that the tap only opens a confirmation
+dialog and the POST fires from its positive button.
+
+---
+
 ## Error responses
 
 The API emits **two distinct error-body shapes** that any client (the

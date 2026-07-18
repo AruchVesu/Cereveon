@@ -86,6 +86,19 @@ data class CoachFeedbackRequest(
 )
 
 /**
+ * Request body for POST /coach/report — flags a coach (AI-generated)
+ * message as offensive/harmful.  `fen`/`reason` are omitted from the
+ * wire when null (ApiJson.encodeDefaults=false).
+ */
+@Serializable
+data class ContentReportRequest(
+    val content: String,
+    val surface: String,
+    val fen: String? = null,
+    val reason: String? = null,
+)
+
+/**
  * Centipawn evaluation band returned by the engine for display in the context header.
  * Null fields indicate the server omitted the field.
  */

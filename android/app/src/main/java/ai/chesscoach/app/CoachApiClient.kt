@@ -123,6 +123,25 @@ interface CoachApiClient {
     ): ApiResult<Unit> = ApiResult.HttpError(501)
 
     /**
+     * POST /coach/report — flag a coach (AI-generated) message as
+     * offensive/harmful (Google Play AI-Generated Content policy).
+     *
+     * Distinct from [submitFeedback]: that is a quality signal
+     * (helpful/not-helpful); this files a moderation report on the AI
+     * content the user is looking at, without leaving the app.  [surface]
+     * is where the content appeared ("chat", "review", ...); [reason] is
+     * the user's optional note.  Returns [ApiResult.HttpError(501)] by
+     * default so test fakes need not override it.
+     */
+    suspend fun reportContent(
+        content: String,
+        surface: String,
+        fen: String?,
+        reason: String?,
+        token: String?,
+    ): ApiResult<Unit> = ApiResult.HttpError(501)
+
+    /**
      * GET /chat/history — load the most recent persisted chat turns for
      * the authenticated player.
      *
@@ -190,6 +209,7 @@ class HttpCoachApiClient(
         private const val CHAT_STREAM_PATH = "/chat/stream"
         private const val CHAT_HISTORY_PATH = "/chat/history"
         private const val FEEDBACK_PATH = "/game/coach-feedback"
+        private const val REPORT_PATH = "/coach/report"
     }
 
     private val http = BaseHttpClient(baseUrl, connectTimeoutMs, readTimeoutMs)
@@ -389,6 +409,23 @@ class HttpCoachApiClient(
         headers = authHeaders(extraToken = token),
         body = ApiJson.encodeToString(
             CoachFeedbackRequest(sessionFen = fen, isHelpful = isHelpful)
+        ),
+        onResponse = refreshOnSuccess(),
+    )
+
+    override suspend fun reportContent(
+        content: String,
+        surface: String,
+        fen: String?,
+        reason: String?,
+        token: String?,
+    ): ApiResult<Unit> = http.requestNoBody(
+        path = REPORT_PATH,
+        method = "POST",
+        headers = authHeaders(extraToken = token),
+        // ApiJson.encodeDefaults=false drops null fen/reason from the wire.
+        body = ApiJson.encodeToString(
+            ContentReportRequest(content = content, surface = surface, fen = fen, reason = reason)
         ),
         onResponse = refreshOnSuccess(),
     )
