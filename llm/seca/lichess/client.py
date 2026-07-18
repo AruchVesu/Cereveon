@@ -154,6 +154,16 @@ LICHESS_OAUTH_REDIRECT_URI = os.getenv(
     "LICHESS_OAUTH_REDIRECT_URI", "ai.chesscoach.app://lichess-auth"
 )
 
+# Redirect for the ACCOUNT-LINK OAuth flow (POST /lichess/link) — a
+# DEDICATED custom-scheme URI, distinct from sign-in's, so the app can
+# route the link redirect to its own handler without ambiguity.  Must
+# byte-match the ``redirect_uri`` the Android link authorize request used;
+# passed to ``exchange_authorization_code(redirect_uri=...)``.  Android
+# mirror: ``LichessOAuth.LINK_REDIRECT_URI``.
+LICHESS_OAUTH_LINK_REDIRECT_URI = os.getenv(
+    "LICHESS_OAUTH_LINK_REDIRECT_URI", "ai.chesscoach.app://lichess-link"
+)
+
 # RFC 7636 §4.1 code-verifier shape: 43-128 chars of the unreserved set.
 CODE_VERIFIER_RE = re.compile(r"^[A-Za-z0-9\-._~]{43,128}$")
 

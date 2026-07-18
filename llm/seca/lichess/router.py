@@ -22,7 +22,6 @@ worker process.  A 100-game cap keeps the worst-case latency bounded.
 from __future__ import annotations
 
 import logging
-import re
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -84,13 +83,6 @@ def engine_pool_from_request(request: Request):
     return getattr(state, "engine_pool", None)
 
 
-# Lichess username spec: 2–30 chars, alphanumerics plus ``_`` and ``-``.
-# Source: lichess.org/api docs — same rule the signup form enforces.
-# We pre-validate so we never send a structurally-invalid handle to
-# Lichess (which would return a vague 400) and so log injection via the
-# username string is impossible.
-_LICHESS_USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{2,30}$")
-
 # Hard upper bound on a single import slice.  Backend has no background
 # job framework; a synchronous request must complete within a sane
 # proxy timeout.  100 typical games is ~30-60s of Lichess streaming on
@@ -105,14 +97,33 @@ _MAX_IMPORT_PER_CALL = 100
 
 
 class LinkRequest(BaseModel):
-    username: str
+    """POST /lichess/link — OAuth authorization-code linking.
 
-    @field_validator("username")
+    A logged-in player proves ownership of the Lichess account through
+    the same PKCE authorization flow as sign-in (a DEDICATED redirect,
+    ``ai.chesscoach.app://lichess-link``), and the server links the
+    VERIFIED identity.  This replaces the old self-asserted-``username``
+    link, which let a user attach any handle they did not own.  Same
+    server-side exchange as ``POST /auth/lichess`` — the code + verifier
+    are forwarded here, never a raw Lichess token.
+    """
+
+    code: str
+    code_verifier: str
+
+    @field_validator("code")
     @classmethod
-    def _validate_username(cls, v: str) -> str:
-        v = (v or "").strip()
-        if not _LICHESS_USERNAME_RE.fullmatch(v):
-            raise ValueError("username must be 2-30 chars of letters, digits, '_' or '-'")
+    def _validate_code(cls, v: str) -> str:
+        v = v.strip()
+        if not lichess_client.AUTH_CODE_RE.fullmatch(v):
+            raise ValueError("malformed authorization code")
+        return v
+
+    @field_validator("code_verifier")
+    @classmethod
+    def _validate_code_verifier(cls, v: str) -> str:
+        if not lichess_client.CODE_VERIFIER_RE.fullmatch(v):
+            raise ValueError("malformed code_verifier (RFC 7636 §4.1 shape required)")
         return v
 
 
@@ -162,9 +173,49 @@ def link(
     player=Depends(get_current_player),
     db: DBSession = Depends(get_db),
 ):
-    """Attach a Lichess handle and (on first link) calibrate rating."""
+    """Link a Lichess account to the authenticated player via OAuth.
+
+    Ownership is PROVEN by the authorization-code exchange (not a typed
+    username), so the verified identity is linked and — mirroring OAuth
+    sign-in — CLAIMS the handle from any other account's self-asserted
+    link (``claim_from_other_player=True``).  First link also calibrates
+    rating.
+
+    The exchange uses the dedicated LINK redirect_uri and revokes the
+    Lichess token immediately after the identity is read — the same
+    server-side, token-never-on-device pattern as ``POST /auth/lichess``.
+    """
     try:
-        return import_service.link_account(db, player, req.username)
+        lichess_token = lichess_client.exchange_authorization_code(
+            req.code,
+            req.code_verifier,
+            redirect_uri=lichess_client.LICHESS_OAUTH_LINK_REDIRECT_URI,
+        )
+        try:
+            account = lichess_client.fetch_account(lichess_token)
+        except lichess_client.LichessClientError:
+            # Exchange succeeded → a live token exists at Lichess; revoke
+            # it before propagating the fetch failure.  Best-effort.
+            lichess_client.revoke_token(lichess_token)
+            raise
+    except lichess_client.LichessOAuthError:
+        raise HTTPException(status_code=401, detail="Lichess authorization failed")
+    except lichess_client.LichessRateLimited:
+        raise HTTPException(status_code=503, detail="Lichess is busy; try again shortly")
+    except lichess_client.LichessClientError:
+        raise HTTPException(status_code=502, detail="Lichess upstream error")
+
+    lichess_client.revoke_token(lichess_token)
+
+    # fetch_account validated the id shape (fail-closed); a trusted key now.
+    try:
+        return import_service.link_account(
+            db,
+            player,
+            str(account["id"]),
+            profile=account,
+            claim_from_other_player=True,
+        )
     except HTTPException:
         raise
     except Exception as exc:  # pylint: disable=broad-except

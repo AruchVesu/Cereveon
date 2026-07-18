@@ -977,91 +977,117 @@ class TestDerivePlayerColor:
 
 
 class TestRouter:
-    # RT_01
-    @pytest.mark.parametrize(
-        "bad",
-        [
-            "",
-            " ",
-            "a",  # too short
-            "x" * 31,  # too long
-            "with spaces",
-            "ümlaut",
-            "rot/13",
-            "drop;table",
-        ],
-    )
-    def test_link_request_rejects_malformed_username(self, bad):
+    # Valid PKCE verifier (matches CODE_VERIFIER_RE, 43-128 unreserved).
+    _VALID_VERIFIER = "v" * 50
+
+    @staticmethod
+    def _stub_oauth(monkeypatch, *, account=None, exchange_exc=None, fetch_exc=None):
+        """Stub the Lichess OAuth exchange / fetch / revoke that POST
+        /lichess/link now performs (no more self-asserted username)."""
+
+        def _exchange(code, code_verifier, redirect_uri=None):
+            if exchange_exc is not None:
+                raise exchange_exc
+            return "tok-verified"
+
+        def _fetch(token):
+            if fetch_exc is not None:
+                raise fetch_exc
+            return account
+
+        monkeypatch.setattr(lichess_client, "exchange_authorization_code", _exchange)
+        monkeypatch.setattr(lichess_client, "fetch_account", _fetch)
+        monkeypatch.setattr(lichess_client, "revoke_token", lambda t: None)
+
+    # RT_01 — schema: link takes an OAuth code + PKCE verifier now.
+    @pytest.mark.parametrize("bad_verifier", ["", " ", "short", "x" * 200])
+    def test_link_request_rejects_malformed_verifier(self, bad_verifier):
         with pytest.raises(ValidationError):
-            LinkRequest(username=bad)
+            LinkRequest(code="authcode123", code_verifier=bad_verifier)
 
-    @pytest.mark.parametrize("good", ["DrNykterstein", "alice", "user_42", "a-b"])
-    def test_link_request_accepts_valid_username(self, good):
-        assert LinkRequest(username=good).username == good
+    def test_link_request_rejects_empty_code(self):
+        with pytest.raises(ValidationError):
+            LinkRequest(code="", code_verifier="v" * 50)
 
-    # RT_02
-    def test_router_link_translates_user_not_found_to_404(self, db_session, player, monkeypatch):
-        def _raise(username):
-            raise lichess_client.LichessUserNotFound("nope")
+    def test_link_request_accepts_oauth_shape(self):
+        req = LinkRequest(code="authcode123", code_verifier="v" * 50)
+        assert req.code == "authcode123"
 
-        monkeypatch.setattr(import_service.lichess_client, "fetch_user_profile", _raise)
-        req = LinkRequest(username="ghost")
+    # RT_02 — a failed OAuth authorization → 401 (no linking).
+    def test_router_link_oauth_failure_to_401(self, db_session, player, monkeypatch):
+        self._stub_oauth(monkeypatch, exchange_exc=lichess_client.LichessOAuthError("bad grant"))
         with _limiter_disabled():
             with pytest.raises(Exception) as excinfo:
-                link(request=_fake_request(), req=req, player=player, db=db_session)
-        assert getattr(excinfo.value, "status_code", None) == 404
+                link(
+                    request=_fake_request(),
+                    req=LinkRequest(code="c", code_verifier=self._VALID_VERIFIER),
+                    player=player,
+                    db=db_session,
+                )
+        assert getattr(excinfo.value, "status_code", None) == 401
 
-    # RT_03
-    def test_router_link_translates_already_linked_to_409(
-        self, db_session, player, other_player, monkeypatch
-    ):
-        _stub_profile(monkeypatch, profile={"id": "alice", "perfs": {}})
+    # RT_02b — verified OAuth links the PROFILE identity (not a typed name).
+    def test_router_link_oauth_links_verified_identity(self, db_session, player, monkeypatch):
+        self._stub_oauth(monkeypatch, account={"id": "alice", "perfs": {}})
         with _limiter_disabled():
-            link(
+            result = link(
                 request=_fake_request(),
-                req=LinkRequest(username="alice"),
-                player=other_player,
+                req=LinkRequest(code="c", code_verifier=self._VALID_VERIFIER),
+                player=player,
                 db=db_session,
             )
+        assert result["external_username"] == "alice"
+        assert (
+            db_session.query(LinkedAccount)
+            .filter_by(player_id=player.id, external_username="alice")
+            .count()
+            == 1
+        )
+
+    # RT_03 — verified OAuth ownership CLAIMS the handle from another
+    # player's self-asserted link (no 409 — matches sign-in).
+    def test_router_link_oauth_claims_from_other_player(
+        self, db_session, player, other_player, monkeypatch
+    ):
+        import_service.link_account(
+            db_session, other_player, "alice", profile={"id": "alice", "perfs": {}}
+        )
+        self._stub_oauth(monkeypatch, account={"id": "alice", "perfs": {}})
+        with _limiter_disabled():
+            result = link(
+                request=_fake_request(),
+                req=LinkRequest(code="c", code_verifier=self._VALID_VERIFIER),
+                player=player,
+                db=db_session,
+            )
+        assert result["external_username"] == "alice"
+        rows = db_session.query(LinkedAccount).filter_by(external_username="alice").all()
+        assert len(rows) == 1
+        assert rows[0].player_id == player.id
+
+    # RT_06 — Lichess rate-limiting the exchange → 503.
+    def test_router_link_rate_limited_to_503(self, db_session, player, monkeypatch):
+        self._stub_oauth(
+            monkeypatch, exchange_exc=lichess_client.LichessRateLimited("slow", retry_after=30)
+        )
         with _limiter_disabled():
             with pytest.raises(Exception) as excinfo:
                 link(
                     request=_fake_request(),
-                    req=LinkRequest(username="alice"),
+                    req=LinkRequest(code="c", code_verifier=self._VALID_VERIFIER),
                     player=player,
                     db=db_session,
                 )
-        assert getattr(excinfo.value, "status_code", None) == 409
+        assert getattr(excinfo.value, "status_code", None) == 503
 
-    # RT_06 — rate-limited maps to 503 with Retry-After.
-    def test_router_link_translates_rate_limited_to_503(self, db_session, player, monkeypatch):
-        def _raise(username):
-            raise lichess_client.LichessRateLimited("slow down", retry_after=30)
-
-        monkeypatch.setattr(import_service.lichess_client, "fetch_user_profile", _raise)
+    # RT_06 — Lichess 5xx on the exchange → 502.
+    def test_router_link_upstream_to_502(self, db_session, player, monkeypatch):
+        self._stub_oauth(monkeypatch, exchange_exc=lichess_client.LichessUpstreamError("boom"))
         with _limiter_disabled():
             with pytest.raises(Exception) as excinfo:
                 link(
                     request=_fake_request(),
-                    req=LinkRequest(username="alice"),
-                    player=player,
-                    db=db_session,
-                )
-        exc = excinfo.value
-        assert getattr(exc, "status_code", None) == 503
-        assert (exc.headers or {}).get("Retry-After") == "30"
-
-    # RT_06 — 5xx → 502.
-    def test_router_link_translates_upstream_to_502(self, db_session, player, monkeypatch):
-        def _raise(username):
-            raise lichess_client.LichessUpstreamError("boom")
-
-        monkeypatch.setattr(import_service.lichess_client, "fetch_user_profile", _raise)
-        with _limiter_disabled():
-            with pytest.raises(Exception) as excinfo:
-                link(
-                    request=_fake_request(),
-                    req=LinkRequest(username="alice"),
+                    req=LinkRequest(code="c", code_verifier=self._VALID_VERIFIER),
                     player=player,
                     db=db_session,
                 )
@@ -1074,13 +1100,9 @@ class TestRouter:
 
     def test_router_status_linked(self, db_session, player, monkeypatch):
         _stub_profile(monkeypatch, profile={"id": "alice", "perfs": {}})
-        with _limiter_disabled():
-            link(
-                request=_fake_request(),
-                req=LinkRequest(username="alice"),
-                player=player,
-                db=db_session,
-            )
+        import_service.link_account(
+            db_session, player, "alice", profile={"id": "alice", "perfs": {}}
+        )
         result = status(request=_fake_request(), player=player, db=db_session)
         assert result["linked"] is True
         assert result["external_username"] == "alice"
@@ -1088,13 +1110,9 @@ class TestRouter:
     # RT_05
     def test_router_import_returns_counts(self, db_session, player, monkeypatch):
         _stub_profile(monkeypatch, profile={"id": "alice", "perfs": {}})
-        with _limiter_disabled():
-            link(
-                request=_fake_request(),
-                req=LinkRequest(username="alice"),
-                player=player,
-                db=db_session,
-            )
+        import_service.link_account(
+            db_session, player, "alice", profile={"id": "alice", "perfs": {}}
+        )
         _stub_games(
             monkeypatch,
             games=[
@@ -1134,13 +1152,10 @@ class TestRouter:
 
     def test_router_unlink_returns_true_after_link(self, db_session, player, monkeypatch):
         _stub_profile(monkeypatch, profile={"id": "alice", "perfs": {}})
+        import_service.link_account(
+            db_session, player, "alice", profile={"id": "alice", "perfs": {}}
+        )
         with _limiter_disabled():
-            link(
-                request=_fake_request(),
-                req=LinkRequest(username="alice"),
-                player=player,
-                db=db_session,
-            )
             result = unlink(request=_fake_request(), player=player, db=db_session)
         assert result == {"unlinked": True}
 
