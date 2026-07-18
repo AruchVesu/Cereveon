@@ -253,6 +253,11 @@ TEST_TARGETS = [
     # Schema + endpoint tests run in-memory SQLite against the full
     # SECA Base, same harness as test_training_solve.py.
     "llm/tests/test_feedback_endpoint.py",
+    # AI-generated-content reporting (POST /coach/report, CR_01..06): the
+    # in-app "Report" affordance Google Play's AI-Generated Content policy
+    # requires — stored to the operator moderation queue, content kept out
+    # of logs.
+    "llm/tests/test_content_report.py",
     # Mistake-replay (Phase 3): first-mistake extraction at
     # /game/finish time + POST /training/verify-replay engine
     # verification.  Detector tests are pool-free; verifier tests
@@ -429,6 +434,10 @@ COVERAGE_TARGETS = [
     # TEST_TARGETS.
     "llm.seca.feedback.models",
     "llm.seca.feedback.router",
+    # Content-report surface: ContentReport model + POST /coach/report.
+    # Covered by test_content_report.py in TEST_TARGETS.
+    "llm.seca.moderation.models",
+    "llm.seca.moderation.router",
     # Mistake-replay (Phase 3): detector picks the FIRST above-threshold
     # player move from losses_cp + PGN; verify runs the engine and
     # answers is_correct.  Covered by test_mistake_detector.py and

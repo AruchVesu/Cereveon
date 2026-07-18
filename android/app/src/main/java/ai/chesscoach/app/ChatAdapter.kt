@@ -36,6 +36,14 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     /** Called when the user taps the helpful / not-helpful icon on a coach message. */
     var onFeedback: ((position: Int, isHelpful: Boolean) -> Unit)? = null
 
+    /**
+     * Called when the user taps the Report (flag) icon on a coach
+     * message — the in-app affordance to flag offensive AI-generated
+     * content (Google Play AI-Generated Content policy).  The coach text
+     * is passed through so the host can file the report without a lookup.
+     */
+    var onReport: ((position: Int, coachText: String) -> Unit)? = null
+
     fun addMessage(msg: ChatMessage) {
         messages.add(msg)
         notifyItemInserted(messages.size - 1)
@@ -89,6 +97,13 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
                     holder.down.setColorFilter(ContextCompat.getColor(ctx, R.color.atrium_accent_amber))
                     holder.up.setColorFilter(dim)
                 }
+                // Report (flag) — file a moderation report on this AI
+                // message.  Stays dim (it's not a toggle); the host shows
+                // a confirmation dialog.
+                holder.report.setColorFilter(dim)
+                holder.report.setOnClickListener {
+                    onReport?.invoke(holder.bindingAdapterPosition, msg.text)
+                }
             }
             is UserVH -> {
                 holder.body.text = msg.text
@@ -100,6 +115,7 @@ class ChatAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         val body: TextView = view.findViewById(R.id.coachBody)
         val up: ImageButton = view.findViewById(R.id.btnFeedbackUp)
         val down: ImageButton = view.findViewById(R.id.btnFeedbackDown)
+        val report: ImageButton = view.findViewById(R.id.btnReport)
     }
 
     private class UserVH(view: View) : RecyclerView.ViewHolder(view) {

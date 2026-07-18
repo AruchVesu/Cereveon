@@ -55,6 +55,7 @@ from llm.seca.entitlements.models import UsageCounter
 from llm.seca.events.models import GameEvent, GameFinishResult
 from llm.seca.feedback.models import FeedbackMessage
 from llm.seca.lichess.models import LichessImportJob, LinkedAccount
+from llm.seca.moderation.models import ContentReport
 from llm.seca.notifications.models import Notification
 from llm.seca.review.models import GameReview
 from llm.seca.storage.models import BanditWeights, Explanation, Game, Move, Repertoire
@@ -101,6 +102,7 @@ def _erasure_plan(player_id: str) -> list[tuple[type[Base], Any]]:
         (BanditWeights, BanditWeights.player_id == player_id),
         (BanditExperience, BanditExperience.player_id == player_id),
         (FeedbackMessage, FeedbackMessage.player_id == player_id),
+        (ContentReport, ContentReport.player_id == player_id),
         (LinkedAccount, LinkedAccount.player_id == player_id),
         (LichessImportJob, LichessImportJob.player_id == player_id),
         (Notification, Notification.player_id == player_id),

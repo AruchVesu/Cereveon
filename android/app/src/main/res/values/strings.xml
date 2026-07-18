@@ -50,6 +50,21 @@
     <string name="delete_account_confirm_positive">Delete</string>
     <string name="delete_account_confirm_negative">Cancel</string>
 
+    <!--
+      Report-AI-content dialog (ChatBottomSheet.showReportDialog; Google
+      Play AI-Generated Content policy — POST /coach/report, contract §45).
+      Lets a user flag an offensive/harmful coach (AI-generated) message
+      without leaving the app; ReportContentSourcePinTest pins that the
+      report is sent only from the dialog's positive button.
+    -->
+    <string name="report_dialog_title">Report message</string>
+    <string name="report_dialog_message">Report this coach message as offensive or harmful? Our team will review it.</string>
+    <string name="report_dialog_hint">Reason (optional)</string>
+    <string name="report_dialog_positive">Report</string>
+    <string name="report_dialog_cancel">Cancel</string>
+    <string name="report_toast_thanks">Reported — thank you. We\'ll review it.</string>
+    <string name="report_toast_failed">Couldn\'t send the report. Please try again.</string>
+
     <!-- Send-feedback dialog form (FeedbackFlows.kt). -->
     <string name="feedback_dialog_title">Send feedback</string>
     <string name="feedback_input_hint">What\'s working? What\'s broken? We read every message.</string>

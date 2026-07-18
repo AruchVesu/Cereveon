@@ -45,6 +45,7 @@ from llm.seca.storage.models import *  # noqa: F401,F403
 from llm.seca.chat.models import *  # noqa: F401,F403
 from llm.seca.curriculum.models import *  # noqa: F401,F403
 from llm.seca.lichess.models import *  # noqa: F401,F403
+from llm.seca.moderation.models import *  # noqa: F401,F403
 from llm.seca.notifications.models import *  # noqa: F401,F403
 from llm.seca.review.models import *  # noqa: F401,F403
 from llm.seca.training.models import *  # noqa: F401,F403

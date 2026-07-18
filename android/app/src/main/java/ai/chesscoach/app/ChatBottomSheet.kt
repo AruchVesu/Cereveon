@@ -1,6 +1,7 @@
 package ai.chesscoach.app
 
 import android.annotation.SuppressLint
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -17,6 +18,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -439,6 +441,15 @@ class ChatBottomSheet : DialogFragment() {
             }
         }
 
+        // Wire the Report (flag) affordance — the in-app path to flag
+        // offensive AI-generated coach content (Google Play AI-Generated
+        // Content policy).  The tap only opens a confirmation dialog; the
+        // POST /coach/report call fires from the dialog's positive button.
+        // ReportContentSourcePinTest pins this wiring.
+        chatAdapter.onReport = { _, coachText ->
+            showReportDialog(coachText)
+        }
+
         // RecyclerView — stable message rendering.
         // stackFromEnd is OFF: with it on, the LayoutManager re-anchors to the
         // bottom every time the streaming bubble grows — that auto-pull is what
@@ -589,6 +600,46 @@ class ChatBottomSheet : DialogFragment() {
     // ---------------------------------------------------------------------------
     // Message helpers
     // ---------------------------------------------------------------------------
+
+    /**
+     * Confirmation dialog for reporting a coach (AI-generated) message as
+     * offensive or harmful — the in-app reporting feature Google Play's
+     * AI-Generated Content policy requires (reachable without leaving the
+     * app).  The raw tap never reports; `POST /coach/report` fires only
+     * from the positive button.  Fire-and-forget with a toast either way;
+     * the reason field is optional.
+     */
+    private fun showReportDialog(coachText: String) {
+        val ctx = context ?: return
+        val reasonInput = EditText(ctx).apply {
+            hint = getString(R.string.report_dialog_hint)
+            setPadding(48, 24, 48, 24)
+        }
+        AlertDialog.Builder(ctx)
+            .setTitle(R.string.report_dialog_title)
+            .setMessage(R.string.report_dialog_message)
+            .setView(reasonInput)
+            .setPositiveButton(R.string.report_dialog_positive) { _, _ ->
+                val token = authRepository?.getToken()
+                val fen = currentFen
+                val reason = reasonInput.text?.toString()?.trim().orEmpty()
+                viewLifecycleOwner.lifecycleScope.launch {
+                    val result = coachApiClient.reportContent(
+                        content = coachText,
+                        surface = "chat",
+                        fen = fen,
+                        reason = reason.ifBlank { null },
+                        token = token,
+                    )
+                    val toast =
+                        if (result is ApiResult.Success) R.string.report_toast_thanks
+                        else R.string.report_toast_failed
+                    context?.let { Toast.makeText(it, toast, Toast.LENGTH_LONG).show() }
+                }
+            }
+            .setNegativeButton(R.string.report_dialog_cancel, null)
+            .show()
+    }
 
     private fun appendUser(text: String) {
         sessionStore.addMessage("user", text)

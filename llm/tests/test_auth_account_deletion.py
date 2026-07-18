@@ -76,6 +76,7 @@ from llm.seca.entitlements.models import UsageCounter
 from llm.seca.events.models import GameEvent, GameFinishResult
 from llm.seca.feedback.models import FeedbackMessage
 from llm.seca.lichess.models import LichessImportJob, LinkedAccount
+from llm.seca.moderation.models import ContentReport
 from llm.seca.notifications.models import Notification
 from llm.seca.review.models import GameReview
 from llm.seca.storage.models import BanditWeights, Explanation, Game, Move, Repertoire
@@ -216,6 +217,7 @@ def _seed_player_universe(db, tag: str) -> str:
     db.add(BanditWeights(player_id=pid, action="hint", n_features=1, A_json="[[1]]", b_json="[0]"))
     db.add(BanditExperience(player_id=pid, context_json="{}", action="hint", reward=0.0))
     db.add(FeedbackMessage(player_id=pid, message="great app"))
+    db.add(ContentReport(player_id=pid, content="an offensive coach reply", surface="chat"))
     db.add(LinkedAccount(player_id=pid, platform="lichess", external_username=f"lich-{tag}"))
     db.add(LichessImportJob(player_id=pid, target_max_games=10))
     db.add(
@@ -258,6 +260,7 @@ _SEEDED_TABLES: frozenset[str] = frozenset(
         "bandit_weights",
         "bandit_experiences",
         "feedback_messages",
+        "content_reports",
         "linked_accounts",
         "lichess_import_jobs",
         "notifications",
