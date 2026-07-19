@@ -18,7 +18,9 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.slider.Slider
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Cereveon · Atrium · Settings (handoff screen #10).
@@ -169,6 +171,12 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
             dismiss()
             onConnectLichessTapped?.invoke()
         }
+        // The row's value defaults to "Not linked" in the layout; fetch the
+        // live GET /lichess/status so it reflects the REAL link state.
+        // Without this the row was a static label that stayed "Not linked"
+        // even for a linked account (the authoritative Connect sheet reads
+        // the same endpoint and shows "Linked" — the two disagreed).
+        refreshLichessRow(view.findViewById(R.id.rowConnectLichessValue))
 
         // ── Premium chevron row ──────────────────────────────────────
         view.findViewById<View>(R.id.rowUpgrade).setOnClickListener {
@@ -202,6 +210,37 @@ class SettingsBottomSheet : BottomSheetDialogFragment() {
         view.findViewById<View>(R.id.rowDownloadData).setOnClickListener {
             dismiss()
             onDownloadDataTapped?.invoke()
+        }
+    }
+
+    /**
+     * Populate the Integrations · Lichess row's trailing value from the
+     * live GET /lichess/status, so it reflects the real link state rather
+     * than the layout's static "Not linked" default.  Reads the same
+     * endpoint the authoritative [LichessConnectBottomSheet] uses.
+     *
+     * Best-effort: on a missing token or any transport / HTTP error the
+     * default text stands — a passive settings row must not surface
+     * network noise.  Guarded by [isAdded] because the sheet can be
+     * dismissed while the request is in flight.
+     */
+    private fun refreshLichessRow(valueView: TextView) {
+        val authRepo = AuthRepository(EncryptedTokenStorage(requireContext()))
+        val token = authRepo.getToken() ?: return
+        val client = HttpLichessApiClient(
+            baseUrl = BuildConfig.COACH_API_BASE,
+            tokenSink = { authRepo.saveToken(it) },
+        )
+        viewLifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { client.status(token) }
+            if (!isAdded) return@launch
+            val status = (result as? ApiResult.Success)?.data ?: return@launch
+            valueView.text = when {
+                status.linked && !status.externalUsername.isNullOrBlank() ->
+                    getString(R.string.lichess_settings_linked_as, status.externalUsername)
+                status.linked -> getString(R.string.lichess_settings_linked)
+                else -> getString(R.string.lichess_settings_not_linked)
+            }
         }
     }
 

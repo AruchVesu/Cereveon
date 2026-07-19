@@ -81,6 +81,14 @@
     <string name="lichess_connect_intro">Connect your Lichess account to import your game history. You\'ll sign in on Lichess to authorize access — we never see your password, and you can only connect an account you own. We use your matching perf rating (rapid first, then blitz, then classical) to seed your in-app rating on first link.</string>
     <string name="lichess_link_button_label">Connect with Lichess</string>
     <string name="lichess_linked_as_kicker">Linked as</string>
+
+    <!-- Integrations · Lichess row value in Settings (SettingsBottomSheet),
+         reflecting the live GET /lichess/status.  "%1$s" is the linked
+         handle. -->
+    <string name="lichess_settings_linked_as">Linked · %1$s</string>
+    <string name="lichess_settings_linked">Linked</string>
+    <string name="lichess_settings_not_linked">Not linked</string>
+
     <string name="lichess_imported_label">Imported games</string>
     <string name="lichess_last_synced_label">Last sync</string>
     <string name="lichess_never_synced">Never</string>
