@@ -49,6 +49,11 @@ IS_15  import_user_games on an unlinked player raises LichessNotLinkedError.
 IS_16  _derive_result handles white/black/draw plus missing-user case.
 IS_17  _derive_player_color returns the user's side (white/black/none),
        for replay board orientation.
+IS_18  get_status self-heals a missing import-link for an OAuth-registered
+       player (lichess_user_id set) — no Lichess network call.
+IS_19  get_status does NOT self-heal a password account (no lichess_user_id).
+IS_20  get_status self-heal is idempotent (no duplicate rows).
+IS_21  get_status self-heal claims the handle from another account's link.
 
 RT_01  POST /lichess/link rejects malformed usernames at the schema layer.
 RT_02  POST /lichess/link 404 propagates LichessUserNotFound.
@@ -143,6 +148,27 @@ def other_player(db_session):
         confidence=0.5,
         skill_vector_json="{}",
         player_embedding="[]",
+    )
+    db_session.add(p)
+    db_session.commit()
+    db_session.refresh(p)
+    return p
+
+
+@pytest.fixture()
+def lichess_registered_player(db_session):
+    """A player created via "Sign in with Lichess": ``lichess_user_id`` set,
+    but with NO ``LinkedAccount`` row — the exact state a failed / skipped /
+    pre-feature first-sign-in auto-link leaves behind, which used to strand
+    a real Lichess account on ``get_status`` -> ``linked: False``."""
+    p = Player(
+        email="lichess:bob",
+        password_hash="dummy",
+        rating=1200.0,
+        confidence=0.5,
+        skill_vector_json="{}",
+        player_embedding="[]",
+        lichess_user_id="bob",
     )
     db_session.add(p)
     db_session.commit()
@@ -727,6 +753,77 @@ class TestUnlinkAndStatus:
         assert result["linked"] is True
         assert result["external_username"] == "alice"
         assert result["imported_game_count"] == 2
+
+    # IS_18 — an OAuth-registered player whose import-link row is missing
+    # gets it recreated on status read, WITHOUT a Lichess network call
+    # (no _stub_profile: a fetch would raise and fail this test).
+    def test_status_self_heals_registered_player(self, db_session, lichess_registered_player):
+        assert (
+            db_session.query(LinkedAccount)
+            .filter(LinkedAccount.player_id == lichess_registered_player.id)
+            .count()
+            == 0
+        )
+        result = import_service.get_status(db_session, lichess_registered_player)
+        assert result["linked"] is True
+        assert result["external_username"] == "bob"
+        # Persisted, so import + subsequent reads work.
+        assert (
+            db_session.query(LinkedAccount)
+            .filter(
+                LinkedAccount.player_id == lichess_registered_player.id,
+                LinkedAccount.platform == import_service.PLATFORM_LICHESS,
+            )
+            .count()
+            == 1
+        )
+
+    # IS_19 — a password/email account (no lichess_user_id) is NEVER healed:
+    # it legitimately has no Lichess link, and no row must be created.
+    def test_status_does_not_self_heal_password_account(self, db_session, player):
+        result = import_service.get_status(db_session, player)
+        assert result == {"linked": False}
+        assert (
+            db_session.query(LinkedAccount).filter(LinkedAccount.player_id == player.id).count()
+            == 0
+        )
+
+    # IS_20 — self-heal is idempotent: a second read finds the existing row,
+    # never a duplicate.
+    def test_status_self_heal_is_idempotent(self, db_session, lichess_registered_player):
+        first = import_service.get_status(db_session, lichess_registered_player)
+        second = import_service.get_status(db_session, lichess_registered_player)
+        assert first["linked"] is True
+        assert second["linked"] is True
+        assert (
+            db_session.query(LinkedAccount)
+            .filter(LinkedAccount.player_id == lichess_registered_player.id)
+            .count()
+            == 1
+        )
+
+    # IS_21 — the verified owner claims the handle: if another account holds a
+    # (self-asserted) link to the same id, self-heal takes it over — the same
+    # verified-OAuth-ownership claim semantics as the sign-in path.
+    def test_status_self_heal_claims_from_other_account(
+        self, db_session, lichess_registered_player, other_player, monkeypatch
+    ):
+        _stub_profile(monkeypatch, profile={"id": "bob", "perfs": {}})
+        import_service.link_account(db_session, other_player, "bob")
+        assert (
+            db_session.query(LinkedAccount).filter(LinkedAccount.external_username == "bob").count()
+            == 1
+        )
+        result = import_service.get_status(db_session, lichess_registered_player)
+        assert result["linked"] is True
+        assert result["external_username"] == "bob"
+        # The verified owner now holds the sole link; the other account's
+        # self-asserted row is gone.
+        links = (
+            db_session.query(LinkedAccount).filter(LinkedAccount.external_username == "bob").all()
+        )
+        assert len(links) == 1
+        assert links[0].player_id == lichess_registered_player.id
 
 
 # ===========================================================================
