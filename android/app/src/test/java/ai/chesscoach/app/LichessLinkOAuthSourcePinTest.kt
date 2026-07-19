@@ -159,6 +159,25 @@ class LichessLinkOAuthSourcePinTest {
                 "the two flows never cross wires.",
             activityBlock.contains("android:host=\"lichess-link\""),
         )
+        // Regression pin (crash caught on-device 2026-07-19): the activity
+        // extends AppCompatActivity, which throws "You need to use a
+        // Theme.AppCompat theme (or descendant)" at creation under a raw
+        // framework theme — killing the redirect before the OAuth code is
+        // exchanged.  Its theme MUST descend from the app's AppCompat/
+        // Material theme, i.e. an @style/ reference, never @android:style/.
+        val themeMatch = Regex("""android:theme="([^"]*)"""").find(activityBlock)
+        assertTrue(
+            "LichessLinkRedirectActivity must declare a theme (translucent trampoline).",
+            themeMatch != null,
+        )
+        assertFalse(
+            "LichessLinkRedirectActivity's theme must NOT be a framework " +
+                "@android:style/ theme (e.g. Theme.Translucent.NoTitleBar) — that " +
+                "crashes AppCompatActivity on launch.  Use an @style/ theme that " +
+                "descends from the app's Material/AppCompat theme " +
+                "(Theme.Cereveon.Translucent).",
+            themeMatch!!.groupValues[1].startsWith("@android:style/"),
+        )
     }
 
     @Test
