@@ -402,8 +402,8 @@
                 android:textSize="13sp"
                 android:textColor="@color/atrium_muted"
                 android:layout_marginEnd="@dimen/atrium_space_12"
-                android:text="Not linked"
-                tools:text="Linked" />
+                android:text="@string/lichess_settings_not_linked"
+                tools:text="Linked · thibault" />
 
             <TextView
                 style="@style/Atrium.SettingsRow.Chevron"
