@@ -1377,6 +1377,25 @@ No body, no query params.
   so public-API reachability of the linked account IS the definition
   of "connected".  Additive fields; old clients ignore them.
 
+### Self-heal for OAuth-registered players *(2026-07-19)*
+
+A player who signed up via "Sign in with Lichess" (§16a) is the
+OAuth-verified owner of their handle, so this endpoint must never report
+them as not-linked.  The first-sign-in auto-link that creates the
+`linked_accounts` row is best-effort, though (it never fails the
+sign-in), and accounts predating it — or users who stay signed in via
+JWT refresh and never re-hit `/auth/lichess` — could be left without a
+row, stranding a real Lichess account on `{ "linked": false }`.
+
+So when `status` finds no link row for a player whose
+`players.lichess_user_id` is set, it **lazily recreates** the row (keyed
+on that verified id — no Lichess network call and no rating calibration,
+keeping the read cheap) and reports `linked: true`.  If the handle was
+self-asserted on a different account, the verified owner **claims** it
+(same semantics as §16a / §27).  Best-effort: a recreation failure falls
+through to `{ "linked": false }` — never a 500.  It is a one-time write
+per account; subsequent reads find the row.
+
 ---
 
 ## 30. `POST /lichess/import`

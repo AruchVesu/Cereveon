@@ -322,6 +322,56 @@ def unlink_account(db: DBSession, player: Player) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _heal_registered_lichess_link(db: DBSession, player: Player) -> LinkedAccount | None:
+    """Recreate the import-link row for a Lichess-REGISTERED player missing it.
+
+    A player who signed up via "Sign in with Lichess" (``lichess_user_id``
+    set) IS the OAuth-verified owner of that handle, so their game-import
+    ``LinkedAccount`` row should always exist.  The first-sign-in auto-link
+    (``auth/router._ensure_lichess_link``) that creates it is best-effort,
+    though — it can fail transiently, accounts created before that feature
+    never got a row, and a user who stays signed in via JWT refresh never
+    re-hits ``/auth/lichess`` to retry it.  Any of those leaves
+    ``GET /lichess/status`` reporting ``linked: False`` for a bona-fide
+    Lichess account.
+
+    This repairs the row lazily on status read, keyed on the verified
+    ``lichess_user_id``.  A minimal ``{"id": ...}`` profile is passed so
+    there is NO Lichess network call and NO rating calibration in the
+    status path — only the row (and, if the handle was self-asserted on a
+    different account, the same verified-owner claim the sign-in path
+    would perform).
+
+    Best-effort: any failure rolls back and returns ``None`` so status
+    simply falls through to its existing not-linked answer — never a 500.
+    """
+    lichess_id = getattr(player, "lichess_user_id", None)
+    if not lichess_id:
+        # Password/email account with no Lichess identity — nothing to heal.
+        return None
+    player_id = player.id
+    try:
+        link_account(
+            db,
+            player,
+            str(lichess_id),
+            profile={"id": str(lichess_id)},
+            claim_from_other_player=True,
+        )
+    except Exception:  # pylint: disable=broad-exception-caught
+        db.rollback()
+        logger.warning("lichess status self-heal failed for player %s", player_id, exc_info=True)
+        return None
+    return (
+        db.query(LinkedAccount)
+        .filter(
+            LinkedAccount.player_id == player_id,
+            LinkedAccount.platform == PLATFORM_LICHESS,
+        )
+        .first()
+    )
+
+
 def get_status(db: DBSession, player: Player) -> dict:
     """Return the player's current Lichess link state + import counters.
 
@@ -339,6 +389,10 @@ def get_status(db: DBSession, player: Player) -> dict:
         )
         .first()
     )
+    if link is None:
+        # Recover a missing import-link for an OAuth-registered player
+        # before answering "not linked" — see the helper's docstring.
+        link = _heal_registered_lichess_link(db, player)
     if link is None:
         return {"linked": False}
 
