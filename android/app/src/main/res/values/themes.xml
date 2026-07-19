@@ -69,6 +69,23 @@
         <item name="android:textAppearance">@style/Atrium.Body</item>
     </style>
 
+    <!-- Translucent trampoline theme for the OAuth redirect activity
+         (LichessLinkRedirectActivity).  MUST descend from the AppCompat/
+         Material theme: AppCompatActivity throws
+         "You need to use a Theme.AppCompat theme (or descendant)" under the
+         framework @android:style/Theme.Translucent.NoTitleBar, crashing the
+         redirect before the code exchange runs.  The translucent, un-dimmed,
+         animation-free window keeps the redirect an invisible hop back to
+         the app rather than a visible screen. -->
+    <style name="Theme.Cereveon.Translucent" parent="Theme.Cereveon.Atrium">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+
     <!-- Backwards-compat alias.  The pre-Atrium theme name is preserved
          so layouts referencing it (or test fixtures) still resolve. -->
     <style name="Theme.CyberpunkChess" parent="Theme.Cereveon.Atrium" />
