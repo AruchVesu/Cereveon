@@ -23,7 +23,8 @@ import kotlin.math.max
  *  1. Human-progress header — "Level N" + "X XP" hero (cached training
  *     XP, same source as the Home kicker) and a "Recent games ·
  *     N played · M won" stat row from the /player/progress history.
- *  2. Weakness profile — [WeaknessBarChartView] of category scores from the world model.
+ *  2. Strongest sides — [WeaknessBarChartView] of per-category strengths
+ *     (the inverse of the world-model weakness rates), strongest first.
  *  3. "How the coach sees you" — world-model fields in plain language.
  *     (OPPONENT ELO row suppressed — would otherwise leak the
  *     player's own hidden rating since opponent = rating - ~40.)
@@ -102,7 +103,7 @@ class ProgressDashboardBottomSheet : BottomSheetDialogFragment() {
                 is ApiResult.Success -> {
                     val data = result.data
                     populateGamesRow(statGamesRow, statGamesDivider, txtConfidence, data.history)
-                    populateWeaknessChart(weaknessChart, data)
+                    populateStrengthsChart(weaknessChart, data)
                     populateWorldModel(worldModelContainer, data.current)
                     populateRecommendations(recommendationsList, txtNoRecs, data.analysis)
                 }
@@ -221,7 +222,7 @@ class ProgressDashboardBottomSheet : BottomSheetDialogFragment() {
      * 20 rows) — no endpoint returns lifetime totals, so the label
      * says "Recent" honestly rather than implying an all-time count.
      * The divider under the row flips visible with it so a fetch
-     * failure never leaves an orphan hairline above WEAKNESS PROFILE.
+     * failure never leaves an orphan hairline above STRONGEST SIDES.
      */
     private fun populateGamesRow(
         row: View,
@@ -234,41 +235,31 @@ class ProgressDashboardBottomSheet : BottomSheetDialogFragment() {
         divider.visibility = View.VISIBLE
     }
 
-    private fun populateWeaknessChart(
+    private fun populateStrengthsChart(
         chart: WeaknessBarChartView,
         data: PlayerProgressResponse,
     ) {
-        // Build entries from category_scores; annotate with recommendation priority.
-        val priorityMap = data.analysis.recommendations.associate { it.category to it.priority }
-
-        val labelFor = mapOf(
-            "tactical_vision"      to "Tactics",
-            "opening_preparation"  to "Opening",
-            "endgame_technique"    to "Endgame",
-            "positional_play"      to "Position",
-        )
-
-        val entries = data.analysis.categoryScores
-            .entries
-            .sortedByDescending { it.value }
-            .map { (cat, score) ->
-                WeaknessBarChartView.Entry(
-                    label    = labelFor[cat] ?: cat,
-                    value    = score,
-                    priority = priorityMap[cat] ?: "",
-                )
-            }
-
-        // Fall back to raw skill_vector when no pipeline data available.
-        val finalEntries = if (entries.isEmpty()) {
-            data.current.skillVector.entries
-                .sortedByDescending { it.value }
-                .map { (k, v) -> WeaknessBarChartView.Entry(label = k, value = v) }
+        // category_scores are per-category WEAKNESS rates; this panel shows
+        // their inverse (strength), strongest-first, in the positive/cyan
+        // signal.  Fall back to skill_vector (also weakness rates) when the
+        // analysis pipeline hasn't scored any games yet.
+        val source = if (data.analysis.categoryScores.isNotEmpty()) {
+            data.analysis.categoryScores
         } else {
-            entries
+            data.current.skillVector
         }
-
-        chart.setEntries(finalEntries)
+        val cyan = androidx.core.content.ContextCompat.getColor(
+            requireContext(),
+            R.color.atrium_accent_cyan,
+        )
+        val entries = strengthEntries(source).map { bar ->
+            WeaknessBarChartView.Entry(
+                label = bar.label,
+                value = bar.strength,
+                colorOverride = cyan,
+            )
+        }
+        chart.setEntries(entries)
     }
 
     private fun populateWorldModel(
@@ -407,6 +398,9 @@ class ProgressDashboardBottomSheet : BottomSheetDialogFragment() {
         }
     }
 
+    /** A single strongest-sides bar: category [label] + [strength] (1 − weakness), in [0, 1]. */
+    data class StrengthBar(val label: String, val strength: Float)
+
     companion object {
 
         // ── Pure display helpers — testable without Android framework ─────────
@@ -433,6 +427,33 @@ class ProgressDashboardBottomSheet : BottomSheetDialogFragment() {
         fun formatGamesSummary(history: List<ProgressHistoryItem>): String {
             val won = history.count { it.result.equals("win", ignoreCase = true) }
             return "${history.size} played · $won won"
+        }
+
+        /**
+         * Category [StrengthBar]s for the strongest-sides panel, ordered
+         * strongest-first.  ``category_scores`` (and the ``skill_vector``
+         * fallback) are per-category WEAKNESS rates in [0, 1] — higher =
+         * weaker — so a category's strength is ``1 − weakness``.  Sorting
+         * descending by strength (== ascending by weakness) puts the
+         * player's strongest side first.  Unknown category keys pass
+         * through as their raw key, so a backend rename degrades to a
+         * visible label rather than a dropped row.
+         */
+        fun strengthEntries(categoryScores: Map<String, Float>): List<StrengthBar> {
+            val labelFor = mapOf(
+                "tactical_vision"     to "Tactics",
+                "opening_preparation" to "Opening",
+                "endgame_technique"   to "Endgame",
+                "positional_play"     to "Position",
+            )
+            return categoryScores.entries
+                .map { (cat, weakness) ->
+                    StrengthBar(
+                        label = labelFor[cat] ?: cat,
+                        strength = (1f - weakness).coerceIn(0f, 1f),
+                    )
+                }
+                .sortedByDescending { it.strength }
         }
     }
 }

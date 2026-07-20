@@ -9,7 +9,7 @@
           cached training XP (hidden until the cache exists).
       4.  Stat row — "Recent games · N played · M won", from the
           /player/progress history window (hidden until fetch succeeds).
-      5.  WEAKNESS PROFILE section — kicker + WeaknessBarChartView.
+      5.  STRONGEST SIDES section — kicker + WeaknessBarChartView (per-category strengths).
           Atrium uses italic chips for "patterns" (handoff #9), but
           the existing bar chart is more informative — kept and
           re-skinned via the foundation theme cascade rather than
@@ -134,11 +134,11 @@
 
         </LinearLayout>
 
-        <!-- Divider between the stat row and the WEAKNESS PROFILE
+        <!-- Divider between the stat row and the STRONGEST SIDES
              block (the "Rating trend" section in between stays gone).
              Starts gone and is flipped visible together with
              statGamesRow so an orphan hairline never floats above
-             WEAKNESS PROFILE when the fetch fails. -->
+             STRONGEST SIDES when the fetch fails. -->
         <View
             android:id="@+id/statGamesDivider"
             android:layout_width="match_parent"
@@ -198,12 +198,13 @@
             android:background="@color/atrium_hairline"
             android:visibility="gone" />
 
-        <!-- WEAKNESS PROFILE. -->
+        <!-- STRONGEST SIDES — per-category strengths (inverse of the weakness
+             rates), strongest first; built in ProgressDashboardBottomSheet. -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textAppearance="@style/Atrium.Kicker"
-            android:text="Weakness profile"
+            android:text="Strongest sides"
             android:paddingStart="@dimen/atrium_space_24"
             android:paddingEnd="@dimen/atrium_space_24"
             android:paddingBottom="@dimen/atrium_space_8" />
