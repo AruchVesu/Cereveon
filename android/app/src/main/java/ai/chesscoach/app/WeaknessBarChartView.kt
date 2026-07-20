@@ -9,11 +9,13 @@ import android.view.View
 import androidx.core.content.ContextCompat
 
 /**
- * Horizontal bar chart for player weakness categories.
+ * Horizontal bar chart for player skill categories.
  *
- * Each bar entry has a label, a value [0.0–1.0], and an optional priority tag
- * ("high", "medium", "low") that controls bar colour.  The chart is entirely
- * Canvas-based — no external dependencies.
+ * Each bar entry has a label and a value [0.0–1.0].  Bar colour comes from
+ * [Entry.colorOverride] when set — the strongest-sides panel forces the
+ * positive/cyan signal regardless of magnitude — otherwise it falls back
+ * to the optional priority tag ("high", "medium", "low") / value-based
+ * severity.  The chart is entirely Canvas-based — no external dependencies.
  *
  * Call [setEntries] to populate data and trigger a redraw.
  */
@@ -23,7 +25,15 @@ class WeaknessBarChartView @JvmOverloads constructor(
     defStyleAttr: Int = 0,
 ) : View(context, attrs, defStyleAttr) {
 
-    data class Entry(val label: String, val value: Float, val priority: String = "")
+    data class Entry(
+        val label: String,
+        val value: Float,
+        val priority: String = "",
+        /** When non-null, overrides the priority/value-derived bar colour —
+         *  used by the strongest-sides panel to force the positive/cyan
+         *  signal regardless of magnitude. */
+        val colorOverride: Int? = null,
+    )
 
     private var entries: List<Entry> = emptyList()
 
@@ -103,7 +113,7 @@ class WeaknessBarChartView @JvmOverloads constructor(
 
             // Filled bar
             val fillW = (entry.value.coerceIn(0f, 1f) * barAreaWidth).coerceAtLeast(barRadius * 2)
-            barPaint.color = priorityColor(entry.priority, entry.value)
+            barPaint.color = entry.colorOverride ?: priorityColor(entry.priority, entry.value)
             val fillRect = RectF(barAreaStart, top, barAreaStart + fillW, bottom)
             canvas.drawRoundRect(fillRect, barRadius, barRadius, barPaint)
 
