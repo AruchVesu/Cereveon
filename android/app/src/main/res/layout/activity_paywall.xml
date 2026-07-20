@@ -10,7 +10,8 @@
     Top → bottom:
       1.  Quiet hero — centered cyan kicker + 36sp italic display
           + muted subtitle + ✦ ornament rule
-      2.  ✦-bulleted feature list (4 items)
+      2.  ✦-bulleted feature list (5 items; metered ones show a
+          muted "Free plan: …" contrast line)
       3.  2-column plan grid (Monthly + Yearly with "best value" badge)
       4.  Fine print — "Cancel anytime · restored…"
       5.  Footer — primary "Subscribe" + "Maybe later" link

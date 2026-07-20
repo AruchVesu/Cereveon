@@ -16,7 +16,8 @@ import org.junit.Test
  *  2. DEFAULT_PLANS keys match the activity's hard-coded selection
  *     keys ("monthly" / "yearly") so the tap → selectPlan() path
  *     can never miss.
- *  3. DEFAULT_FEATURES has 4 entries (the design's bullet count).
+ *  3. DEFAULT_FEATURES has 5 entries; the metered ones carry a
+ *     "Free plan: …" contrast, and Lichess analysis is advertised.
  *  4. recommendedPlanKey returns "yearly" by default so the activity's
  *     initial active-tile state matches the design.
  *  5. recommendedPlanKey falls back to the first plan when no entry
@@ -80,11 +81,34 @@ class PaywallActivityTest {
     }
 
     @Test
-    fun `DEFAULT_FEATURES has the design's four bullets`() {
-        assertEquals(4, PaywallActivity.DEFAULT_FEATURES.size)
-        for (bullet in PaywallActivity.DEFAULT_FEATURES) {
-            assertTrue("feature bullet must be non-blank", bullet.isNotBlank())
+    fun `DEFAULT_FEATURES lists the plan's five bullets`() {
+        assertEquals(5, PaywallActivity.DEFAULT_FEATURES.size)
+        for (feature in PaywallActivity.DEFAULT_FEATURES) {
+            assertTrue("feature text must be non-blank", feature.text.isNotBlank())
+            feature.free?.let {
+                assertTrue("free contrast, when present, must be non-blank", it.isNotBlank())
+            }
         }
+    }
+
+    @Test
+    fun `DEFAULT_FEATURES surface the free limits and Lichess analysis`() {
+        // The paywall must show BOTH the Pro features AND today's free
+        // limits, matching the entitlements table (games 1/day, chat
+        // 3/day, import-analysis 3/month).  Drift here misstates the plan
+        // to a paying user.
+        val features = PaywallActivity.DEFAULT_FEATURES
+        val freeLines = features.mapNotNull { it.free }
+        assertTrue("games free limit (1 a day) shown", freeLines.any { it.contains("1 a day") })
+        assertTrue("chat free limit (3 a day) shown", freeLines.any { it.contains("3 a day") })
+        assertTrue(
+            "Lichess-analysis free limit (3 a month) shown",
+            freeLines.any { it.contains("3 a month") },
+        )
+        assertTrue(
+            "coach analysis of Lichess games must be advertised",
+            features.any { it.text.contains("Lichess", ignoreCase = true) },
+        )
     }
 
     @Test
