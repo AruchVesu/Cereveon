@@ -12,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import com.android.billingclient.api.AcknowledgePurchaseParams
@@ -284,9 +285,14 @@ class PaywallActivity : AppCompatActivity() {
     private fun renderFeatureBullets(container: LinearLayout) {
         container.removeAllViews()
         val inflater = LayoutInflater.from(this)
-        for (text in DEFAULT_FEATURES) {
+        for (feature in DEFAULT_FEATURES) {
             val row = inflater.inflate(R.layout.item_paywall_bullet, container, false)
-            row.findViewById<TextView>(R.id.paywallBulletText).text = text
+            row.findViewById<TextView>(R.id.paywallBulletText).text = feature.text
+            // Optional "Free plan: …" contrast — shown only for metered
+            // features so the user sees the limit each Pro benefit lifts.
+            val free = row.findViewById<TextView>(R.id.paywallBulletFree)
+            free.text = feature.free.orEmpty()
+            free.isVisible = feature.free != null
             container.addView(row)
         }
     }
@@ -327,6 +333,13 @@ class PaywallActivity : AppCompatActivity() {
         val sub: String,
         val isRecommended: Boolean,
     )
+
+    /**
+     * One line in the paywall's Pro feature list.  [free] is the muted
+     * "Free plan: …" contrast shown under [text] for metered benefits
+     * (null for benefits with no free-tier limit to surface).
+     */
+    data class Feature(val text: String, val free: String? = null)
 
     /** Terminal decision after a server verify — see [verifyOutcome]. */
     enum class VerifyOutcome { PRO_ACTIVATED, KEEP_PAYWALL }
@@ -411,23 +424,27 @@ class PaywallActivity : AppCompatActivity() {
         )
 
         /**
-         * Bullet copy for the feature list.  4 items per the design;
-         * order matters (the most concrete benefit comes first).
+         * Pro feature list.  Order matters — the metered benefits (whose
+         * Free limit is the reason to upgrade) come first, each carrying
+         * the muted "Free plan: …" contrast so the user sees BOTH the
+         * plan's features and today's limits.
          *
-         * Every bullet must describe a benefit the live entitlements
-         * actually grant (llm/seca/entitlements/service.py): unlimited
-         * games (free: 1/day), full coach hints (free: degraded past
-         * the daily coached-game limit), and 30 chat questions/day
-         * (free: 3).  The old "Full curriculum · 12 chapters" and
-         * "Opening repertoire drills" bullets were retired with their
-         * UI surfaces (PR #379 removed the Lessons and Openings
-         * screens).
+         * Every line + Free contrast must match the live entitlements
+         * table (llm/seca/entitlements/service.py, pinned by
+         * PaywallActivityTest):
+         *   - coached game    free 1/day    → pro unlimited
+         *   - chat turn       free 3/day    → pro 30/day
+         *   - import analysis free 3/month  → pro 10/day (imported Lichess
+         *     games scored by the coach's engine pass)
+         * The last two lines are quality benefits with no separate free
+         * cap to surface (the game / chat caps above already bound them).
          */
-        val DEFAULT_FEATURES: List<String> = listOf(
-            "Unlimited adaptive games",
-            "Full coach hints in every game",
-            "Coach chat · grounded in your games",
-            "30 coach questions a day",
+        val DEFAULT_FEATURES: List<Feature> = listOf(
+            Feature("Unlimited adaptive games", "Free plan: 1 a day"),
+            Feature("30 coach questions a day", "Free plan: 3 a day"),
+            Feature("Your Lichess games, coach-analysed", "Free plan: 3 a month"),
+            Feature("Full coach hints in every game"),
+            Feature("Coach chat grounded in your games"),
         )
 
         /**
