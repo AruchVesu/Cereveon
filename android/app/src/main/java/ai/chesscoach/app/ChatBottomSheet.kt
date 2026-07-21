@@ -27,6 +27,7 @@ import androidx.recyclerview.widget.SimpleItemAnimator
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
@@ -93,6 +94,14 @@ class ChatBottomSheet : DialogFragment() {
      */
     private var gameId: String? = null
     private var isStreaming = false
+
+    /**
+     * Live ticker refreshing the daily-chat-quota bubble with the reset
+     * countdown ([DailyLimitReset]).  Non-null only after a chat 402;
+     * cancelled at the top of [sendToBackend] and by the view scope on
+     * sheet close, so it never overwrites a later coach reply.
+     */
+    private var chatLimitTickerJob: Job? = null
 
     /**
      * Panel size state. Opens COLLAPSED so the board is immediately visible
@@ -793,6 +802,9 @@ class ChatBottomSheet : DialogFragment() {
      * stream closed or errored — no crash on missing explanation.
      */
     private fun sendToBackend(@Suppress("UNUSED_PARAMETER") query: String) {
+        // A new turn supersedes any lingering quota countdown ticker so its
+        // minute refresh can't overwrite this reply's bubble.
+        chatLimitTickerJob?.cancel()
         isStreaming = true
         // A fresh reply follows from the bottom until the user scrolls up.
         followStream = true
@@ -925,10 +937,9 @@ class ChatBottomSheet : DialogFragment() {
                 // conversation history, and a quota notice is not coaching
                 // context.  Then surface the paywall — the 402 body's
                 // upgrade hint is exactly this screen (API_CONTRACTS.md §5).
-                renderStreamUpdate(
-                    "You've used all ${quotaNotice.limit} coach questions for today. " +
-                        "Upgrade to Premium for unlimited coaching — or come back tomorrow.",
-                )
+                // Live countdown to the UTC-midnight reset, refreshed each
+                // minute; not persisted (a quota notice isn't coaching context).
+                startChatLimitTicker(quotaNotice.limit)
                 if (isAdded) {
                     startActivity(Intent(requireContext(), PaywallActivity::class.java))
                 }
@@ -943,6 +954,24 @@ class ChatBottomSheet : DialogFragment() {
             isStreaming = false
             sendBtn.isEnabled = true
             typingDots.visibility = View.GONE
+        }
+    }
+
+    /**
+     * Live daily-chat-quota message: renders the reset countdown into the
+     * (non-persisted) quota bubble and refreshes it every minute.  Runs on
+     * the view scope so it stops when the sheet closes; also cancelled at
+     * the top of [sendToBackend] so a later reply is never overwritten.
+     */
+    private fun startChatLimitTicker(limit: Int) {
+        chatLimitTickerJob?.cancel()
+        chatLimitTickerJob = viewLifecycleOwner.lifecycleScope.launch {
+            while (isActive) {
+                chatAdapter.updateLastMessage(
+                    getString(R.string.chat_daily_limit_reached, limit, DailyLimitReset.countdown()),
+                )
+                delay(60_000L)
+            }
         }
     }
 }
