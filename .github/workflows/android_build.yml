@@ -125,7 +125,16 @@ jobs:
           COACH_API_KEY: ${{ secrets.COACH_API_KEY }}
         run: ./gradlew assembleRelease --no-daemon
 
-      # 11. Upload the APK on push so it is available as a build artifact.
+      # 11. Build Android App Bundle (AAB) for Google Play — push only.
+      - name: Build Android App Bundle for Google Play
+        if: github.event_name == 'push'
+        working-directory: android
+        env:
+          COACH_API_BASE: ${{ vars.COACH_API_BASE }}
+          COACH_API_KEY: ${{ secrets.COACH_API_KEY }}
+        run: ./gradlew bundleRelease --no-daemon
+
+      # 12. Upload the APK on push so it is available as a build artifact.
       #     Signed builds produce app-release.apk; unsigned fallback produces
       #     app-release-unsigned.apk. The glob captures whichever is present.
       - name: Upload release APK
@@ -134,4 +143,15 @@ jobs:
         with:
           name: release-apk-${{ github.sha }}
           path: android/app/build/outputs/apk/release/app-release*.apk
+          if-no-files-found: warn
+
+      # 13. Upload the Android App Bundle (AAB) for Google Play on push.
+      #     Signed builds produce app-release.aab; unsigned fallback produces
+      #     app-release-unsigned.aab. The glob captures whichever is present.
+      - name: Upload Android App Bundle
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-aab-${{ github.sha }}
+          path: android/app/build/outputs/bundle/release/app-release*.aab
           if-no-files-found: warn
