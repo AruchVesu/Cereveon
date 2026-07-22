@@ -2,10 +2,17 @@
 <resources>
 
     <!--
-        Cereveon · Atrium colour tokens.
+        Cereveon · Atrium colour tokens — DARK (default) palette.
 
         Source: design_handoff_cereveon_atrium/README.md (handoff bundle).
-        Atrium is a dark-only design language; no light-mode counterpart.
+        Atrium shipped dark-only; an opt-in bright counterpart now lives
+        in values-notnight/colors.xml (Settings › Appearance › Bright
+        mode).  Dark stays the default: CereveonApplication forces
+        MODE_NIGHT_YES unless the user enables the toggle, so the
+        SYSTEM light/dark setting never selects the palette — only the
+        in-app switch does.  This file remains the token source of
+        truth; values-notnight overrides only what differs (the board
+        object keeps this palette in both modes).
 
         Naming mirrors the design tokens.  Existing legacy names (bg,
         board_light, board_dark, neon, select) are preserved at the
@@ -43,6 +50,15 @@
     <color name="atrium_accent_cyan_1a">#1A4FD9E5</color>  <!-- last-move "from" tint -->
     <color name="atrium_accent_amber_cc">#CCFFC069</color> <!-- black piece rim -->
     <color name="atrium_accent_amber_55">#55FFC069</color> <!-- black piece halo -->
+
+    <!-- ── Secondary text (summary-sheet payload detail) ───────────── -->
+    <color name="atrium_text_soft">#CCCCCC</color>
+
+    <!-- ── Move-severity badge colours (MainActivity score row) ────── -->
+    <color name="atrium_severity_blunder">#FF4444</color>
+    <color name="atrium_severity_mistake">#FF8800</color>
+    <color name="atrium_severity_inaccuracy">#FFDD00</color>
+    <color name="atrium_severity_good">#00FFFF</color>
 
     <!-- ── Board palette ───────────────────────────────────────────── -->
     <color name="atrium_board_light">#302C24</color>       <!-- Light squares (warm wood) -->

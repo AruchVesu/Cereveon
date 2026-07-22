@@ -276,3 +276,149 @@ CVE-2026-11824 until:2027-07-01
 # Accepted risk pending a Debian bzip2 patch; remove this entry once
 # ``apt-get upgrade -y`` ships a fixed libbz2-1.0.
 CVE-2026-42250 until:2027-07-01
+
+# ---------------------------------------------------------------------------
+# util-linux / libblkid 2.41-5 (python:3.13-slim / Debian 13 Trixie): two
+# partition-table PROBING memory-safety CVEs, BOTH UNFIXED in Debian (no
+# FixedVersion via ``apt-get upgrade -y``; the Dockerfile already runs it).
+# Surfaced by the Trivy SARIF scan on 2026-07-14 as GitHub code-scanning
+# alerts #397 (CVE-2026-53615, HIGH — integer overflow in
+# libblkid/src/partitions/dos.c, the MBR/DOS partition-table parser) and
+# #398 (CVE-2026-13595, MEDIUM — heap use-after-free in libblkid
+# nested-partition probing).  Both are in the util-linux source and Trivy
+# reports them against its 9 sub-packages (bsdutils, libblkid1,
+# liblastlog2-2, libmount1, libsmartcols1, libuuid1, login, mount,
+# util-linux).
+#
+# Reachability analysis (2026-07-15) — shared by both entries below:
+#   - Both flaws live in libblkid's PARTITION-TABLE probing path (dos.c and
+#     the nested-partition walker).  Reaching them requires libblkid to
+#     probe a block device or disk-image file carrying an attacker-crafted
+#     MBR/DOS partition table — i.e. a ``blkid`` / ``mount`` / ``wipefs`` /
+#     ``findfs`` invocation, or a direct ``blkid_do_probe`` call, against
+#     untrusted device/image bytes.
+#   - The runtime image launches ``uvicorn llm.server:app`` as USER appuser
+#     (uid 10001, non-root — it cannot mount a filesystem anyway).  The ONLY
+#     external binary the code spawns is Stockfish (located via
+#     ``shutil.which("stockfish")`` in llm/server.py and driven over the UCI
+#     text protocol — see llm/seca/engines/stockfish/pool.py).  Nothing
+#     spawns blkid / mount / wipefs / findfs, and there is no first-party
+#     reference to libblkid, partition tables, loop devices, or disk images
+#     anywhere in ``llm/`` (``grep -rin "blkid\|losetup\|partition\|/dev/" llm/``
+#     over application code returns only Python ``str.partition(" ")`` in the
+#     auth-header parser).
+#   - The service is a containerised web backend on cloud VMs
+#     (Hetzner/Fly.io): it handles HTTP JSON, PGN/FEN text, and Postgres
+#     rows — never block devices, disk images, or filesystem superblocks.
+#     The vulnerable partition-probing code path is never exercised on any
+#     input this service handles.
+# Accepted risk pending a Debian util-linux patch; remove each entry once
+# ``apt-get upgrade -y`` ships a fixed package (Debian security tracker
+# shows no fix as of 2026-07-15).
+CVE-2026-53615 until:2027-07-01
+CVE-2026-13595 until:2027-07-01
+
+# ---------------------------------------------------------------------------
+# perl-base 5.40.1-6 (python:3.13-slim / Debian 13 Trixie): two MORE unfixed
+# CVEs in the same Essential perl-base package as the #355-#362 cluster
+# above.  Surfaced by the Trivy SARIF scan as GitHub code-scanning alerts
+# #373 (CVE-2026-12087, MEDIUM — perl-Socket out-of-bounds read /
+# information disclosure) and #374 (CVE-2026-48961, MEDIUM — IO::Compress
+# denial of service in the ``zipdetails`` CLI tool via a malformed Info-ZIP
+# Unix Extra Field).  BOTH UNFIXED in Debian (no FixedVersion via
+# ``apt-get upgrade -y``).
+#
+# Reachability analysis (2026-07-15) — same basis as the #355-#362 cluster:
+#   - ``perl-base`` is a Debian ``Essential: yes`` package shipped for
+#     dpkg/apt maintainer scripts; it is NOT an application dependency.  The
+#     perl INTERPRETER is never executed at runtime: no ``system("perl")``,
+#     no subprocess spawning perl, no CGI/``.pl``/``.cgi`` handlers, and no
+#     first-party reference to perl, Socket, or ``zipdetails`` anywhere in
+#     ``llm/`` (grep is clean).
+#   - CVE-2026-12087 requires perl to call ``Socket`` routines on
+#     attacker-influenced input; CVE-2026-48961 requires running the
+#     ``zipdetails`` diagnostic on a crafted ZIP.  Neither the minimal
+#     perl-base nor anything in the image invokes those paths.
+# Accepted risk pending a Debian perl patch; remove each entry once
+# ``apt-get upgrade -y`` ships a fixed perl-base.
+CVE-2026-12087 until:2027-07-01
+CVE-2026-48961 until:2027-07-01
+
+# ---------------------------------------------------------------------------
+# gzip 1.13-1 (python:3.13-slim / Debian 13 Trixie): two CVEs in the gzip(1)
+# command-line package, BOTH UNFIXED in Debian (no FixedVersion via
+# ``apt-get upgrade -y``).  Surfaced by the Trivy SARIF scan as GitHub
+# code-scanning alerts #378 (CVE-2026-41992, HIGH — global buffer overflow
+# in the legacy-LZH decompressor) and #379 (CVE-2026-41991, MEDIUM —
+# arbitrary file overwrite via insecure temp-file handling in the ``gzexe``
+# wrapper).
+#
+# Reachability analysis (2026-07-15):
+#   - Both flaws live in the gzip(1) BINARY / its ``gzexe`` shell wrapper.
+#     CVE-2026-41992 requires the gzip binary to decompress an
+#     attacker-controlled legacy-LZH stream; CVE-2026-41991 requires running
+#     ``gzexe`` against an attacker-writable directory.
+#   - The runtime image never spawns gzip or gzexe: the ONLY external binary
+#     the code launches is Stockfish, and there is no first-party reference
+#     to gzip/gzexe anywhere in ``llm/`` (grep is clean).  Python-side
+#     decompression (httpx Content-Encoding, the stdlib) goes through
+#     libz/zlib IN-PROCESS — the DEFLATE path, not the gzip(1) binary's
+#     legacy-LZH decoder where the overflow lives.
+#   - The service handles HTTP JSON, PGN/FEN text, and Postgres rows; it
+#     decompresses no attacker-supplied archives via the command-line tool.
+# Accepted risk pending a Debian gzip patch; remove each entry once
+# ``apt-get upgrade -y`` ships a fixed gzip.
+CVE-2026-41992 until:2027-07-01
+CVE-2026-41991 until:2027-07-01
+
+# ---------------------------------------------------------------------------
+# libacl1 2.3.2-2+b1 / libattr1 1:2.5.2-3 (python:3.13-slim / Debian 13
+# Trixie): three symlink / TOCTOU privilege-escalation CVEs in the ACL /
+# xattr libraries, ALL UNFIXED in Debian (no FixedVersion via
+# ``apt-get upgrade -y``).  Surfaced by the Trivy SARIF scan as GitHub
+# code-scanning alerts #380 (CVE-2026-54369, HIGH — symlink-traversal
+# privesc via libacl functions), #381 (CVE-2026-54370, MEDIUM — TOCTOU
+# symlink traversal via getfacl/setfacl), and #382 (CVE-2026-54371, MEDIUM —
+# symlink-traversal privesc via getfattr/setfattr).
+#
+# Reachability analysis (2026-07-15):
+#   - All three require running the ACL/xattr tools (getfacl / setfacl /
+#     getfattr / setfattr, or the libacl/libattr functions) against an
+#     attacker-controlled path, in a context privileged enough for the
+#     symlink swap to escalate.  libacl1/libattr1 are transitive base-image
+#     libraries (coreutils links libacl for ACL-aware ls/cp).
+#   - The container runs uvicorn as USER appuser (uid 10001, non-root — no
+#     privilege to escalate FROM) and never manipulates ACLs or extended
+#     attributes: it spawns none of getfacl/setfacl/getfattr/setfattr and
+#     has no first-party reference to acl/xattr anywhere in ``llm/`` (grep
+#     is clean).  The app touches HTTP JSON, PGN/FEN text, and Postgres
+#     rows — never filesystem ACL/xattr metadata on untrusted paths.
+# Accepted risk pending Debian acl/attr patches; remove each entry once
+# ``apt-get upgrade -y`` ships fixed libacl1 / libattr1.
+CVE-2026-54369 until:2027-07-01
+CVE-2026-54370 until:2027-07-01
+CVE-2026-54371 until:2027-07-01
+
+# ---------------------------------------------------------------------------
+# linux-pam 1.7.0-5 (python:3.13-slim / Debian 13 Trixie): CVE-2026-54411
+# (MEDIUM — plaintext password recovery via a timing discrepancy in the
+# ``pam_userdb`` module), UNFIXED in Debian (no FixedVersion via
+# ``apt-get upgrade -y``).  Surfaced by the Trivy SARIF scan as GitHub
+# code-scanning alerts #369-#372 (reported against the libpam0g /
+# libpam-modules / libpam-modules-bin / libpam-runtime sub-packages of the
+# linux-pam source).
+#
+# Reachability analysis (2026-07-15):
+#   - The flaw is a timing side-channel in ``pam_userdb`` (PAM auth against a
+#     Berkeley-DB credential store).  Exploitation requires a PAM-aware
+#     service configured to use ``pam_userdb`` AND an attacker able to time
+#     its auth attempts.
+#   - The application does its OWN auth (JWT + PBKDF2-SHA256, see
+#     llm/seca/auth) and never invokes PAM.  No PAM-aware service runs in the
+#     container: uvicorn is the only listener; nothing spawns login/su/sshd
+#     (same basis as the login(1) CVE-2026-3184 entry above), and the image
+#     ships no ``pam_userdb`` configuration.  There is no first-party
+#     reference to pam anywhere in ``llm/`` (grep is clean).
+# Accepted risk pending a Debian linux-pam patch; remove this entry once
+# ``apt-get upgrade -y`` ships a fixed libpam-modules.
+CVE-2026-54411 until:2027-07-01

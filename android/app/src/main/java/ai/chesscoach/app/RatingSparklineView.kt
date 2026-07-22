@@ -2,11 +2,11 @@ package ai.chesscoach.app
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.util.AttributeSet
 import android.view.View
+import androidx.core.content.ContextCompat
 
 /**
  * Pure-Canvas sparkline showing a player's rating trend.
@@ -23,9 +23,11 @@ class RatingSparklineView @JvmOverloads constructor(
     defStyleAttr: Int = 0,
 ) : View(context, attrs, defStyleAttr) {
 
-    // Atrium accent_cyan — restraint: neon only for signal.
+    // Atrium accent_cyan — restraint: neon only for signal.  Token
+    // read so the line follows the active palette (bright mode flips
+    // the accent via values-notnight/colors.xml).
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#4FD9E5")
+        color = ContextCompat.getColor(context, R.color.atrium_accent_cyan)
         strokeWidth = 3f
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -33,7 +35,7 @@ class RatingSparklineView @JvmOverloads constructor(
     }
 
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#4FD9E5")
+        color = ContextCompat.getColor(context, R.color.atrium_accent_cyan)
         style = Paint.Style.FILL
     }
 

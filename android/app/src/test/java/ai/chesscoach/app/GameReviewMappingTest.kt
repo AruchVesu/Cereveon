@@ -182,6 +182,75 @@ class GameReviewMappingTest {
     }
 
     @Test
+    fun `MAP_QUOTA - daily bucket reads today, monthly reads this month`() {
+        // The server reports the BINDING bucket (pro 10/day smoothing cap
+        // vs the monthly ceiling) via `metric` — the copy must follow.
+        assertEquals(
+            "4 of 10 coach reviews left today.",
+            GameReviewBottomSheet.quotaLine(
+                ReviewEntitlement(
+                    metric = ReviewEntitlement.METRIC_DAILY, remaining = 4, limit = 10,
+                )
+            ),
+        )
+        assertEquals(
+            "12 of 50 coach reviews left this month.",
+            GameReviewBottomSheet.quotaLine(
+                ReviewEntitlement(
+                    metric = ReviewEntitlement.METRIC_MONTHLY, remaining = 12, limit = 50,
+                )
+            ),
+        )
+    }
+
+    @Test
+    fun `MAP_ACTION - capped pro gets no upgrade button`() {
+        // A subscriber hitting the daily/monthly cap has nothing to buy;
+        // UPGRADE reads as a bug. Free (or unknown plan) keeps the CTA.
+        val proCapped = review(
+            "complete",
+            outcome = "skipped_entitlement",
+            entitlement = ReviewEntitlement(plan = ReviewEntitlement.PLAN_PRO),
+        )
+        assertEquals(
+            GameReviewBottomSheet.Companion.ReviewAction.NONE,
+            GameReviewBottomSheet.actionFor(proCapped),
+        )
+        val freeCapped = review(
+            "complete",
+            outcome = "skipped_entitlement",
+            entitlement = ReviewEntitlement(plan = "free"),
+        )
+        assertEquals(
+            GameReviewBottomSheet.Companion.ReviewAction.UPGRADE,
+            GameReviewBottomSheet.actionFor(freeCapped),
+        )
+    }
+
+    @Test
+    fun `MAP_STATUS_LINE - capped copy names the binding window`() {
+        val daily = review(
+            "complete",
+            outcome = "skipped_entitlement",
+            entitlement = ReviewEntitlement(
+                metric = ReviewEntitlement.METRIC_DAILY,
+                plan = ReviewEntitlement.PLAN_PRO,
+            ),
+        )
+        assertTrue(GameReviewBottomSheet.statusLine(daily).contains("tomorrow"))
+
+        val proMonthly = review(
+            "complete",
+            outcome = "skipped_entitlement",
+            entitlement = ReviewEntitlement(
+                metric = ReviewEntitlement.METRIC_MONTHLY,
+                plan = ReviewEntitlement.PLAN_PRO,
+            ),
+        )
+        assertTrue(GameReviewBottomSheet.statusLine(proMonthly).contains("Monthly"))
+    }
+
+    @Test
     fun `MAP_TERMINAL - only complete and failed stop the poll`() {
         assertFalse(review("queued").isTerminal)
         assertFalse(review("running").isTerminal)

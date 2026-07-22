@@ -2,7 +2,6 @@ package ai.chesscoach.app
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.text.Layout
 import android.text.SpannableStringBuilder
@@ -11,6 +10,7 @@ import android.text.style.LeadingMarginSpan
 import android.util.AttributeSet
 import android.util.TypedValue
 import androidx.appcompat.widget.AppCompatTextView
+import androidx.core.content.ContextCompat
 
 /**
  * Atrium drop-cap text view.
@@ -39,8 +39,9 @@ class DropCapTextView @JvmOverloads constructor(
     defStyleAttr: Int = 0,
 ) : AppCompatTextView(context, attrs, defStyleAttr) {
 
-    /** Cap glyph colour — defaults to atrium_accent_cyan. */
-    var capColor: Int = Color.parseColor("#4FD9E5")
+    /** Cap glyph colour — defaults to atrium_accent_cyan (token read
+     *  so bright mode flips it via values-notnight/colors.xml). */
+    var capColor: Int = ContextCompat.getColor(context, R.color.atrium_accent_cyan)
 
     /** How many body lines the cap should occupy (handoff: 2). */
     var capLines: Int = 2

@@ -77,6 +77,12 @@ class ChessBoardView @JvmOverloads constructor(
     // the rest of the Atrium re-skin without going through Resources at every
     // paint pass.  Keep these literals in sync with atrium_board_*, atrium_piece_*,
     // atrium_accent_cyan, atrium_accent_amber if any palette tweak ships later.
+    //
+    // DELIBERATELY literal, not token reads: the board is its own designed
+    // object (dark warm wood) and keeps this palette in Bright mode too —
+    // values-notnight/colors.xml intentionally does NOT override the board
+    // tokens (pinned by BrightModeSettingTest).  Do not convert these to
+    // per-configuration resource reads.
     private val lightSquare = Paint().apply { color = Color.parseColor("#302C24") }    // atrium_board_light (warm wood)
     private val darkSquare  = Paint().apply { color = Color.parseColor("#1A1712") }    // atrium_board_dark
     private val selectPaint = Paint().apply { color = Color.parseColor("#4FD9E5"); alpha = 120 }   // accent_cyan @ ~47%

@@ -2,6 +2,7 @@ package ai.chesscoach.app
 
 import android.app.Application
 import android.util.Log
+import androidx.appcompat.app.AppCompatDelegate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -54,7 +55,26 @@ class CereveonApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        applyPersistedAppearance()
         prewarmEncryptedTokenStorage()
+    }
+
+    /**
+     * Apply the persisted Bright-mode setting BEFORE the first
+     * activity inflates.  Atrium's palette is app-controlled: the
+     * mode is always FORCED (MODE_NIGHT_YES = default dark,
+     * MODE_NIGHT_NO = opt-in bright from Settings › Appearance), so
+     * the system light/dark toggle never selects the palette — the
+     * guarantee the dark-only theme previously provided by parentage
+     * alone.  The pref read is a synchronous SharedPreferences load
+     * of a file every launch screen reads moments later anyway.
+     */
+    private fun applyPersistedAppearance() {
+        AppCompatDelegate.setDefaultNightMode(
+            SettingsBottomSheet.nightModeFor(
+                SettingsBottomSheet.readBrightModeEnabled(this),
+            ),
+        )
     }
 
     /**

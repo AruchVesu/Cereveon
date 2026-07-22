@@ -1,12 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Cereveon · Atrium theme.
+    Cereveon · Atrium theme — DARK (default) variant.
 
-    Atrium is dark-only by design intent (handoff README "Out of scope:
-    Light mode — Cereveon Atrium is dark-only by design intent.").  We
-    therefore parent against Theme.Material3.Dark.NoActionBar — not
-    DayNight — so the system light-mode toggle never reverts the app
-    to a Material default light palette.
+    Atrium shipped dark-only (handoff README "Out of scope: Light mode").
+    That stance was amended by the owner: an opt-in BRIGHT variant now
+    lives in values-notnight/themes.xml, selected exclusively by the
+    Settings › Appearance › Bright mode switch.  CereveonApplication
+    forces AppCompatDelegate.MODE_NIGHT_YES unless that pref is on, so
+    the original guarantee still holds where it matters: the SYSTEM
+    light-mode toggle never reverts the app to a Material default
+    light palette — only the in-app switch selects the palette.  We
+    keep the non-DayNight Dark parent here for the same reason.
+
+    Keep the item block in sync with values-notnight/themes.xml when
+    adding attributes.
 
     Material 3 colour attributes are remapped onto Atrium tokens so any
     Material component (TextView, Button, BottomSheet, etc.) inherits

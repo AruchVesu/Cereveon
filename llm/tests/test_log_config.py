@@ -19,6 +19,8 @@ LOG_10  Client-supplied X-Request-ID that exceeds 128 chars is rejected
 LOG_11  Non-ASCII X-Request-ID is rejected.
 LOG_12  Request-end log line carries method/path/path_template/status/
         latency_ms in its extras.
+LOG_13  safe_log_value() strips CR/LF + Unicode line separators so an
+        untrusted value can't forge a log line (CWE-117).
 """
 
 from __future__ import annotations
@@ -137,6 +139,33 @@ def test_log_04_exception_info_renders_to_sub_object():
     assert exc["type"] == "ValueError"
     assert exc["message"] == "kaboom"
     assert "ValueError: kaboom" in exc["traceback"]
+
+
+def test_log_13_safe_log_value_strips_line_terminators():
+    """LOG_13 — safe_log_value() neutralises CWE-117 log injection.
+
+    An attacker-controlled value carrying CR/LF (or the Unicode line
+    separators NEL/LS/PS that ``repr`` leaves intact) must not forge a
+    second log line; the sanitised result is always single-line and
+    length-bounded.  Control chars are built via ``chr()`` so this test
+    source stays pure-ASCII.
+    """
+    from llm.log_config import safe_log_value
+
+    # CR/LF forgery attempt must not survive as a real line break.
+    forged = "pro_monthly" + chr(13) + chr(10) + "INFO fake-second-line"
+    out = safe_log_value(forged)
+    assert chr(10) not in out and chr(13) not in out
+
+    # The Unicode line separators repr() leaves intact are stripped too.
+    for sep in (chr(0x85), chr(0x2028), chr(0x2029)):
+        assert sep not in safe_log_value("a" + sep + "b")
+
+    # Length is bounded so a giant payload can't bloat the log stream.
+    assert len(safe_log_value("x" * 5000, max_len=80)) <= 80
+
+    # A clean value round-trips (repr-quoted, content unchanged).
+    assert safe_log_value("pro_monthly") == "'pro_monthly'"
 
 
 # ---------------------------------------------------------------------------

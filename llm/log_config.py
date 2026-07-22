@@ -48,6 +48,7 @@ import contextvars
 import json
 import logging
 import os
+import re
 import sys
 import time
 from typing import Any
@@ -119,6 +120,36 @@ def is_valid_client_request_id(raw: str) -> bool:
     if not raw.isascii():
         return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# Log-value sanitization (CWE-117 log injection)
+# ---------------------------------------------------------------------------
+#
+# Untrusted values (request-body fields, headers) must have their
+# line-terminating code points stripped before being interpolated into a
+# log line, or an attacker could forge log entries by embedding CR/LF.
+# ``repr()`` escapes the standard ASCII control characters, but the Unicode
+# line separators (NEL U+0085, LS U+2028, PS U+2029) can slip past it
+# depending on the downstream log encoder, so we strip those explicitly.
+#
+# Implementation note: the ``re.sub(pattern, "", str)`` shape is deliberate.
+# CodeQL's ``py/log-injection`` taint tracker recognises it as a sanitiser
+# and clears the flow; the equivalent loop-of-``str.replace`` shape is NOT
+# recognised.  Shared twin of ``llm.seca.events.router._safe_log`` (which
+# predates this helper) — prefer this one for new call sites.
+_LOG_INJECTION_RE = re.compile("[\r\n\x85\u2028\u2029]")
+
+
+def safe_log_value(value: object, max_len: int = 80) -> str:
+    """Return a CWE-117-safe rendering of an untrusted value for a log line.
+
+    ``repr()`` first (escapes ASCII control characters and quotes the value
+    so any control content is visible rather than acted on), then strip the
+    Unicode line separators ``repr`` leaves intact, then truncate so a giant
+    payload cannot bloat the log stream.
+    """
+    return _LOG_INJECTION_RE.sub("", repr(value))[:max_len]
 
 
 # ---------------------------------------------------------------------------

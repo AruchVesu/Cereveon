@@ -45,6 +45,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, field_validator
 
+from llm.log_config import safe_log_value
 from llm.seca.auth.router import get_current_player, get_db
 from llm.seca.entitlements import service as entitlements
 from llm.seca.shared_limiter import limiter
@@ -268,7 +269,7 @@ async def verify_google_purchase(
         "billing: player %s activated plan %s via %s (state %s)",
         player.id,
         plan,
-        req.product_id,
+        safe_log_value(req.product_id),
         verdict.state,
     )
     return {"plan": plan, "product_id": req.product_id, "state": verdict.state}

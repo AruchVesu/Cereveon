@@ -18,6 +18,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.viewModels
+import androidx.core.content.ContextCompat
 import androidx.core.view.GravityCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -682,13 +683,19 @@ class MainActivity : AppCompatActivity() {
                 "⚠ Eval N/A"
             }
 
-            // Show mistake category badge with severity colour
+            // Show mistake category badge with severity colour.
+            // Token reads (atrium_severity_*) so bright mode swaps in
+            // paper-legible variants via values-notnight/colors.xml.
             txtMistakeCategory.text = update.classification.label()
             val categoryColor = when (update.classification) {
-                MistakeClassification.BLUNDER    -> 0xFFFF4444.toInt()
-                MistakeClassification.MISTAKE    -> 0xFFFF8800.toInt()
-                MistakeClassification.INACCURACY -> 0xFFFFDD00.toInt()
-                MistakeClassification.GOOD       -> 0xFF00FFFF.toInt()
+                MistakeClassification.BLUNDER    ->
+                    ContextCompat.getColor(this, R.color.atrium_severity_blunder)
+                MistakeClassification.MISTAKE    ->
+                    ContextCompat.getColor(this, R.color.atrium_severity_mistake)
+                MistakeClassification.INACCURACY ->
+                    ContextCompat.getColor(this, R.color.atrium_severity_inaccuracy)
+                MistakeClassification.GOOD       ->
+                    ContextCompat.getColor(this, R.color.atrium_severity_good)
             }
             txtMistakeCategory.setTextColor(categoryColor)
             scoreRow.visibility = View.VISIBLE

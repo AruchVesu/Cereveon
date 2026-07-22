@@ -346,7 +346,13 @@ class GameSummaryBottomSheet : BottomSheetDialogFragment() {
                     payload.forEach { (key, value) ->
                         val tv = TextView(requireContext()).apply {
                             text = "$key: $value"
-                            setTextColor(0xFFCCCCCC.toInt())
+                            // Token read so bright mode flips it via
+                            // values-notnight/colors.xml.
+                            setTextColor(
+                                androidx.core.content.ContextCompat.getColor(
+                                    requireContext(), R.color.atrium_text_soft,
+                                ),
+                            )
                             textSize = 12f
                         }
                         layoutPayload.addView(tv)

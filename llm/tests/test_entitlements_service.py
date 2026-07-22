@@ -168,6 +168,56 @@ class TestMonthlyRollover:
 
 
 # ---------------------------------------------------------------------------
+# 4a. Pro daily review smoothing cap (import_analysis_daily, 2026-07-15)
+# ---------------------------------------------------------------------------
+
+
+class TestImportAnalysisDailyCap:
+    def test_pro_daily_cap_buckets_by_day(self, db, enforced):
+        """10 distinct games admit today; the 11th blocks; tomorrow is a
+        fresh bucket.  Marker semantics identical to the monthly metric."""
+        player = _make_player(db, plan="pro")
+        for i in range(10):
+            admitted = service.admit(
+                db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, f"ev-{i}", now=_JULY_3
+            )
+            assert admitted.allowed
+        eleventh = service.admit(
+            db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, "ev-10", now=_JULY_3
+        )
+        assert not eleventh.allowed
+
+        tomorrow = service.check(
+            db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, now=_JULY_4
+        )
+        assert tomorrow.allowed and tomorrow.used == 0, "new day, fresh bucket"
+
+    def test_pro_daily_readmission_of_same_game_is_free(self, db, enforced):
+        """A same-day retry of an already-admitted game must not consume a
+        second daily slot — same subject-marker idempotency as monthly."""
+        player = _make_player(db, plan="pro")
+        for i in range(9):
+            service.admit(
+                db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, f"ev-{i}", now=_JULY_3
+            )
+        service.admit(db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, "target", now=_JULY_3)
+        again = service.admit(
+            db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, "target", now=_JULY_3
+        )
+        assert again.allowed, "re-admit of the same subject is idempotent at the cap"
+
+    def test_free_plan_is_not_metered_on_the_daily_metric(self, db, enforced):
+        """Free has no daily config (3/month makes it meaningless) — the
+        metric must fail OPEN for free so the review service can consult
+        both buckets unconditionally."""
+        player = _make_player(db)
+        decision = service.check(
+            db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, now=_JULY_3
+        )
+        assert decision.allowed and decision.limit is None
+
+
+# ---------------------------------------------------------------------------
 # 4b. check()/admit() marker consistency (the PR #390 review-quota bug)
 # ---------------------------------------------------------------------------
 

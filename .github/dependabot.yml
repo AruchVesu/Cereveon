@@ -10,10 +10,10 @@ updates:
     schedule:
       interval: "weekly"
 
-  - package-ecosystem: "npm"
-    directory: "/llm"
-    schedule:
-      interval: "weekly"
+  # No npm ecosystem: there is no package.json in the tree.  The design/
+  # prototype loads Babel via CDN and /llm is pure Python, so a
+  # `package-ecosystem: "npm"` entry has nothing to monitor.  Re-add it
+  # (pointed at the real manifest's directory) if a JS package.json lands.
 
   - package-ecosystem: "gradle"
     directory: "/android"

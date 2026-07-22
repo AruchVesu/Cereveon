@@ -3,11 +3,11 @@ package ai.chesscoach.app
 import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.View
+import androidx.core.content.ContextCompat
 
 /**
  * Atrium typing-dots indicator.
@@ -27,8 +27,10 @@ class AtriumTypingDotsView @JvmOverloads constructor(
     defStyleAttr: Int = 0,
 ) : View(context, attrs, defStyleAttr) {
 
+    // Token read so the dots follow the active palette (bright mode
+    // flips the accent via values-notnight/colors.xml).
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = ACCENT_CYAN
+        color = ContextCompat.getColor(context, R.color.atrium_accent_cyan)
         style = Paint.Style.FILL
     }
 
@@ -90,8 +92,4 @@ class AtriumTypingDotsView @JvmOverloads constructor(
 
     private fun dp(value: Float): Float =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, resources.displayMetrics)
-
-    companion object {
-        private val ACCENT_CYAN = Color.parseColor("#4FD9E5")
-    }
 }

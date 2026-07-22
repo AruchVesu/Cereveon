@@ -2,11 +2,11 @@ package ai.chesscoach.app
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.View
+import androidx.core.content.ContextCompat
 
 /**
  * Horizontal bar chart for player weakness categories.
@@ -28,15 +28,17 @@ class WeaknessBarChartView @JvmOverloads constructor(
     private var entries: List<Entry> = emptyList()
 
     // Atrium muted ink for label / value text (mono labels are tiny;
-    // muted contrast preserves the "official document" calm).
+    // muted contrast preserves the "official document" calm).  Token
+    // reads so the chart follows the active palette (bright mode
+    // flips them via values-notnight/colors.xml).
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#9AA0B4") // atrium_muted
+        color = ContextCompat.getColor(context, R.color.atrium_muted)
         textSize = 36f
         typeface = android.graphics.Typeface.MONOSPACE
     }
 
     private val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#9AA0B4") // atrium_muted
+        color = ContextCompat.getColor(context, R.color.atrium_muted)
         textSize = 32f
         typeface = android.graphics.Typeface.MONOSPACE
     }
@@ -45,9 +47,9 @@ class WeaknessBarChartView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
-    // Atrium hairline (8% white) — same primitive used for dividers.
+    // Atrium hairline — same primitive used for dividers.
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#14FFFFFF")
+        color = ContextCompat.getColor(context, R.color.atrium_hairline)
         style = Paint.Style.FILL
     }
 
@@ -122,14 +124,19 @@ class WeaknessBarChartView @JvmOverloads constructor(
     // (mirrors opponent / warning role), cyan for low-severity
     // (player-side / improving).  Medium reads as a muted amber so
     // the strip never feels alarming — Atrium is calm about telemetry.
-    private fun priorityColor(priority: String, value: Float): Int = when (priority) {
-        "high"   -> Color.parseColor("#FFC069") // atrium_accent_amber
-        "medium" -> Color.parseColor("#CCFFC069") // amber @ 80%
-        "low"    -> Color.parseColor("#4FD9E5") // atrium_accent_cyan
-        else     -> when {
-            value > 0.12f -> Color.parseColor("#FFC069")
-            value > 0.06f -> Color.parseColor("#CCFFC069")
-            else          -> Color.parseColor("#4FD9E5")
+    private fun priorityColor(priority: String, value: Float): Int {
+        val amber = ContextCompat.getColor(context, R.color.atrium_accent_amber)
+        val amberMuted = ContextCompat.getColor(context, R.color.atrium_accent_amber_cc)
+        val cyan = ContextCompat.getColor(context, R.color.atrium_accent_cyan)
+        return when (priority) {
+            "high"   -> amber
+            "medium" -> amberMuted
+            "low"    -> cyan
+            else     -> when {
+                value > 0.12f -> amber
+                value > 0.06f -> amberMuted
+                else          -> cyan
+            }
         }
     }
 }

@@ -19,7 +19,13 @@ class PromotionDialogFragment(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(24, 24, 24, 24)
-            setBackgroundColor(0xFF0B0F14.toInt())
+            // Surface token (was a near-identical literal #0B0F14) so
+            // bright mode flips it via values-notnight/colors.xml.
+            setBackgroundColor(
+                androidx.core.content.ContextCompat.getColor(
+                    requireContext(), R.color.atrium_bg_surface,
+                ),
+            )
         }
 
         fun add(label: String, piece: Char) {
