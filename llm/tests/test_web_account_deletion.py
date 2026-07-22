@@ -212,7 +212,11 @@ def test_lichess_start_redirects_and_sets_cookie(client):
     assert r.status_code == 302
     loc = r.headers["location"]
     parsed = urlparse(loc)
-    assert parsed.netloc.endswith("lichess.org")
+    # Exact host match, not endswith(): a suffix check would also accept a
+    # look-alike host such as "evillichess.org" (CWE-20,
+    # py/incomplete-url-substring-sanitization).  The authorize URL is a
+    # fixed https://lichess.org/oauth, so the netloc must equal "lichess.org".
+    assert parsed.netloc == "lichess.org"
     assert parsed.path == "/oauth"
     q = parse_qs(parsed.query)
     assert q["response_type"] == ["code"]
