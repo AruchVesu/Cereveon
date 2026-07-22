@@ -937,9 +937,10 @@ class ChatBottomSheet : DialogFragment() {
                 // conversation history, and a quota notice is not coaching
                 // context.  Then surface the paywall — the 402 body's
                 // upgrade hint is exactly this screen (API_CONTRACTS.md §5).
-                // Live countdown to the UTC-midnight reset, refreshed each
-                // minute; not persisted (a quota notice isn't coaching context).
-                startChatLimitTicker(quotaNotice.limit)
+                // Live countdown to the server's rolling-24h reset (reset_at,
+                // UTC-midnight fallback), refreshed each minute; not persisted
+                // (a quota notice isn't coaching context).
+                startChatLimitTicker(quotaNotice.limit, quotaNotice.resetAt)
                 if (isAdded) {
                     startActivity(Intent(requireContext(), PaywallActivity::class.java))
                 }
@@ -963,12 +964,16 @@ class ChatBottomSheet : DialogFragment() {
      * the view scope so it stops when the sheet closes; also cancelled at
      * the top of [sendToBackend] so a later reply is never overwritten.
      */
-    private fun startChatLimitTicker(limit: Int) {
+    private fun startChatLimitTicker(limit: Int, resetAt: String?) {
         chatLimitTickerJob?.cancel()
         chatLimitTickerJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
                 chatAdapter.updateLastMessage(
-                    getString(R.string.chat_daily_limit_reached, limit, DailyLimitReset.countdown()),
+                    getString(
+                        R.string.chat_daily_limit_reached,
+                        limit,
+                        DailyLimitReset.countdown(resetAt),
+                    ),
                 )
                 delay(60_000L)
             }

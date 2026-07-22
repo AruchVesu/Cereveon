@@ -198,6 +198,11 @@ sealed class ApiResult<out T> {
  * (API_CONTRACTS.md §5 "Errors"): the caller's plan and quota so the
  * paywall surface can say exactly what ran out.
  *
+ * [resetAt] is the server's `reset_at` — the ISO-8601 UTC instant the
+ * rolling 24h chat window frees a slot — or null on an older server /
+ * calendar path; it drives the live "resets in Xh" countdown
+ * ([DailyLimitReset], which falls back to UTC midnight when null).
+ *
  * `upgrade.product` is intentionally not modelled — the client's Play
  * catalogue is [PaywallActivity.PLAY_PRODUCT_IDS]; the server hint is
  * advisory.
@@ -208,6 +213,7 @@ data class ChatLimitNotice(
     val plan: String = "",
     val limit: Int = 0,
     val used: Int = 0,
+    @SerialName("reset_at") val resetAt: String? = null,
 ) {
     companion object {
         private const val ERROR_KEY = "chat_daily_limit"
@@ -241,9 +247,14 @@ data class ChatLimitNotice(
 
 /**
  * Parsed body of the entitlements 402 on POST /game/start
- * (API_CONTRACTS.md §11 "Errors"): the free tier is 1 coached game/day,
- * hard-blocked.  The client renders this as a non-dismissible paywall
- * ("come back tomorrow") and does NOT enter a game.
+ * (API_CONTRACTS.md §11 "Errors"): the free tier is 1 coached game per
+ * rolling 24h, hard-blocked.  The client renders this as a
+ * non-dismissible paywall with a live "resets in Xh" countdown and does
+ * NOT enter a game.
+ *
+ * [resetAt] is the server's `reset_at` — the ISO-8601 UTC instant the
+ * game unlocks (the played game + 24h) — or null on an older server;
+ * [DailyLimitReset] falls back to UTC midnight when it is absent.
  *
  * Same Shape B envelope as [ChatLimitNotice] with a distinct `error`
  * discriminator so the game gate is never confused with the chat gate
@@ -255,6 +266,7 @@ data class GameLimitNotice(
     val plan: String = "",
     val limit: Int = 0,
     val used: Int = 0,
+    @SerialName("reset_at") val resetAt: String? = null,
 ) {
     companion object {
         private const val ERROR_KEY = "game_daily_limit"

@@ -53,7 +53,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session as DBSession
@@ -98,6 +98,19 @@ _MARKER_METRICS = frozenset(
 
 _DAILY = "daily"
 _MONTHLY = "monthly"
+
+#: ROLLING 24h window (2026-07-22 product change).  ``coached_game`` and
+#: ``chat_turn`` reset 24h AFTER first use rather than at the UTC calendar
+#: boundary: their rows carry the sentinel ``_ROLLING_PERIOD`` bucket and
+#: the window is enforced on ``created_at`` (> ``now - _ROLLING_WINDOW``).
+#: ``reset_at`` (surfaced on the 402) is the OLDEST in-window use + 24h.
+#: The two metrics window INDEPENDENTLY (separate rows).  Monthly metrics
+#: stay UTC-calendar-bucketed.  The sentinel period_key keeps exactly one
+#: row per scope, so this needs no schema migration and old calendar rows
+#: simply age out of the window on deploy (a one-time fresh window).
+_ROLLING_WINDOW = timedelta(hours=24)
+_ROLLING_PERIOD = "rolling"
+_ROLLING_METRICS = frozenset({METRIC_COACHED_GAME, METRIC_CHAT_TURN})
 
 #: Over-limit behaviour kinds.  ``degrade`` = request proceeds on the
 #: deterministic (zero-LLM-cost) path; ``block`` = request is refused
@@ -168,6 +181,10 @@ class Decision:
     limit: int | None = None
     used: int | None = None
     remaining: int | None = None
+    #: For ROLLING metrics, the UTC instant the window frees a slot
+    #: (oldest in-window use + 24h); None for calendar metrics and the
+    #: not-metered path.  Surfaced on the 402 so the client counts down.
+    reset_at: datetime | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +226,38 @@ def _period_key(granularity: str, now: datetime) -> str:
     return now.strftime("%Y-%m-%d") if granularity == _DAILY else now.strftime("%Y-%m")
 
 
+def _is_rolling(metric: str) -> bool:
+    return metric in _ROLLING_METRICS
+
+
+def _scope_period(metric: str, granularity: str, now: datetime) -> str:
+    """Row bucket for a metric: the fixed sentinel for rolling metrics
+    (their window lives on ``created_at``), else the UTC calendar key."""
+    return _ROLLING_PERIOD if _is_rolling(metric) else _period_key(granularity, now)
+
+
+def _scope_query(db: DBSession, pid: str, metric: str, granularity: str, now: datetime):
+    """Rows in scope for (player, metric) right now: the sentinel bucket
+    filtered to the last 24h for rolling metrics, else the calendar
+    bucket."""
+    q = db.query(UsageCounter).filter(
+        UsageCounter.player_id == pid,
+        UsageCounter.metric == metric,
+        UsageCounter.period_key == _scope_period(metric, granularity, now),
+    )
+    if _is_rolling(metric):
+        q = q.filter(UsageCounter.created_at > now - _ROLLING_WINDOW)
+    return q
+
+
+def _reset_at(metric: str, oldest_created_at: datetime | None) -> datetime | None:
+    """The rolling window's free-a-slot instant: oldest in-window use +
+    24h.  None for calendar metrics or an empty window."""
+    if not _is_rolling(metric) or oldest_created_at is None:
+        return None
+    return oldest_created_at + _ROLLING_WINDOW
+
+
 def _not_metered(plan: str, metric: str) -> Decision:
     return Decision(allowed=True, degrade=False, plan=plan, metric=metric)
 
@@ -229,7 +278,9 @@ def check(
 
     For pure counters ``used`` is the counter row's count; for marker
     metrics (``_MARKER_METRICS``) it is the number of distinct admitted
-    subjects this period.  Never writes.
+    subjects in scope.  Rolling metrics (``_ROLLING_METRICS``) scope to the
+    last 24h and set ``reset_at`` = oldest in-window use + 24h.  Never
+    writes.
     """
     plan = _plan_for(player)
     if not resolve_enforced():
@@ -242,18 +293,20 @@ def check(
     # Captured before any rollback: rollback() expires ORM instances, so
     # touching player.id afterwards would itself hit the (failing) DB.
     pid = player.id
-    period = _period_key(cfg.granularity, now or datetime.utcnow())
+    now = now or datetime.utcnow()
+    oldest: datetime | None = None
     try:
-        query = db.query(UsageCounter).filter(
-            UsageCounter.player_id == pid,
-            UsageCounter.metric == metric,
-            UsageCounter.period_key == period,
-        )
+        query = _scope_query(db, pid, metric, cfg.granularity, now)
         if metric in _MARKER_METRICS:
-            used = query.filter(UsageCounter.subject != "").count()
+            # .all() (not .count()) so we can read the oldest created_at
+            # for the rolling reset; the row set is bounded by the limit.
+            markers = query.filter(UsageCounter.subject != "").all()
+            used = len(markers)
+            oldest = min((m.created_at for m in markers), default=None)
         else:
             row = query.filter(UsageCounter.subject == "").one_or_none()
             used = int(row.count) if row is not None else 0
+            oldest = row.created_at if row is not None else None
     except SQLAlchemyError:
         db.rollback()
         logger.warning("Entitlements check failed for %s/%s; failing open", metric, pid)
@@ -268,6 +321,7 @@ def check(
         limit=cfg.limit,
         used=used,
         remaining=max(0, cfg.limit - used),
+        reset_at=_reset_at(metric, oldest),
     )
 
 
@@ -281,10 +335,11 @@ def record(
     """Consume one unit of a pure-counter metric.
 
     Call AFTER the metered work succeeded (2xx) so failures never eat
-    quota.  Atomic ``count = count + 1`` UPDATE (no lost updates);
-    first-use insert races resolve via the unique constraint.  Failures
-    roll back and are swallowed with a warning — see the module
-    docstring's failure posture.
+    quota.  Calendar metrics: atomic ``count = count + 1`` UPDATE (no lost
+    updates), first-use insert races resolve via the unique constraint.
+    Rolling metrics delegate to [_record_rolling] (increment live window /
+    reset expired / insert first).  Failures roll back and are swallowed
+    with a warning — see the module docstring's failure posture.
     """
     if not resolve_enforced():
         return
@@ -292,7 +347,11 @@ def record(
     if cfg is None:
         return
     pid = player.id  # pre-rollback capture, same reasoning as check()
-    period = _period_key(cfg.granularity, now or datetime.utcnow())
+    now = now or datetime.utcnow()
+    if _is_rolling(metric):
+        _record_rolling(db, pid, metric, now)
+        return
+    period = _period_key(cfg.granularity, now)
 
     def _increment() -> int:
         return (
@@ -323,6 +382,65 @@ def record(
         logger.warning("Entitlements record failed for %s/%s; usage not counted", metric, pid)
 
 
+def _record_rolling(db: DBSession, pid: str, metric: str, now: datetime) -> None:
+    """Consume one unit of a rolling pure-counter metric on its single
+    sentinel row: increment if the window is live, reset it to a fresh 24h
+    if the prior window expired, insert if there is none.  Each step is an
+    atomic UPDATE/INSERT so concurrent turns can't lose a count or double
+    a window."""
+    cutoff = now - _ROLLING_WINDOW
+
+    def _base():
+        return db.query(UsageCounter).filter(
+            UsageCounter.player_id == pid,
+            UsageCounter.metric == metric,
+            UsageCounter.period_key == _ROLLING_PERIOD,
+            UsageCounter.subject == "",
+        )
+
+    try:
+        # Live window → atomic increment.
+        if (
+            _base()
+            .filter(UsageCounter.created_at > cutoff)
+            .update({"count": UsageCounter.count + 1}, synchronize_session=False)
+        ):
+            db.commit()
+            return
+        # Expired window → reset it to a fresh 24h anchored at now.
+        if (
+            _base()
+            .filter(UsageCounter.created_at <= cutoff)
+            .update({"count": 1, "created_at": now}, synchronize_session=False)
+        ):
+            db.commit()
+            return
+        # No row yet → first use.
+        try:
+            db.add(
+                UsageCounter(
+                    player_id=pid,
+                    metric=metric,
+                    period_key=_ROLLING_PERIOD,
+                    count=1,
+                    created_at=now,
+                )
+            )
+            db.commit()
+        except IntegrityError:
+            # A concurrent first use won the insert; increment its live row.
+            db.rollback()
+            _base().filter(UsageCounter.created_at > cutoff).update(
+                {"count": UsageCounter.count + 1}, synchronize_session=False
+            )
+            db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.warning(
+            "Entitlements rolling record failed for %s/%s; usage not counted", metric, pid
+        )
+
+
 def admit(
     db: DBSession,
     player: Player,
@@ -334,11 +452,13 @@ def admit(
     """Distinct-subject admission (the ``_MARKER_METRICS`` path:
     ``coached_game`` per game_id, ``import_analysis`` per game_event_id).
 
-    A period admits up to ``limit`` distinct subjects; each admission is
-    a marker row, so re-asking for an admitted subject is idempotent and
-    an over-limit subject degrades consistently for its whole game (no
-    marker is written for it).  A missing subject fails OPEN — clients
-    that don't send a game_id yet must never be punished.
+    Scope admits up to ``limit`` distinct subjects; each admission is a
+    marker row, so re-asking for an admitted subject is idempotent and an
+    over-limit subject degrades consistently for its whole game (no marker
+    is written for it).  Rolling metrics scope to the last 24h and report
+    ``reset_at`` (oldest in-window admission + 24h).  A missing subject
+    fails OPEN — clients that don't send a game_id yet must never be
+    punished.
     """
     plan = _plan_for(player)
     if not resolve_enforced():
@@ -351,19 +471,29 @@ def admit(
         return _not_metered(plan, metric)
 
     pid = player.id  # pre-rollback capture, same reasoning as check()
-    period = _period_key(cfg.granularity, now or datetime.utcnow())
+    now = now or datetime.utcnow()
+    period = _scope_period(metric, cfg.granularity, now)
     try:
-        scope = db.query(UsageCounter).filter(
-            UsageCounter.player_id == pid,
-            UsageCounter.metric == metric,
-            UsageCounter.period_key == period,
+        # .all() (not .count()) so we can read the oldest created_at for
+        # the rolling reset and test in-scope membership for `already`.
+        markers = (
+            _scope_query(db, pid, metric, cfg.granularity, now)
+            .filter(UsageCounter.subject != "")
+            .all()
         )
-        already = scope.filter(UsageCounter.subject == subject).one_or_none()
-        used = scope.filter(UsageCounter.subject != "").count()
-        if already is not None:
+        used = len(markers)
+        oldest = min((m.created_at for m in markers), default=None)
+        already = any(m.subject == subject for m in markers)
+        if already:
             return Decision(
-                allowed=True, degrade=False, plan=plan, metric=metric,
-                limit=cfg.limit, used=used, remaining=max(0, cfg.limit - used),
+                allowed=True,
+                degrade=False,
+                plan=plan,
+                metric=metric,
+                limit=cfg.limit,
+                used=used,
+                remaining=max(0, cfg.limit - used),
+                reset_at=_reset_at(metric, oldest),
             )
 
         if used < cfg.limit:
@@ -375,15 +505,33 @@ def admit(
                         period_key=period,
                         subject=subject,
                         count=1,
+                        created_at=now,
                     )
                 )
                 db.commit()
             except IntegrityError:
-                # Concurrent admit of the SAME subject — it's admitted.
+                # Concurrent admit of the SAME subject, OR (rolling) an
+                # EXPIRED marker for this subject already holds the unique
+                # key — refresh its window so this admission counts.
                 db.rollback()
+                if _is_rolling(metric):
+                    db.query(UsageCounter).filter(
+                        UsageCounter.player_id == pid,
+                        UsageCounter.metric == metric,
+                        UsageCounter.period_key == period,
+                        UsageCounter.subject == subject,
+                    ).update({"created_at": now, "count": 1}, synchronize_session=False)
+                    db.commit()
+            new_oldest = oldest if oldest is not None else now
             return Decision(
-                allowed=True, degrade=False, plan=plan, metric=metric,
-                limit=cfg.limit, used=used + 1, remaining=max(0, cfg.limit - used - 1),
+                allowed=True,
+                degrade=False,
+                plan=plan,
+                metric=metric,
+                limit=cfg.limit,
+                used=used + 1,
+                remaining=max(0, cfg.limit - used - 1),
+                reset_at=_reset_at(metric, new_oldest),
             )
     except SQLAlchemyError:
         db.rollback()
@@ -398,6 +546,7 @@ def admit(
         limit=cfg.limit,
         used=used,
         remaining=0,
+        reset_at=_reset_at(metric, oldest),
     )
 
 

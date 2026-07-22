@@ -33,7 +33,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -59,12 +58,6 @@ _SIGNAL = extract_engine_signal({}, fen=_VALID_FEN)
 
 # Canonical deterministic phrasing — passes every Mode-2 boundary gate.
 _SAFE_REPLY = "The position is roughly equal."
-
-
-def _today() -> str:
-    """Mirror of the service's daily period_key format (documented on
-    UsageCounter.period_key)."""
-    return datetime.utcnow().strftime("%Y-%m-%d")
 
 
 class _ChatPipelineSpy:
@@ -100,10 +93,15 @@ class _ChatPipelineSpy:
 
 
 def _fake_request() -> StarletteRequest:
-    return StarletteRequest({
-        "type": "http", "method": "POST", "path": "/chat",
-        "headers": [], "client": ("127.0.0.1", 0),
-    })
+    return StarletteRequest(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/chat",
+            "headers": [],
+            "client": ("127.0.0.1", 0),
+        }
+    )
 
 
 @pytest.fixture()
@@ -175,9 +173,7 @@ def spy(monkeypatch):
 def _chat_request(content: str = "How is my position looking?"):
     import llm.server as server
 
-    return server.ChatRequest(
-        fen=_VALID_FEN, messages=[{"role": "user", "content": content}]
-    )
+    return server.ChatRequest(fen=_VALID_FEN, messages=[{"role": "user", "content": content}])
 
 
 def _call_chat(db, player):
@@ -212,9 +208,16 @@ def _usage_rows(db) -> list[UsageCounter]:
 
 
 def _seed_chat_counter(db, player, count: int) -> None:
+    """chat_turn is a ROLLING counter — seed the sentinel bucket with the
+    default ``created_at`` (now) so the row counts inside the 24h window."""
+    from llm.seca.entitlements import service
+
     db.add(
         UsageCounter(
-            player_id=player.id, metric="chat_turn", period_key=_today(), count=count
+            player_id=player.id,
+            metric="chat_turn",
+            period_key=service._ROLLING_PERIOD,
+            count=count,
         )
     )
     db.commit()
@@ -258,17 +261,21 @@ class TestFlagOnFreeChat:
         assert isinstance(blocked, JSONResponse)
         assert blocked.status_code == 402
         body = _body_of(blocked)
-        assert set(body.keys()) == {"error", "plan", "limit", "used", "upgrade"}, (
-            "402 body must carry exactly the documented keys"
-        )
+        assert set(body.keys()) == {
+            "error",
+            "plan",
+            "limit",
+            "used",
+            "reset_at",
+            "upgrade",
+        }, "402 body must carry exactly the documented keys"
         assert body["error"] == "chat_daily_limit"
         assert body["plan"] == "free"
         assert body["limit"] == 3
         assert body["used"] == 3
+        assert body["reset_at"] is not None  # rolling 24h from the first turn
         assert body["upgrade"] == {"product": "pro_monthly"}
-        assert "x-auth-token" not in blocked.headers, (
-            "the 402 must never ship a rotation header"
-        )
+        assert "x-auth-token" not in blocked.headers, "the 402 must never ship a rotation header"
         # The gate runs before any pipeline work: 3 turns → 3 LLM calls.
         assert len(spy.calls) == 3
 
@@ -287,9 +294,9 @@ class TestFlagOnFreeChat:
         assert _usage_rows(db)[0].count == 1, "a 5xx must not consume a turn"
 
         spy.raise_exc = None
-        assert isinstance(_call_chat(db, player), dict), (
-            "the failed request must not have used up quota"
-        )
+        assert isinstance(
+            _call_chat(db, player), dict
+        ), "the failed request must not have used up quota"
         assert _usage_rows(db)[0].count == 2
 
 
@@ -305,9 +312,9 @@ class TestFlagOnStream:
 
         blocked = _call_stream(db, player)
 
-        assert isinstance(blocked, JSONResponse), (
-            "over-limit stream must be a plain HTTP error, not an SSE abort"
-        )
+        assert isinstance(
+            blocked, JSONResponse
+        ), "over-limit stream must be a plain HTTP error, not an SSE abort"
         assert not isinstance(blocked, StreamingResponse)
         assert blocked.status_code == 402
         assert _body_of(blocked)["error"] == "chat_daily_limit"
@@ -343,13 +350,13 @@ class TestFlagOnStream:
         assert '"type": "done"' in wire
 
         rows = _usage_rows(db)
-        assert len(rows) == 1 and rows[0].count == 1, (
-            "the done terminal must consume exactly one turn"
-        )
+        assert (
+            len(rows) == 1 and rows[0].count == 1
+        ), "the done terminal must consume exactly one turn"
         db.expire_all()
-        assert db.query(ChatTurn).count() == 2, (
-            "counted and persisted must land together (user + assistant rows)"
-        )
+        assert (
+            db.query(ChatTurn).count() == 2
+        ), "counted and persisted must land together (user + assistant rows)"
 
     def test_abort_terminal_still_consumes_turn(self, db, db_env, player, spy, monkeypatch):
         monkeypatch.setenv("SECA_ENTITLEMENTS_ENFORCED", "true")
@@ -361,9 +368,9 @@ class TestFlagOnStream:
         assert _SAFE_REPLY in wire, "abort serves the deterministic fallback reply"
 
         rows = _usage_rows(db)
-        assert len(rows) == 1 and rows[0].count == 1, (
-            "the user saw a (fallback) reply — the turn counts"
-        )
+        assert (
+            len(rows) == 1 and rows[0].count == 1
+        ), "the user saw a (fallback) reply — the turn counts"
 
 
 # ---------------------------------------------------------------------------

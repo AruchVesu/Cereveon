@@ -12,13 +12,14 @@
     <string name="seca_safety_retry">Retry</string>
 
     <!--
-      Freemium daily-limit reset countdown (client-computed — the limits
-      reset at UTC midnight; see DailyLimitReset).  %1$s is the live
-      "4h 32m" countdown, refreshed each minute while the limit is hit;
-      the chat string's %1$d is the plan's daily question limit.
+      Freemium limit reset countdown.  The limits reset on a rolling 24h
+      window; the countdown targets the server's `reset_at` (see
+      DailyLimitReset), falling back to UTC midnight when it is absent.
+      %1$s is the live "23h 59m" countdown, refreshed each minute while the
+      limit is hit; the chat string's %1$d is the plan's question limit.
     -->
-    <string name="game_daily_limit_locked">Daily game reached · resets in %1$s. Upgrade for unlimited games.</string>
-    <string name="chat_daily_limit_reached">You\'ve used all %1$d coach questions for today · resets in %2$s. Upgrade to Premium for unlimited coaching.</string>
+    <string name="game_daily_limit_locked">Game limit reached · resets in %1$s. Upgrade for unlimited games.</string>
+    <string name="chat_daily_limit_reached">You\'ve used all %1$d coach questions · resets in %2$s. Upgrade to Premium for unlimited coaching.</string>
 
     <!--
       In-game drawer "Exit to Home" affordance.  See MainActivity.btnExitToHome
