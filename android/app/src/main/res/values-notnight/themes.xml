@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cereveon · Atrium theme — BRIGHT (notnight) variant.
+
+    Activated only by Settings › Appearance › Bright mode
+    (AppCompatDelegate.MODE_NIGHT_NO forced from the persisted pref in
+    CereveonApplication).  The default remains the dark variant in
+    values/themes.xml under the forced MODE_NIGHT_YES, so the system
+    light/dark toggle still never selects the palette.
+
+    Re-parented on Theme.Material3.Light.NoActionBar so Material
+    widget internals (ripples, elevation overlays, default component
+    colours not remapped below) resolve from the light defaults.  The
+    item block mirrors values/themes.xml verbatim — the @color tokens
+    themselves resolve to the bright values in
+    values-notnight/colors.xml.  Keep the two blocks in sync when
+    adding attributes.
+
+    Only the theme needs a notnight declaration: every other style in
+    values/themes.xml (text appearances, buttons, rows) references
+    @color/atrium_* tokens, which flip per-configuration on their own.
+-->
+<resources>
+
+    <style name="Theme.Cereveon.Atrium" parent="Theme.Material3.Light.NoActionBar">
+        <!-- Surfaces -->
+        <item name="android:windowBackground">@drawable/bg_atrium_gradient</item>
+        <item name="android:colorBackground">@color/atrium_bg_base</item>
+        <item name="colorSurface">@color/atrium_bg_surface</item>
+        <item name="colorSurfaceVariant">@color/atrium_bg_surface</item>
+        <item name="colorSurfaceContainer">@color/atrium_bg_surface</item>
+        <item name="colorSurfaceContainerHigh">@color/atrium_bg_surface</item>
+
+        <!-- Ink -->
+        <item name="colorOnBackground">@color/atrium_ink</item>
+        <item name="colorOnSurface">@color/atrium_ink</item>
+        <item name="colorOnSurfaceVariant">@color/atrium_muted</item>
+        <item name="android:textColorPrimary">@color/atrium_ink</item>
+        <item name="android:textColorSecondary">@color/atrium_muted</item>
+        <item name="android:textColorTertiary">@color/atrium_dim</item>
+        <item name="android:textColorHint">@color/atrium_dim</item>
+
+        <!-- Accents — neon-only-for-signal (bright-mode darkened hexes) -->
+        <item name="colorPrimary">@color/atrium_accent_cyan</item>
+        <item name="colorOnPrimary">@color/atrium_bg_base</item>
+        <item name="colorPrimaryContainer">@color/atrium_bg_surface</item>
+        <item name="colorOnPrimaryContainer">@color/atrium_accent_cyan</item>
+        <item name="colorSecondary">@color/atrium_accent_amber</item>
+        <item name="colorOnSecondary">@color/atrium_bg_base</item>
+        <item name="colorTertiary">@color/atrium_accent_amber</item>
+        <item name="colorAccent">@color/atrium_accent_cyan</item>
+
+        <!-- Outlines / dividers -->
+        <item name="colorOutline">@color/atrium_hairline_strong</item>
+        <item name="colorOutlineVariant">@color/atrium_hairline</item>
+
+        <!-- System bars — light icons flip to dark on paper. -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@color/atrium_bg_base</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+
+        <!-- Default text appearance fallback -->
+        <item name="android:textAppearance">@style/Atrium.Body</item>
+    </style>
+
+</resources>

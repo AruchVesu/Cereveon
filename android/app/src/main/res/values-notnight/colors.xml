@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+        Cereveon · Atrium colour tokens — BRIGHT (opt-in) palette.
+
+        Selected only when the user enables Settings › Appearance ›
+        Bright mode: CereveonApplication maps the preference to
+        AppCompatDelegate.MODE_NIGHT_NO, which activates this -notnight
+        qualifier.  With the default MODE_NIGHT_YES the base values/
+        palette applies unchanged, so existing (dark) installs render
+        pixel-identically.  The SYSTEM light/dark setting never picks
+        this file — the delegate mode is always forced from the pref.
+
+        Design intent: "the same manuscript, read in daylight".  Warm
+        paper surfaces, warm near-black ink, hairlines flipped to black
+        alphas, and the two accents DARKENED (same hue family) so cyan
+        and amber labels stay legible on paper — the neon values that
+        glow on #0A0A10 are unreadable on #F2EEE3.
+
+        Deliberately NOT overridden here:
+          - atrium_board_light / atrium_board_dark /
+            atrium_piece_white / atrium_piece_black — the chess board
+            is its own designed object (dark warm wood) and keeps the
+            base palette in both modes, matching ChessBoardView's
+            board-object rendering.
+          - the legacy aliases (bg, neon, …) — they point at atrium_*
+            tokens in the base file and follow automatically.
+        BrightModeSettingTest pins both lists.
+    -->
+
+    <!-- ── Surfaces ─────────────────────────────────────────────────── -->
+    <color name="atrium_bg_base">#F2EEE3</color>           <!-- Warm paper -->
+    <color name="atrium_bg_surface">#FAF7EE</color>        <!-- Raised card / board mat -->
+    <color name="atrium_bg_gradient_top">#E8E2D3</color>   <!-- Radial shade inner stop -->
+
+    <!-- ── Ink ─────────────────────────────────────────────────────── -->
+    <color name="atrium_ink">#211E15</color>               <!-- Primary text (warm near-black) -->
+    <color name="atrium_muted">#5C6172</color>             <!-- Secondary text -->
+    <color name="atrium_dim">#8A8E9C</color>               <!-- Tertiary / labels -->
+
+    <!-- ── Hairlines / dividers ────────────────────────────────────── -->
+    <color name="atrium_hairline">#14000000</color>        <!-- rgba(0,0,0,0.08) -->
+    <color name="atrium_hairline_strong">#1F000000</color> <!-- rgba(0,0,0,0.12) -->
+
+    <!-- ── Accents — darkened for paper, same hue roles ────────────── -->
+    <color name="atrium_accent_cyan">#0E7380</color>       <!-- Player, signal, focus -->
+    <color name="atrium_accent_amber">#9A650F</color>      <!-- Opponent, warnings -->
+
+    <!-- Translucent accent variants — same alphas over the bright-mode
+         accent hexes so glows/tints keep their relative weight. -->
+    <color name="atrium_accent_cyan_55">#550E7380</color>
+    <color name="atrium_accent_cyan_22">#220E7380</color>
+    <color name="atrium_accent_cyan_2e">#2E0E7380</color>
+    <color name="atrium_accent_cyan_1a">#1A0E7380</color>
+    <color name="atrium_accent_amber_cc">#CC9A650F</color>
+    <color name="atrium_accent_amber_55">#559A650F</color>
+
+    <!-- ── Secondary text ──────────────────────────────────────────── -->
+    <color name="atrium_text_soft">#4A4F5C</color>
+
+    <!-- ── Move-severity badge colours — darkened for paper ────────── -->
+    <color name="atrium_severity_blunder">#C62828</color>
+    <color name="atrium_severity_mistake">#B45309</color>
+    <color name="atrium_severity_inaccuracy">#9A7B00</color>
+    <color name="atrium_severity_good">#0E7380</color>
+
+</resources>
