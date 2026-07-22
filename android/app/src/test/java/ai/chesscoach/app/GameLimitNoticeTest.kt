@@ -30,6 +30,21 @@ class GameLimitNoticeTest {
     }
 
     @Test
+    fun `parses reset_at when present`() {
+        // Rolling-24h window: the server names the unlock instant (the played
+        // game + 24h) so the lock screen can count down (API_CONTRACTS.md §11).
+        val withReset =
+            """{"error": "game_daily_limit", "plan": "free", "limit": 1, "used": 1, """ +
+                """"reset_at": "2026-07-23T11:59:00", "upgrade": {"product": "pro_monthly"}}"""
+        assertEquals("2026-07-23T11:59:00", GameLimitNotice.fromBody(withReset)?.resetAt)
+    }
+
+    @Test
+    fun `leaves reset_at null when the server omits it`() {
+        assertNull(GameLimitNotice.fromBody(gameBody)?.resetAt)
+    }
+
+    @Test
     fun `ignores unknown keys like upgrade`() {
         assertEquals("free", GameLimitNotice.fromBody(gameBody)?.plan)
     }

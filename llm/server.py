@@ -1840,19 +1840,24 @@ def _chat_limit_response(decision) -> JSONResponse:
             "plan": decision.plan,
             "limit": decision.limit,
             "used": decision.used,
+            # UTC ISO-8601 instant the rolling 24h window frees a slot;
+            # null on the calendar path / when unknown so an older client
+            # (which ignores the field) is unaffected.
+            "reset_at": decision.reset_at.isoformat() if decision.reset_at else None,
             "upgrade": {"product": "pro_monthly"},
         },
     )
 
 
 def _game_limit_response(decision) -> JSONResponse:
-    """402 payment-required for starting a game over the daily game limit.
+    """402 payment-required for starting a game over the free game limit.
 
-    Free tier is 1 coached game/day, enforced as a HARD block at
-    ``/game/start`` (the client turns this into a non-dismissible
-    paywall — "come back tomorrow").  Same Shape B envelope + rotation
-    posture as ``_chat_limit_response``; only the ``error`` discriminator
-    differs so the client can tell the game gate from the chat gate.
+    Free tier is 1 coached game per rolling 24h, enforced as a HARD block
+    at ``/game/start`` (the client turns this into a non-dismissible
+    paywall with a ``reset_at`` countdown).  Same Shape B envelope +
+    rotation posture as ``_chat_limit_response``; only the ``error``
+    discriminator differs so the client can tell the game gate from the
+    chat gate.
     """
     return JSONResponse(
         status_code=402,
@@ -1861,6 +1866,9 @@ def _game_limit_response(decision) -> JSONResponse:
             "plan": decision.plan,
             "limit": decision.limit,
             "used": decision.used,
+            # UTC ISO-8601 instant the game unlocks (rolling 24h from the
+            # game that filled the quota); null when unknown.
+            "reset_at": decision.reset_at.isoformat() if decision.reset_at else None,
             "upgrade": {"product": "pro_monthly"},
         },
     )

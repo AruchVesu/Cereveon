@@ -65,15 +65,18 @@ def _make_player(db, email: str = "gamer@test.com", plan: str = "free") -> Playe
 
 
 def _seed_game_markers(db, player, count: int) -> None:
-    """Write ``count`` distinct coached-game admission markers for today
-    (what /live/move writes on each game's first move)."""
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    """Write ``count`` distinct coached-game admission markers in the
+    current rolling window (what /live/move writes on each game's first
+    move).  coached_game is a ROLLING metric — markers carry the sentinel
+    bucket and default ``created_at`` (now) so they count in-window."""
+    from llm.seca.entitlements import service
+
     for i in range(count):
         db.add(
             UsageCounter(
                 player_id=player.id,
                 metric="coached_game",
-                period_key=today,
+                period_key=service._ROLLING_PERIOD,
                 subject=f"played-game-{i}",
                 count=1,
             )
@@ -82,18 +85,21 @@ def _seed_game_markers(db, player, count: int) -> None:
 
 
 def _fake_request() -> StarletteRequest:
-    return StarletteRequest({
-        "type": "http", "method": "POST", "path": "/game/start",
-        "headers": [], "client": ("127.0.0.1", 0),
-    })
+    return StarletteRequest(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/game/start",
+            "headers": [],
+            "client": ("127.0.0.1", 0),
+        }
+    )
 
 
 def _call(db, player):
     from llm.server import StartGameRequest, start_game
 
-    return start_game(
-        req=StartGameRequest(), request=_fake_request(), player=player, db=db
-    )
+    return start_game(req=StartGameRequest(), request=_fake_request(), player=player, db=db)
 
 
 def _body_of(response: JSONResponse) -> dict:
@@ -142,11 +148,12 @@ class TestFlagOnFree:
         assert isinstance(result, JSONResponse)
         assert result.status_code == 402
         body = _body_of(result)
-        assert set(body.keys()) == {"error", "plan", "limit", "used", "upgrade"}
+        assert set(body.keys()) == {"error", "plan", "limit", "used", "reset_at", "upgrade"}
         assert body["error"] == "game_daily_limit"
         assert body["plan"] == "free"
         assert body["limit"] == 1
         assert body["used"] == 1
+        assert body["reset_at"] is not None  # rolling 24h from the played game
         assert body["upgrade"] == {"product": "pro_monthly"}
         assert "x-auth-token" not in result.headers
 

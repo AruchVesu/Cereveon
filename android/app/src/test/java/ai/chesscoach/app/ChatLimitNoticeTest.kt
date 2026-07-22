@@ -35,6 +35,23 @@ class ChatLimitNoticeTest {
     }
 
     @Test
+    fun `fromBody parses reset_at when present`() {
+        // Rolling-24h window: the server names the unlock instant so the
+        // client can count down to it (API_CONTRACTS.md §5).
+        val withReset =
+            """{"error": "chat_daily_limit", "plan": "free", "limit": 3, "used": 3, """ +
+                """"reset_at": "2026-07-23T11:59:00", "upgrade": {"product": "pro_monthly"}}"""
+        assertEquals("2026-07-23T11:59:00", ChatLimitNotice.fromBody(withReset)?.resetAt)
+    }
+
+    @Test
+    fun `fromBody leaves reset_at null when the server omits it`() {
+        // Older server / calendar path → field absent → null; the client
+        // falls back to the UTC-midnight countdown (DailyLimitReset).
+        assertNull(ChatLimitNotice.fromBody(quotaBody)?.resetAt)
+    }
+
+    @Test
     fun `fromBody ignores unknown keys like upgrade`() {
         // upgrade.product is advisory; the parser must tolerate it (and
         // any future additive keys) via ignoreUnknownKeys.

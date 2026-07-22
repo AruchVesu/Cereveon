@@ -9,9 +9,11 @@ import java.time.ZonedDateTime
  * Unit tests for [DailyLimitReset] — the freemium daily-limit reset
  * countdown shown on the game lock + chat quota surfaces (2026-07-22).
  *
- * Pins the UTC-midnight window (must match the server's `_period_key`
- * in llm/seca/entitlements/service.py) and the round-DOWN countdown
- * formatting so the figure can never overstate the remaining wait.
+ * Pins both reset sources: the server's rolling-24h `reset_at`
+ * (llm/seca/entitlements/service.py `_ROLLING_WINDOW`, surfaced on the
+ * 402 body) and the UTC-midnight FALLBACK used when it is absent, plus
+ * the round-DOWN countdown formatting so the figure never overstates the
+ * remaining wait.
  */
 class DailyLimitResetTest {
 
@@ -76,5 +78,61 @@ class DailyLimitResetTest {
     @Test
     fun `COUNTDOWN - end-to-end from epoch millis`() {
         assertEquals("4h 32m", DailyLimitReset.countdown(utc(2026, 7, 22, 19, 28)))
+    }
+
+    // ── server reset_at (rolling 24h window) ─────────────────────────
+
+    @Test
+    fun `MS_UNTIL_RESET reset_at - counts to the naive-UTC server instant`() {
+        // The server emits datetime.utcnow().isoformat() with NO offset, so
+        // the bare value is read as UTC.  12:00:00Z now → reset_at
+        // 2026-07-23T11:30:00 = 23h 30m out.
+        assertEquals(
+            (23L * 60 + 30) * 60_000L,
+            DailyLimitReset.msUntilReset("2026-07-23T11:30:00", utc(2026, 7, 22, 12, 0)),
+        )
+    }
+
+    @Test
+    fun `MS_UNTIL_RESET reset_at - tolerates Python microseconds`() {
+        // "…T12:00:00.500000" = 0.5s past the whole minute; from exactly 24h
+        // earlier the span is 24h + 500ms.
+        assertEquals(
+            24L * 3600 * 1000L + 500L,
+            DailyLimitReset.msUntilReset("2026-07-23T12:00:00.500000", utc(2026, 7, 22, 12, 0)),
+        )
+    }
+
+    @Test
+    fun `MS_UNTIL_RESET reset_at - honours an explicit offset`() {
+        // A future server variant could add a Z / +00:00 offset — still parse.
+        assertEquals(
+            3_600_000L,
+            DailyLimitReset.msUntilReset("2026-07-22T13:00:00Z", utc(2026, 7, 22, 12, 0)),
+        )
+    }
+
+    @Test
+    fun `MS_UNTIL_RESET reset_at - falls back to UTC midnight when absent or unparseable`() {
+        val now = utc(2026, 7, 22, 19, 28) // 4h 32m to the next UTC midnight
+        val expected = (4L * 60 + 32) * 60_000L
+        assertEquals(expected, DailyLimitReset.msUntilReset(null, now))
+        assertEquals(expected, DailyLimitReset.msUntilReset("", now))
+        assertEquals(expected, DailyLimitReset.msUntilReset("not-a-date", now))
+    }
+
+    @Test
+    fun `COUNTDOWN reset_at - formats the rolling wait just after the window opens`() {
+        // reset_at = first-use + 24h, evaluated ~1 min in → "23h 59m": the
+        // "must write 24 h" case the rolling window fixed (was time-to-midnight).
+        assertEquals(
+            "23h 59m",
+            DailyLimitReset.countdown("2026-07-23T11:59:00", utc(2026, 7, 22, 12, 0)),
+        )
+    }
+
+    @Test
+    fun `COUNTDOWN reset_at - null falls back to the midnight window`() {
+        assertEquals("4h 32m", DailyLimitReset.countdown(null, utc(2026, 7, 22, 19, 28)))
     }
 }

@@ -265,21 +265,29 @@ is wire-backward-compatible with any unknown client.
 
 ### Errors
 
-- `402` — daily chat quota exhausted (entitlements; only when
+- `402` — chat quota exhausted (entitlements; only when
   `SECA_ENTITLEMENTS_ENFORCED` is on — dormant otherwise). Shape B body
   with metering extras, emitted before any engine/LLM work:
 
   ```json
   {"error": "chat_daily_limit", "plan": "free", "limit": 3, "used": 3,
+   "reset_at": "2026-07-18T14:03:22.511000",
    "upgrade": {"product": "pro_monthly"}}
   ```
 
-  `plan` / `limit` / `used` reflect the caller's plan (`free` = 3/day,
-  `pro` = 30/day anti-abuse rail — ~10× honest heavy use; lowered from
-  100 on 2026-07-06 to halve the pathological per-subscriber token
-  ceiling). Non-2xx, so no `X-Auth-Token` rotation
-  header ships (the presented JWT stays valid — see §10). The turn is
-  **not** consumed. Clients render this as the upgrade/paywall surface.
+  `plan` / `limit` / `used` reflect the caller's plan (`free` = 3 per
+  rolling 24h, `pro` = 30 per rolling 24h anti-abuse rail — ~10× honest
+  heavy use; lowered from 100 on 2026-07-06 to halve the pathological
+  per-subscriber token ceiling). The chat quota is a **rolling 24h
+  window anchored at the first turn in the window**, NOT a UTC-calendar
+  day (changed 2026-07-22). `reset_at` is when the window frees up:
+  ISO-8601, UTC, no offset suffix (the oldest in-window turn + 24h);
+  the client renders a live "resets in Xh Ym" countdown from it. The
+  `chat_daily_limit` discriminator string is kept for wire compatibility
+  even though the window is no longer calendar-daily. Non-2xx, so no
+  `X-Auth-Token` rotation header ships (the presented JWT stays valid —
+  see §10). The turn is **not** consumed. Clients render this as the
+  upgrade/paywall surface.
   A successful reply consumes one turn at the same 2xx side-effect
   boundary as history persistence, so server errors never eat quota.
 
@@ -580,30 +588,36 @@ Pair with `POST /game/finish` (see §3) and `POST /game/{game_id}/checkpoint`
 
 ### Errors
 
-- `402` — free-tier daily game limit reached (entitlements; only when
+- `402` — free-tier game limit reached (entitlements; only when
   `SECA_ENTITLEMENTS_ENFORCED` is on — dormant otherwise). The free tier
-  is **1 coached game/day, hard-blocked**: once the player has played
-  their daily game (made a move in it — the coached-game admission
+  is **1 coached game per rolling 24h, hard-blocked**: once the player
+  has played their game (made a move in it — the coached-game admission
   marker is written on the first `/live/move`), a new `/game/start` is
   refused. Shape B body, same envelope as the chat 402 (§5) with a
   distinct `error` discriminator:
 
   ```json
   {"error": "game_daily_limit", "plan": "free", "limit": 1, "used": 1,
+   "reset_at": "2026-07-18T14:03:22.511000",
    "upgrade": {"product": "pro_monthly"}}
   ```
 
-  The client renders this as a non-dismissible paywall ("come back
-  tomorrow") and does **not** enter a game — the server returned no
-  `game_id`. Starting or resetting a game **before** the first move is
-  not blocked (`remaining >= 1`): a misclick or opening rethink costs
-  nothing. Resuming an existing game does not call `/game/start` and is
-  never gated. `pro` is **never** hard-blocked here — the paywall sells
+  The client renders this as a non-dismissible paywall with a live
+  "resets in Xh Ym" countdown driven by `reset_at`, and does **not**
+  enter a game — the server returned no `game_id`. The free game limit
+  is a **rolling 24h window anchored at the played game**, NOT a
+  UTC-calendar day (changed 2026-07-22); `reset_at` (ISO-8601, UTC, no
+  offset suffix) = the blocking game's admission time + 24h. The
+  `game_daily_limit` discriminator is kept for wire compatibility.
+  Starting or resetting a game **before** the first move is not blocked
+  (`remaining >= 1`): a misclick or opening rethink costs nothing.
+  Resuming an existing game does not call `/game/start` and is never
+  gated. `pro` is **never** hard-blocked here — the paywall sells
   "Unlimited adaptive games", so a subscriber always gets a `game_id`;
-  past pro's daily coached-game cap (10/day) the `/live/move` admission
-  degrades hints to the deterministic coach instead (`coach_tier.degraded`,
-  §4), which is what caps token spend. Non-2xx, so no `X-Auth-Token`
-  rotation header ships.
+  past pro's coached-game cap (10 per rolling 24h) the `/live/move`
+  admission degrades hints to the deterministic coach instead
+  (`coach_tier.degraded`, §4), which is what caps token spend. Non-2xx,
+  so no `X-Auth-Token` rotation header ships.
 
 ---
 
@@ -2725,8 +2739,8 @@ Used only by three surfaces, all of which return a constructed
 | 400 | A | `{"detail": "X-API-Version mismatch: …"}` | `api_version_gate` middleware: client `X-API-Version` not in `API_VERSIONS_SUPPORTED`. |
 | 400 | B | `{"error": "Invalid Content-Length"}` | `_LimitBodySize` middleware: Content-Length header doesn't parse as int. |
 | 401 | A | `{"detail": "Invalid or expired token"}` / `{"detail": "Missing token"}` / `{"detail": "Invalid credentials"}` | `get_current_player` / `logout` / `login` failures; raw `Authorization` header parse on `/auth/logout`. |
-| 402 | B | `{"error": "chat_daily_limit", "plan": "free", "limit": 3, "used": 3, "upgrade": {"product": "pro_monthly"}}` | Entitlements chat quota exhausted on `/chat` / `/chat/stream` (only when `SECA_ENTITLEMENTS_ENFORCED` is on). The extra keys are contract, not decoration — the paywall sheet renders them. No `X-Auth-Token` header (non-2xx). |
-| 402 | B | `{"error": "game_daily_limit", "plan": "free", "limit": 1, "used": 1, "upgrade": {"product": "pro_monthly"}}` | Free-tier daily game limit on `/game/start` (§11), only when `SECA_ENTITLEMENTS_ENFORCED` is on. Hard block: no `game_id` returned. Client shows a non-dismissible paywall. No `X-Auth-Token` header (non-2xx). |
+| 402 | B | `{"error": "chat_daily_limit", "plan": "free", "limit": 3, "used": 3, "reset_at": "2026-07-18T14:03:22.511000", "upgrade": {"product": "pro_monthly"}}` | Entitlements chat quota exhausted on `/chat` / `/chat/stream` (only when `SECA_ENTITLEMENTS_ENFORCED` is on). Rolling 24h window (§5), not calendar-daily; `reset_at` (nullable, ISO-8601 UTC) drives the client's live countdown. The extra keys are contract, not decoration — the paywall sheet renders them. No `X-Auth-Token` header (non-2xx). |
+| 402 | B | `{"error": "game_daily_limit", "plan": "free", "limit": 1, "used": 1, "reset_at": "2026-07-18T14:03:22.511000", "upgrade": {"product": "pro_monthly"}}` | Free-tier game limit on `/game/start` (§11), rolling 24h window (not calendar-daily), only when `SECA_ENTITLEMENTS_ENFORCED` is on. Hard block: no `game_id` returned. Client shows a non-dismissible paywall with a `reset_at` countdown. No `X-Auth-Token` header (non-2xx). |
 | 402 | A | `{"detail": "purchase not active (SUBSCRIPTION_STATE_EXPIRED)"}` | `/billing/google/verify` (§36): Google's verdict is that the token carries no entitlement. Plan not flipped. |
 | 502 | A | `{"detail": "purchase verification temporarily unavailable"}` | `/billing/google/verify` (§36): Google OAuth / Play API unreachable or abnormal — retry later. |
 | 503 | A | `{"detail": "purchase verification not configured"}` | `/billing/google/verify` (§36): `GOOGLE_PLAY_*` service-account env vars unset on this deploy. |

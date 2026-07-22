@@ -1232,7 +1232,8 @@ class MainActivity : AppCompatActivity() {
                     Log.d("GAME", "Session started: ${r.data.gameId}")
                 }
                 is ApiResult.HttpError -> {
-                    if (r.code == 402 && GameLimitNotice.fromBody(r.body) != null) {
+                    val gameLimit = if (r.code == 402) GameLimitNotice.fromBody(r.body) else null
+                    if (gameLimit != null) {
                         // Free-tier daily game limit reached.  The chess board
                         // is LOCAL-first, so merely refusing the server game
                         // would leave it playable — and /live/move with a null
@@ -1249,8 +1250,9 @@ class MainActivity : AppCompatActivity() {
                         chessBoard.isInteractive = false
                         txtUpgradeChip.visibility = View.VISIBLE
                         // Live reset countdown in the lock message, refreshed
-                        // each minute (DailyLimitReset).
-                        startDailyLimitLockTicker()
+                        // each minute (DailyLimitReset) — driven by the server's
+                        // rolling-24h reset_at, UTC-midnight fallback.
+                        startDailyLimitLockTicker(gameLimit.resetAt)
                         if (allowPaywallOnLimit) {
                             startActivity(Intent(this@MainActivity, PaywallActivity::class.java))
                         }
@@ -1269,7 +1271,7 @@ class MainActivity : AppCompatActivity() {
      * countdown and refreshes it every minute so the user always sees the
      * true remaining wait.  Idempotent — cancels any prior ticker first.
      */
-    private fun startDailyLimitLockTicker() {
+    private fun startDailyLimitLockTicker(resetAt: String?) {
         dailyResetJob?.cancel()
         dailyResetJob = lifecycleScope.launch {
             // Self-stops the moment the board is interactive again, so any
@@ -1277,7 +1279,7 @@ class MainActivity : AppCompatActivity() {
             // for coaching — not just the explicit stop in the Success branch.
             while (isActive && !chessBoard.isInteractive) {
                 coachText.text =
-                    getString(R.string.game_daily_limit_locked, DailyLimitReset.countdown())
+                    getString(R.string.game_daily_limit_locked, DailyLimitReset.countdown(resetAt))
                 delay(60_000L)
             }
         }

@@ -72,10 +72,12 @@ def _rows(db) -> list[UsageCounter]:
     return db.query(UsageCounter).all()
 
 
-def _seed_counter(db, player, metric: str, period_key: str, count: int) -> None:
-    db.add(
-        UsageCounter(player_id=player.id, metric=metric, period_key=period_key, count=count)
-    )
+def _seed_counter(db, player, metric: str, period_key: str, count: int, created_at=None) -> None:
+    row = UsageCounter(player_id=player.id, metric=metric, period_key=period_key, count=count)
+    if created_at is not None:
+        # Rolling metrics anchor their window on created_at; let callers pin it.
+        row.created_at = created_at
+    db.add(row)
     db.commit()
 
 
@@ -187,9 +189,7 @@ class TestImportAnalysisDailyCap:
         )
         assert not eleventh.allowed
 
-        tomorrow = service.check(
-            db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, now=_JULY_4
-        )
+        tomorrow = service.check(db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, now=_JULY_4)
         assert tomorrow.allowed and tomorrow.used == 0, "new day, fresh bucket"
 
     def test_pro_daily_readmission_of_same_game_is_free(self, db, enforced):
@@ -197,9 +197,7 @@ class TestImportAnalysisDailyCap:
         second daily slot — same subject-marker idempotency as monthly."""
         player = _make_player(db, plan="pro")
         for i in range(9):
-            service.admit(
-                db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, f"ev-{i}", now=_JULY_3
-            )
+            service.admit(db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, f"ev-{i}", now=_JULY_3)
         service.admit(db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, "target", now=_JULY_3)
         again = service.admit(
             db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, "target", now=_JULY_3
@@ -211,9 +209,7 @@ class TestImportAnalysisDailyCap:
         metric must fail OPEN for free so the review service can consult
         both buckets unconditionally."""
         player = _make_player(db)
-        decision = service.check(
-            db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, now=_JULY_3
-        )
+        decision = service.check(db, player, service.METRIC_IMPORT_ANALYSIS_DAILY, now=_JULY_3)
         assert decision.allowed and decision.limit is None
 
 
@@ -323,7 +319,16 @@ class TestProThresholds:
         # but chat is the priciest per-unit surface, so the tighter rail
         # halves the pathological token ceiling per subscriber.
         player = _make_player(db, plan="pro")
-        _seed_counter(db, player, service.METRIC_CHAT_TURN, "2026-07-03", 29)
+        # chat_turn is a rolling metric: seed its sentinel-bucket counter
+        # in-window (anchored at _JULY_3), not a calendar day bucket.
+        _seed_counter(
+            db,
+            player,
+            service.METRIC_CHAT_TURN,
+            service._ROLLING_PERIOD,
+            29,
+            created_at=_JULY_3,
+        )
         assert service.check(db, player, service.METRIC_CHAT_TURN, now=_JULY_3).allowed
 
         service.record(db, player, service.METRIC_CHAT_TURN, now=_JULY_3)
@@ -403,3 +408,74 @@ class TestFreezeGuardCleanliness:
         source = source_path.read_text(encoding="utf-8")
         hits = [label for label, pattern in FORBIDDEN_PATTERNS if pattern.search(source)]
         assert hits == [], f"entitlements service trips freeze patterns: {hits}"
+
+
+# ---------------------------------------------------------------------------
+# 9. Rolling 24h windows (coached_game + chat_turn)
+# ---------------------------------------------------------------------------
+
+
+class TestRollingWindows:
+    """The daily game + chat limits reset a rolling 24h from FIRST use
+    (2026-07-22), not at the UTC calendar boundary, and report ``reset_at``
+    for the client countdown.  ``_JULY_4`` is exactly 24h after ``_JULY_3``."""
+
+    def test_chat_resets_24h_from_first_use(self, db, enforced):
+        player = _make_player(db)  # free: 3 chats / rolling 24h
+        for _ in range(3):
+            service.record(db, player, service.METRIC_CHAT_TURN, now=_JULY_3)
+        blocked = service.check(db, player, service.METRIC_CHAT_TURN, now=_JULY_3)
+        assert not blocked.allowed
+        assert (blocked.used, blocked.remaining) == (3, 0)
+        assert blocked.reset_at == _JULY_4  # first chat (_JULY_3) + 24h
+
+        # Still blocked 23h in — the window has not elapsed.
+        t_23h = datetime(2026, 7, 4, 11, 0, 0)
+        assert not service.check(db, player, service.METRIC_CHAT_TURN, now=t_23h).allowed
+
+        # Free again exactly 24h after the first chat.
+        freed = service.check(db, player, service.METRIC_CHAT_TURN, now=_JULY_4)
+        assert freed.allowed
+        assert freed.used == 0
+        assert freed.reset_at is None
+
+    def test_expired_window_starts_fresh_on_next_use(self, db, enforced):
+        player = _make_player(db)
+        for _ in range(3):
+            service.record(db, player, service.METRIC_CHAT_TURN, now=_JULY_3)
+        # 24h later the old window has rolled off; a new chat opens a fresh one.
+        service.record(db, player, service.METRIC_CHAT_TURN, now=_JULY_4)
+        after = service.check(db, player, service.METRIC_CHAT_TURN, now=_JULY_4)
+        assert after.allowed and after.used == 1  # 1 of 3 in the NEW window
+        assert after.reset_at == datetime(2026, 7, 5, 12, 0, 0)  # _JULY_4 + 24h
+
+    def test_game_reset_at_is_the_game_plus_24h(self, db, enforced):
+        player = _make_player(db)  # free: 1 coached game / rolling 24h
+        service.admit(db, player, service.METRIC_COACHED_GAME, "game-1", now=_JULY_3)
+        # A distinct 2nd game is over the rolling limit (the start gate reads
+        # remaining==0 → 402); coached_game DEGRADEs so allowed stays True.
+        over = service.check(db, player, service.METRIC_COACHED_GAME, now=_JULY_3)
+        assert (over.used, over.remaining) == (1, 0)
+        assert over.degrade
+        assert over.reset_at == _JULY_4
+        # 24h later the game rolls off.
+        freed = service.check(db, player, service.METRIC_COACHED_GAME, now=_JULY_4)
+        assert freed.used == 0
+        assert freed.reset_at is None
+
+    def test_game_and_chat_windows_are_independent(self, db, enforced):
+        player = _make_player(db)
+        for _ in range(3):
+            service.record(db, player, service.METRIC_CHAT_TURN, now=_JULY_3)
+        assert not service.check(db, player, service.METRIC_CHAT_TURN, now=_JULY_3).allowed
+        # The game window is untouched — its slot is still free.
+        game = service.check(db, player, service.METRIC_COACHED_GAME, now=_JULY_3)
+        assert game.used == 0
+        assert game.reset_at is None
+
+    def test_calendar_metric_reports_no_reset_at(self, db, enforced):
+        # import_analysis stays MONTHLY calendar-bucketed: no rolling reset.
+        player = _make_player(db)
+        service.admit(db, player, service.METRIC_IMPORT_ANALYSIS, "ev-1", now=_JULY_3)
+        decision = service.check(db, player, service.METRIC_IMPORT_ANALYSIS, now=_JULY_3)
+        assert decision.reset_at is None
