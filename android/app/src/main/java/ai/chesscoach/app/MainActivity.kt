@@ -29,7 +29,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.snackbar.Snackbar
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -94,6 +97,14 @@ class MainActivity : AppCompatActivity() {
      * the original row.
      */
     private var currentServerGameId: String? = null
+
+    /**
+     * Minute ticker that live-refreshes the daily-limit lock message with
+     * the reset countdown ([DailyLimitReset]).  Non-null only while the
+     * board is locked on a free-tier game 402; cancelled on unlock (and by
+     * lifecycleScope on destroy) so it never overwrites live coaching text.
+     */
+    private var dailyResetJob: Job? = null
 
     // ── Game-review (replay) state ───────────────────────────────────────────
     // Set when a finished game is opened from history for replay + live
@@ -1213,7 +1224,9 @@ class MainActivity : AppCompatActivity() {
                         .putString(PREF_LAST_GAME_SERVER_ID, r.data.gameId)
                         .apply()
                     // A real game was granted — ensure the board is playable
-                    // and any prior daily-limit lock is cleared.
+                    // and any prior daily-limit lock (+ its countdown ticker)
+                    // is cleared.
+                    stopDailyLimitLockTicker()
                     chessBoard.isInteractive = true
                     txtUpgradeChip.visibility = View.GONE
                     Log.d("GAME", "Session started: ${r.data.gameId}")
@@ -1235,9 +1248,9 @@ class MainActivity : AppCompatActivity() {
                         Log.d("GAME", "daily game limit — locking board (paywall=$allowPaywallOnLimit)")
                         chessBoard.isInteractive = false
                         txtUpgradeChip.visibility = View.VISIBLE
-                        coachText.text =
-                            "Daily game reached. Upgrade for unlimited games, " +
-                                "or come back tomorrow."
+                        // Live reset countdown in the lock message, refreshed
+                        // each minute (DailyLimitReset).
+                        startDailyLimitLockTicker()
                         if (allowPaywallOnLimit) {
                             startActivity(Intent(this@MainActivity, PaywallActivity::class.java))
                         }
@@ -1249,6 +1262,31 @@ class MainActivity : AppCompatActivity() {
                 ApiResult.Timeout -> Log.w("GAME", "startGame timed out")
             }
         }
+    }
+
+    /**
+     * Live daily-limit lock message: sets [coachText] to the reset
+     * countdown and refreshes it every minute so the user always sees the
+     * true remaining wait.  Idempotent — cancels any prior ticker first.
+     */
+    private fun startDailyLimitLockTicker() {
+        dailyResetJob?.cancel()
+        dailyResetJob = lifecycleScope.launch {
+            // Self-stops the moment the board is interactive again, so any
+            // unlock path (game granted, exit-review restore) frees coachText
+            // for coaching — not just the explicit stop in the Success branch.
+            while (isActive && !chessBoard.isInteractive) {
+                coachText.text =
+                    getString(R.string.game_daily_limit_locked, DailyLimitReset.countdown())
+                delay(60_000L)
+            }
+        }
+    }
+
+    /** Stop the daily-limit countdown ticker (board unlocked / re-granted). */
+    private fun stopDailyLimitLockTicker() {
+        dailyResetJob?.cancel()
+        dailyResetJob = null
     }
 
     /**
