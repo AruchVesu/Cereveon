@@ -38,7 +38,7 @@
         android:background="@color/atrium_hairline_strong" />
 
     <!-- Chapter header. -->
-    <ai.chesscoach.app.AtriumChapterHeaderView
+    <com.cereveon.myapp.AtriumChapterHeaderView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         app:atriumKicker="Games"
@@ -100,7 +100,7 @@
     </LinearLayout>
 
     <!-- Rating sparkline trend (≥2 games required). -->
-    <ai.chesscoach.app.RatingSparklineView
+    <com.cereveon.myapp.RatingSparklineView
         android:id="@+id/ratingSparkline"
         android:layout_width="match_parent"
         android:layout_height="64dp"

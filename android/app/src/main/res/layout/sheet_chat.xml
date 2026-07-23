@@ -63,7 +63,7 @@
         android:gravity="center_vertical"
         xmlns:app="http://schemas.android.com/apk/res-auto">
 
-        <ai.chesscoach.app.AtriumChapterHeaderView
+        <com.cereveon.myapp.AtriumChapterHeaderView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -101,7 +101,7 @@
         android:padding="@dimen/atrium_space_4"
         android:background="@drawable/board_mat_atrium">
 
-        <ai.chesscoach.app.ChessBoardView
+        <com.cereveon.myapp.ChessBoardView
             android:id="@+id/miniBoard"
             android:layout_width="120dp"
             android:layout_height="120dp" />
@@ -166,7 +166,7 @@
         fails.  Detached from the RecyclerView so it always sits at the
         bottom of the message column rather than scrolling out of view.
     -->
-    <ai.chesscoach.app.AtriumTypingDotsView
+    <com.cereveon.myapp.AtriumTypingDotsView
         android:id="@+id/typingDots"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"

@@ -58,7 +58,7 @@
             android:background="@color/atrium_hairline_strong" />
 
         <!-- Chapter header. -->
-        <ai.chesscoach.app.AtriumChapterHeaderView
+        <com.cereveon.myapp.AtriumChapterHeaderView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:atriumKicker="Profile"
@@ -165,7 +165,7 @@
             android:paddingBottom="@dimen/atrium_space_4"
             android:visibility="gone" />
 
-        <ai.chesscoach.app.RatingSparklineView
+        <com.cereveon.myapp.RatingSparklineView
             android:id="@+id/progressSparkline"
             android:layout_width="match_parent"
             android:layout_height="72dp"
@@ -209,7 +209,7 @@
             android:paddingEnd="@dimen/atrium_space_24"
             android:paddingBottom="@dimen/atrium_space_8" />
 
-        <ai.chesscoach.app.WeaknessBarChartView
+        <com.cereveon.myapp.WeaknessBarChartView
             android:id="@+id/weaknessChart"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -277,7 +277,7 @@
             android:paddingBottom="@dimen/atrium_space_8"
             android:visibility="gone" />
 
-        <ai.chesscoach.app.AtriumCardView
+        <com.cereveon.myapp.AtriumCardView
             android:id="@+id/coachPlanCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -345,7 +345,7 @@
                     android:textColor="@color/atrium_dim"
                     tools:text="Repeated weakness across games -> structural change" />
             </LinearLayout>
-        </ai.chesscoach.app.AtriumCardView>
+        </com.cereveon.myapp.AtriumCardView>
 
         <View
             android:id="@+id/coachPlanDivider"
