@@ -45,7 +45,7 @@
         android:orientation="vertical">
 
         <!-- Chapter header — Atrium kicker + title + ✦ rule. -->
-        <ai.chesscoach.app.AtriumChapterHeaderView
+        <com.cereveon.myapp.AtriumChapterHeaderView
             android:id="@+id/atriumChapterHeader"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -111,7 +111,7 @@
             android:background="@drawable/board_mat_atrium"
             android:elevation="6dp">
 
-            <ai.chesscoach.app.ChessBoardView
+            <com.cereveon.myapp.ChessBoardView
                 android:id="@+id/chessBoard"
                 android:layout_width="332dp"
                 android:layout_height="332dp" />
@@ -233,7 +233,7 @@
         </LinearLayout>
 
         <!-- Eval band — 5-step coarse signal, no numeric eval. -->
-        <ai.chesscoach.app.EvalBandView
+        <com.cereveon.myapp.EvalBandView
             android:id="@+id/evalBand"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

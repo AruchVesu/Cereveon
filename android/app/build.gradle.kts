@@ -27,7 +27,7 @@ val hasReleaseSigningConfig: Boolean = listOf(
 ).all { it != null }
 
 android {
-    namespace = "ai.chesscoach.app"
+    namespace = "com.cereveon.myapp"
     compileSdk = 36
 
     buildFeatures {
@@ -35,7 +35,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "ai.chesscoach.app"
+        applicationId = "com.cereveon.myapp"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

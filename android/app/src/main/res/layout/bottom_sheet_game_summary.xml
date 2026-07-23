@@ -86,7 +86,7 @@
         android:background="@color/atrium_hairline_strong" />
 
     <!-- Hero result card with corner ticks. -->
-    <ai.chesscoach.app.AtriumCardView
+    <com.cereveon.myapp.AtriumCardView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:padding="@dimen/atrium_space_16"
@@ -134,7 +134,7 @@
 
         </LinearLayout>
 
-    </ai.chesscoach.app.AtriumCardView>
+    </com.cereveon.myapp.AtriumCardView>
 
     <!-- 3-cell metric strip with hairline grid. -->
     <LinearLayout
@@ -232,7 +232,7 @@
         standard setText(...) — same call site as the previous
         TextView, no wiring change required.
     -->
-    <ai.chesscoach.app.DropCapTextView
+    <com.cereveon.myapp.DropCapTextView
         android:id="@+id/txtCoachDescription"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -258,7 +258,7 @@
         "fix what you just did wrong" before "learn the broader
         concept".
     -->
-    <ai.chesscoach.app.AtriumCardView
+    <com.cereveon.myapp.AtriumCardView
         android:id="@+id/mistakeReplayCard"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -300,14 +300,14 @@
 
         </LinearLayout>
 
-    </ai.chesscoach.app.AtriumCardView>
+    </com.cereveon.myapp.AtriumCardView>
 
     <!--
         Training recommendation card — quieter sibling of the hero
         card (no corner ticks).  All inner IDs preserved so the
         existing training-recommendation render path keeps working.
     -->
-    <ai.chesscoach.app.AtriumCardView
+    <com.cereveon.myapp.AtriumCardView
         android:id="@+id/trainingCard"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -373,7 +373,7 @@
 
         </LinearLayout>
 
-    </ai.chesscoach.app.AtriumCardView>
+    </com.cereveon.myapp.AtriumCardView>
 
     <!-- Empty state for training (shown on 404). -->
     <TextView

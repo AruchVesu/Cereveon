@@ -98,7 +98,7 @@
             android:background="@drawable/board_mat_atrium"
             android:elevation="6dp">
 
-            <ai.chesscoach.app.ChessBoardView
+            <com.cereveon.myapp.ChessBoardView
                 android:id="@+id/todaysDrillBoard"
                 android:layout_width="312dp"
                 android:layout_height="312dp" />
